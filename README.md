@@ -9,9 +9,12 @@ Built deliberately **independent of the full LeRobot package** (no PyTorch,
 no dataset/training stack) so it stays light enough to hand to anyone on a
 bare machine and have it running in a couple of minutes.
 
-> Add your own screenshot here, e.g. `![screenshot](docs/screenshot.png)` -
-> the Control tab is meant to be read left-to-right: narrow control column,
-> Digital Twin as the centerpiece, Camera feed beside it for comparison.
+![Control tab with the MuJoCo digital twin loaded](docs/screenshot.png)
+
+*Control tab, read left-to-right: narrow control column (connection, control
+source, joint sliders, teaching), Digital Twin as the centerpiece, Camera
+feed beside it for comparison. No hardware connected in this shot - the
+joint sliders and twin are just posed manually to show the layout.*
 
 ## Features
 
