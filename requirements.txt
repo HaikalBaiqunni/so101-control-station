@@ -1,0 +1,8 @@
+PySide6>=6.6
+feetech-servo-sdk>=1.0.0
+pyserial>=3.5
+opencv-python>=4.8
+mujoco>=3.0
+numpy>=1.24
+pygame>=2.5
+pygrabber>=0.2; sys_platform == 'win32'  # named camera enumeration on Windows; other OSes fall back to generic probing
