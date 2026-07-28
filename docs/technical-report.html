@@ -90,7 +90,17 @@
     padding: 40px 28px 96px;
   }
 
-  p { max-width: 68ch; margin: 0 0 1em; }
+  p {
+    max-width: 68ch;
+    margin: 0 0 1em;
+    text-align: justify;
+    text-justify: inter-word;
+    hyphens: auto;
+  }
+  /* Justification needs a reasonably wide measure to avoid ugly rivers of
+     whitespace on the last few words of a narrow column - these are exactly
+     the tight, narrow-column exceptions where ragged (left) reads better. */
+  .idea dd, .metric-key, figcaption, .sym, .note-label, .role-head { text-align: left; }
   p:last-child { margin-bottom: 0; }
 
   a { color: var(--steel); text-underline-offset: 2px; }
@@ -1274,6 +1284,54 @@
           したがって、指令角度は書き込み前に明示的に範囲内へ制限している。なお、
           同一の症状には、図 3 に示した座標基準の不整合というより本質的な要因も
           並存していた。
+        </p>
+      </div>
+
+      <div class="fieldnote">
+        <h4 class="l-en">The diagnostic registers carry no unit of their own</h4>
+        <h4 class="l-ja">診断用レジスタは単位を自己記述しない</h4>
+        <span class="sym l-en">Symptom: raw integers with no documented scale - an incorrect conversion factor would look no different from a correct one until checked against a second source</span>
+        <span class="sym l-ja">症状: 尺度が文書化されていない生の整数値 - 誤った換算係数も、別の出典と照合するまでは正しいものと見分けがつかない</span>
+        <p class="l-en">
+          The current, voltage, temperature and load feedback registers each
+          return a plain integer, with the physical unit implied only by
+          convention rather than encoded in the protocol itself. Before
+          adopting a conversion factor, two independently-arrived-at sources
+          were checked against one another: the bit position LeRobot's own
+          driver assigns to the sign of Present_Load and Present_Velocity, and
+          a community-maintained register reference whose accompanying driver
+          code implements matching scale factors rather than merely
+          documenting them (current times 6.5 for milliamps, voltage times 0.1
+          for volts, and load's ten-bit magnitude divided by ten for a
+          percentage of the configured torque limit). Agreement between the
+          two on where Present_Load's sign bit is located was treated as
+          sufficient grounds to adopt the same source's scale factors for
+          current and voltage; Present_Current carries no sign bit in either
+          source and is therefore decoded as an unsigned magnitude only.
+          Present_Velocity's unit could not be corroborated by any source
+          consulted and is reported as a derived estimate - the position
+          encoder's own angular resolution applied to a rate of change -
+          rather than a confirmed figure, and is marked accordingly wherever
+          it appears in the interface.
+        </p>
+        <p class="l-ja">
+          電流・電圧・温度・負荷の各フィードバックレジスタは、いずれも単純な
+          整数値を返すのみであり、物理単位はプロトコル自体に符号化されているの
+          ではなく、慣例によって暗示されているに過ぎない。換算係数を採用する
+          前に、独立に得られた2つの出典を相互に照合した。一つは LeRobot 自身の
+          ドライバが Present_Load および Present_Velocity の符号ビットに割り当てて
+          いるビット位置であり、もう一つはコミュニティによって保守されている
+          レジスタ参照資料で、これに付随するドライバコードが該当する尺度
+          (電流は6.5倍してミリアンペア、電圧は0.1倍してボルト、負荷は10ビットの
+          大きさを10で除して設定トルク上限に対する百分率とする)を単に記載する
+          のではなく実装している点で優れる。両者が Present_Load の符号ビット
+          位置について一致したことをもって、同じ出典の電流・電圧に関する尺度を
+          採用する十分な根拠とした。Present_Current はいずれの出典においても
+          符号ビットを持たないため、符号なしの大きさとしてのみ復号している。
+          Present_Velocity の単位についてはどの出典からも裏付けが得られず、
+          確定した数値としてではなく、位置エンコーダ自身の角度分解能を変化率に
+          適用した推定値として報告しており、インターフェース上でもその旨を
+          明示している。
         </p>
       </div>
     </div>
