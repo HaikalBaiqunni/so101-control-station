@@ -20,10 +20,14 @@ from .servo_bus import ServoBus, ServoBusError
 POLL_INTERVAL_S = 1 / 60  # ~60 Hz - matches lerobot-teleoperate's own loop rate now that
                           # reads/writes are batched (GroupSyncRead/Write); at 20Hz + one
                           # round trip per joint this used to be the visible lag vs the CLI.
+TELEMETRY_EVERY_N_CYCLES = 6  # -> ~10 Hz. Diagnostics don't need 60Hz, and the two extra
+                              # bus transactions they cost have no business competing with
+                              # the control loop for bus time.
 
 
 class RobotWorker(QThread):
     positions_updated = Signal(dict)   # {joint_name: degrees}
+    telemetry_updated = Signal(dict)   # {joint_name: {position, velocity, load, voltage, temperature, current}}
     error = Signal(str)
     connection_changed = Signal(bool)
 
@@ -37,6 +41,7 @@ class RobotWorker(QThread):
         self._pending_goals: dict[str, float] = {}
         self._goals_lock = threading.Lock()
         self._torque_commands: queue.Queue = queue.Queue()
+        self._register_commands: queue.Queue = queue.Queue()
         self._running = False
         self.bus: ServoBus | None = None
 
@@ -47,6 +52,12 @@ class RobotWorker(QThread):
 
     def request_torque(self, enabled: bool, name: str | None = None) -> None:
         self._torque_commands.put((enabled, name))
+
+    def request_register_write(self, data_name: str, value: int, joint: str | None = None) -> None:
+        """Write an arbitrary register (Torque_Limit, CW/CCW_Dead_Zone, ...) on
+        one joint or all of them. Queued so it lands on the worker thread like
+        every other bus access."""
+        self._register_commands.put((data_name, value, joint))
 
     def stop(self) -> None:
         self._running = False
@@ -65,8 +76,10 @@ class RobotWorker(QThread):
 
         self.connection_changed.emit(True)
         self._running = True
+        cycle = 0
 
         while self._running:
+            cycle += 1
             with self._goals_lock:
                 goals, self._pending_goals = self._pending_goals, {}
             if goals:
@@ -81,7 +94,32 @@ class RobotWorker(QThread):
                 except queue.Empty:
                     break
                 try:
+                    if enabled:
+                        # enable_torque() only flips the servo's torque bit - it
+                        # does NOT touch Goal_Position, which still holds
+                        # whatever was last written (e.g. from long before
+                        # torque was disabled for hand-guided teaching). Left
+                        # alone, the servo firmware lurches at its own full,
+                        # uncontrolled speed toward that stale target the
+                        # instant torque re-engages, before any
+                        # software-smoothed goal has a chance to overwrite it.
+                        # Seeding Goal_Position with the CURRENT measured pose
+                        # first means torque-on just holds still instead.
+                        hold = self.bus.read_all_positions_deg()
+                        self.bus.write_goals_deg(hold)
                     (self.bus.enable_torque if enabled else self.bus.disable_torque)(name)
+                except ServoBusError as exc:
+                    self.error.emit(str(exc))
+
+            while True:
+                try:
+                    data_name, value, joint = self._register_commands.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    targets = [joint] if joint else self.bus.joint_names()
+                    for target in targets:
+                        self.bus.write_raw(data_name, self.bus.joint_id(target), value)
                 except ServoBusError as exc:
                     self.error.emit(str(exc))
 
@@ -90,6 +128,12 @@ class RobotWorker(QThread):
                 self.positions_updated.emit(positions)
             except ServoBusError as exc:
                 self.error.emit(str(exc))
+
+            if cycle % TELEMETRY_EVERY_N_CYCLES == 0:
+                try:
+                    self.telemetry_updated.emit(self.bus.read_telemetry())
+                except ServoBusError as exc:
+                    self.error.emit(str(exc))
 
             time.sleep(POLL_INTERVAL_S)
 

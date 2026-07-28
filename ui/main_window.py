@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
+import os
 import time
 
 from PySide6.QtCore import Qt, QTimer
@@ -33,6 +35,7 @@ from .control_source_panel import ControlSourcePanel
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .joint_panel import JointPanel
 from .teaching_panel import TeachingPanel
+from .telemetry_panel import TelemetryPanel
 from .twin_panel import TwinPanel
 
 GAMEPAD_TICK_MS = 33          # ~30 Hz jog integration
@@ -72,6 +75,7 @@ class MainWindow(QMainWindow):
         self.gamepad_panel = GamepadPanel()
         self.twin_panel = TwinPanel()
         self.camera_panel = CameraPanel()
+        self.telemetry_panel = TelemetryPanel()
 
         left = QVBoxLayout()
         left.addWidget(self.connection_panel)
@@ -93,14 +97,28 @@ class MainWindow(QMainWindow):
         left_scroll.setWidgetResizable(True)
         left_scroll.setMinimumWidth(360)  # enough for "Refresh"/"Browse"/"DISCONNECTED" to not clip
 
+        # twin + camera side by side on top, telemetry filling the dead space
+        # that used to sit underneath them
+        view_row = QSplitter(Qt.Horizontal)
+        view_row.addWidget(self.twin_panel)
+        view_row.addWidget(self.camera_panel)
+        view_row.setStretchFactor(0, 2)   # digital twin: the star of the show
+        view_row.setStretchFactor(1, 1)   # camera: secondary, for comparison
+        view_row.setSizes([760, 420])
+
+        right_column = QSplitter(Qt.Vertical)
+        right_column.addWidget(view_row)
+        right_column.addWidget(self.telemetry_panel)
+        right_column.setStretchFactor(0, 1)
+        right_column.setStretchFactor(1, 0)
+        right_column.setSizes([500, 380])
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
-        splitter.addWidget(self.twin_panel)
-        splitter.addWidget(self.camera_panel)
+        splitter.addWidget(right_column)
         splitter.setStretchFactor(0, 0)   # controls: stay narrow
-        splitter.setStretchFactor(1, 2)   # digital twin: the star of the show
-        splitter.setStretchFactor(2, 1)   # camera: secondary, for comparison
-        splitter.setSizes([380, 760, 420])
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([380, 1180])
 
         control_tab = QWidget()
         control_layout = QVBoxLayout(control_tab)
@@ -161,6 +179,10 @@ class MainWindow(QMainWindow):
         self.playback_timer = QTimer(self)
         self.playback_timer.timeout.connect(self._playback_tick)
 
+        # -- state: telemetry CSV capture -----------------------------------
+        self._telemetry_csv = None
+        self._telemetry_csv_writer = None
+
         # -- wiring: robot connection --------------------------------------
         self.connection_panel.connect_requested.connect(self._on_connect)
         self.connection_panel.disconnect_requested.connect(self._on_disconnect)
@@ -181,6 +203,7 @@ class MainWindow(QMainWindow):
 
         # -- wiring: teaching (waypoints) ---------------------------------------
         self.teaching_panel.record_requested.connect(self._on_record_waypoint)
+        self.teaching_panel.record_grip_requested.connect(lambda: self._on_record_waypoint(force_grip=True))
         self.teaching_panel.delete_requested.connect(self._on_delete_waypoint)
         self.teaching_panel.move_up_requested.connect(lambda: self._on_move_waypoint(-1))
         self.teaching_panel.move_down_requested.connect(lambda: self._on_move_waypoint(1))
@@ -188,6 +211,10 @@ class MainWindow(QMainWindow):
         self.teaching_panel.stop_requested.connect(self._on_stop_sequence)
         self.teaching_panel.save_requested.connect(self._on_save_waypoints)
         self.teaching_panel.load_requested.connect(self._on_load_waypoints)
+
+        # -- wiring: telemetry ---------------------------------------------------
+        self.telemetry_panel.log_toggled.connect(self._on_telemetry_log_toggled)
+        self.telemetry_panel.register_write_requested.connect(self._on_register_write_requested)
 
         # -- wiring: digital twin -----------------------------------------------
         self.twin_panel.load_requested.connect(self._on_twin_load)
@@ -240,6 +267,7 @@ class MainWindow(QMainWindow):
         self.session_logger.log_event(f"Follower: connecting on {port} (calibration: {calibration_path})")
         self.robot_worker = RobotWorker(port, calibration_path)
         self.robot_worker.positions_updated.connect(self._on_positions_updated)
+        self.robot_worker.telemetry_updated.connect(self._on_telemetry_updated)
         self.robot_worker.error.connect(self._on_robot_error)
         self.robot_worker.connection_changed.connect(self._on_connection_changed)
         self.robot_worker.start()
@@ -611,14 +639,74 @@ class MainWindow(QMainWindow):
     def _on_calibration_finished(self, calibration_dict: dict) -> None:
         self.calibration_panel.prompt_save(calibration_dict)
 
+    # ---------------------------------------------------------------- telemetry
+    def _on_telemetry_updated(self, telemetry: dict) -> None:
+        self.telemetry_panel.update_telemetry(telemetry)
+        if self._telemetry_csv_writer:
+            stamp = time.time()
+            for joint, values in telemetry.items():
+                self._telemetry_csv_writer.writerow([
+                    f"{stamp:.3f}", joint,
+                    values["position"], values["velocity"], values["load"],
+                    values["current"], values["voltage"], values["temperature"],
+                ])
+
+    def _on_telemetry_log_toggled(self, enabled: bool) -> None:
+        if enabled:
+            os.makedirs("logs", exist_ok=True)
+            path = os.path.join("logs", f"telemetry_{time.strftime('%Y-%m-%d_%H-%M-%S')}.csv")
+            self._telemetry_csv = open(path, "w", newline="", encoding="utf-8")
+            self._telemetry_csv_writer = csv.writer(self._telemetry_csv)
+            self._telemetry_csv_writer.writerow(
+                ["unix_time", "joint", "position", "velocity", "load", "current", "voltage", "temperature"]
+            )
+            self.telemetry_panel.set_log_path(f"writing {path}")
+            self.session_logger.log_event(f"Telemetry: CSV logging started -> {path}")
+        else:
+            self._close_telemetry_csv()
+            self.telemetry_panel.set_log_path("stopped")
+            self.session_logger.log_event("Telemetry: CSV logging stopped")
+
+    def _close_telemetry_csv(self) -> None:
+        self._telemetry_csv_writer = None
+        if self._telemetry_csv:
+            self._telemetry_csv.close()
+            self._telemetry_csv = None
+
+    def _on_register_write_requested(self, data_name: str, value: int, joint: str) -> None:
+        if not self.robot_worker:
+            QMessageBox.warning(self, "Not connected", "Connect the follower before writing servo registers.")
+            return
+        self.robot_worker.request_register_write(data_name, value, joint or None)
+        self.statusBar().showMessage(f"{data_name} = {value} -> {joint or 'all joints'}")
+        self.session_logger.log_event(f"Register write: {data_name}={value} on {joint or 'all joints'}")
+
     # ---------------------------------------------------------------- teaching (record & playback)
-    def _on_record_waypoint(self) -> None:
+    def _on_record_waypoint(self, force_grip: bool = False) -> None:
         """Snapshot the follower's CURRENT pose, however it got there - hand-
         guided with torque off, driven by the leader, or the manual sliders.
         Doesn't care which; current_positions is already the one place all
-        three sources funnel into."""
+        three sources funnel into.
+
+        force_grip=True (the "Record Grip" button) is for a waypoint that has
+        to actually hold something. The measured gripper angle here is
+        whatever position it happened to settle at against the object - under
+        position control that's an equilibrium with ~zero position error, so
+        there's no spare closing force behind it once torque is re-applied on
+        playback (a bumped part, gravity, anything) is enough to lose the
+        grip. Snapping the recorded value to whichever calibrated extreme
+        (closed or open) it's already nearest to means playback keeps
+        commanding a target the object physically can't let it reach, so the
+        servo keeps pushing - that persistent position error IS the grip
+        force, up to the servo's torque/current limit."""
         label = f"Waypoint {len(self.waypoints) + 1}"
-        self.waypoints.append({"label": label, "positions": dict(self.current_positions)})
+        positions = dict(self.current_positions)
+        if force_grip and "gripper" in positions and "gripper" in self.joint_deg_ranges:
+            lo, hi = self.joint_deg_ranges["gripper"]
+            measured = positions["gripper"]
+            positions["gripper"] = lo if abs(measured - lo) <= abs(measured - hi) else hi
+            label += " (grip)"
+        self.waypoints.append({"label": label, "positions": positions})
         self._refresh_waypoint_list()
         self.session_logger.log_event(f"Teaching: recorded '{label}'")
 
@@ -699,9 +787,15 @@ class MainWindow(QMainWindow):
 
         now = time.monotonic()
         t = max(0.0, min(1.0, (now - self._playback_move_start) / self._playback_move_duration))
+        # Quintic minimum-jerk easing (6t^5 - 15t^4 + 10t^3): zero velocity AND
+        # zero acceleration at both endpoints, unlike a raw linear ramp - that's
+        # what removes the jolt at the start/stop of each waypoint-to-waypoint
+        # move. Still a full stop at every waypoint (that's the next increment,
+        # a single continuous spline across the whole sequence, if it's wanted).
+        eased_t = t * t * t * (t * (t * 6 - 15) + 10)
         for name, target in self._playback_target_positions.items():
             start = self._playback_start_positions.get(name, target)
-            self.robot_worker.request_goal(name, start + t * (target - start))
+            self.robot_worker.request_goal(name, start + eased_t * (target - start))
 
         arrived = t >= 1.0 and all(
             abs(self.current_positions.get(name, 0.0) - degrees) <= PLAYBACK_ARRIVE_TOLERANCE_DEG
@@ -744,6 +838,7 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- lifecycle
     def closeEvent(self, event) -> None:
         self.playback_timer.stop()
+        self._close_telemetry_csv()
         self._on_disconnect()
         self._on_leader_disconnect()
         self._on_calibration_disconnect()

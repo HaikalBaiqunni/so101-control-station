@@ -19,6 +19,7 @@ class TeachingPanel(QGroupBox):
     state machine - this is just the list/button widget."""
 
     record_requested = Signal()
+    record_grip_requested = Signal()
     delete_requested = Signal()
     move_up_requested = Signal()
     move_down_requested = Signal()
@@ -34,6 +35,16 @@ class TeachingPanel(QGroupBox):
 
         self.record_btn = QPushButton("Record Waypoint")
         self.record_btn.clicked.connect(self.record_requested)
+        self.record_grip_btn = QPushButton("Record Grip")
+        self.record_grip_btn.setToolTip(
+            "Same as Record Waypoint, but pushes the gripper's recorded value all\n"
+            "the way to its calibrated limit (closed or open, whichever it's\n"
+            "already nearest to) instead of the exact measured contact position.\n"
+            "Use this for a waypoint that must actually hold something - a plain\n"
+            "recorded contact position has no spare closing force behind it, so\n"
+            "the grip won't survive any disturbance."
+        )
+        self.record_grip_btn.clicked.connect(self.record_grip_requested)
         self.delete_btn = QPushButton("Delete Selected")
         self.delete_btn.clicked.connect(self.delete_requested)
         self.up_btn = QPushButton("Move Up")
@@ -58,6 +69,7 @@ class TeachingPanel(QGroupBox):
 
         edit_row = QHBoxLayout()
         edit_row.addWidget(self.record_btn)
+        edit_row.addWidget(self.record_grip_btn)
         edit_row.addWidget(self.delete_btn)
         edit_row.addWidget(self.up_btn)
         edit_row.addWidget(self.down_btn)
@@ -95,6 +107,7 @@ class TeachingPanel(QGroupBox):
         self.play_btn.setEnabled(not playing)
         self.stop_btn.setEnabled(playing)
         self.record_btn.setEnabled(not playing)
+        self.record_grip_btn.setEnabled(not playing)
         self.delete_btn.setEnabled(not playing)
         self.up_btn.setEnabled(not playing)
         self.down_btn.setEnabled(not playing)

@@ -30,16 +30,37 @@ WRITE_RETRIES = 3
 
 # data_name: (address, size_bytes, sign_bit_index_or_None)
 REGISTERS = {
+    # -- EEPROM (persistent; see EEPROM_WRITE_SETTLE_S) --
     "Min_Position_Limit": (9, 2, None),
     "Max_Position_Limit": (11, 2, None),
+    "CW_Dead_Zone": (26, 1, None),   # position deadband: inside it the servo stops
+    "CCW_Dead_Zone": (27, 1, None),  # correcting, so it directly caps repeatability
     "Homing_Offset": (31, 2, 11),
     "Operating_Mode": (33, 1, None),
+    # -- SRAM (volatile, cheap to write, safe in a fast loop) --
     "Torque_Enable": (40, 1, None),
+    "Acceleration": (41, 1, None),
     "Goal_Position": (42, 2, 15),
+    "Goal_Velocity": (46, 2, None),
+    "Torque_Limit": (48, 2, None),   # servo-side output cap - lets the servo itself
+                                     # hold a constant grip force in its own fast
+                                     # loop, instead of us chasing a current
+                                     # threshold from a 60Hz polling loop
+    # -- read-only feedback. 56..63 is one contiguous block, which read_telemetry()
+    #    exploits to fetch all five in a single bus transaction.
     "Present_Position": (56, 2, None),
+    "Present_Velocity": (58, 2, None),
+    "Present_Load": (60, 2, None),
+    "Present_Voltage": (62, 1, None),
+    "Present_Temperature": (63, 1, None),
     "Present_Current": (69, 2, None),
 }
 OPERATING_MODE_POSITION = 0
+
+# read_telemetry()'s two contiguous read blocks: (start_address, byte_length).
+# Present_Current sits at 69, past Status/Moving, so it can't join the 56..63 run.
+TELEMETRY_BLOCK = (56, 8)
+CURRENT_BLOCK = (69, 2)
 
 # STS3215 memory map: addresses below Torque_Enable (40) are EEPROM, the rest
 # is RAM. EEPROM writes physically take longer to settle than RAM writes -
@@ -109,6 +130,11 @@ class ServoBus:
         # own teleoperate loop hit 60Hz; naive per-joint reads/writes do not.
         pos_addr, pos_size, _ = REGISTERS["Present_Position"]
         self._sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, pos_addr, pos_size)
+        # separate readers for the diagnostic telemetry - deliberately NOT folded
+        # into the 60Hz position read, so adding telemetry can never slow the
+        # control loop (read_telemetry is called at a much lower rate)
+        self._sync_reader_tel = scs.GroupSyncRead(self.port_handler, self.packet_handler, *TELEMETRY_BLOCK)
+        self._sync_reader_cur = scs.GroupSyncRead(self.port_handler, self.packet_handler, *CURRENT_BLOCK)
         goal_addr, goal_size, _ = REGISTERS["Goal_Position"]
         self._sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, goal_addr, goal_size)
 
@@ -244,6 +270,49 @@ class ServoBus:
             mid = cal.mid if cal else MODEL_RESOLUTION / 2
             positions[name] = (raw - mid) * 360.0 / MAX_RES
         return positions
+
+    def read_telemetry(self) -> dict[str, dict[str, int]]:
+        """RAW register values for every joint, in two bus transactions.
+
+        Values are returned unscaled and unsigned on purpose. Voltage and
+        temperature follow the usual Feetech conventions (0.1 V units, and
+        degrees C directly), but the encoding of Present_Load and
+        Present_Current is not documented clearly enough to decode blind -
+        some Feetech registers put the direction in a high bit rather than
+        using two's complement. Raw is honest, and for judging which signal is
+        the more stable grip-force proxy the relative behaviour is what
+        matters, not the absolute magnitude.
+        """
+        names = self.joint_names()
+        for reader in (self._sync_reader_tel, self._sync_reader_cur):
+            reader.clearParam()
+            for name in names:
+                reader.addParam(self.joint_id(name))
+
+        with self._lock:
+            result_tel = self._sync_reader_tel.txRxPacket()
+            result_cur = self._sync_reader_cur.txRxPacket()
+        if result_tel != scs.COMM_SUCCESS:
+            raise ServoBusError(
+                f"sync_read telemetry failed: {self.packet_handler.getTxRxResult(result_tel)}"
+            )
+        if result_cur != scs.COMM_SUCCESS:
+            raise ServoBusError(
+                f"sync_read Present_Current failed: {self.packet_handler.getTxRxResult(result_cur)}"
+            )
+
+        telemetry = {}
+        for name in names:
+            motor_id = self.joint_id(name)
+            telemetry[name] = {
+                "position": self._sync_reader_tel.getData(motor_id, 56, 2),
+                "velocity": self._sync_reader_tel.getData(motor_id, 58, 2),
+                "load": self._sync_reader_tel.getData(motor_id, 60, 2),
+                "voltage": self._sync_reader_tel.getData(motor_id, 62, 1),
+                "temperature": self._sync_reader_tel.getData(motor_id, 63, 1),
+                "current": self._sync_reader_cur.getData(motor_id, 69, 2),
+            }
+        return telemetry
 
     def write_goal_deg(self, name: str, degrees: float) -> None:
         """Single-joint convenience wrapper around write_goals_deg."""
