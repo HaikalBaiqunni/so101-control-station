@@ -20,11 +20,41 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.servo_bus import JOINT_ORDER
+from core.servo_bus import JOINT_ORDER, decode_sign_magnitude
 from .style import COLORS
 
-COLUMNS = ["Joint", "Pos", "Vel", "Load", "Current", "Volt", "Temp"]
+COLUMNS = ["Joint", "Pos (ticks)", "Vel (deg/s)*", "Load (%)", "Current (mA)", "Volt (V)", "Temp (C)"]
 STATS_WINDOW = 200  # ~20 s at the 10 Hz telemetry rate
+
+DEG_PER_TICK = 360.0 / 4096.0  # same 12-bit encoder resolution as Present_Position
+
+# Scale factors cross-checked two ways: LeRobot's own sign-bit table (which
+# encodes Present_Load's direction bit at index 10 and Present_Velocity's at
+# index 15 - both match below) and a community register reference whose
+# accompanying driver code (servo.py) actually implements these exact
+# formulas, not just documents them. Current has no sign bit in either
+# source, so it decodes as plain unsigned. Position is deliberately left as
+# raw ticks here rather than converted to degrees - the Joint Control panel
+# already shows the CALIBRATED degree value for the same joint, and a second,
+# differently-zeroed "degrees" number next to it would only confuse the two.
+#
+# Velocity is the one exception: no source actually documents Present_Speed's
+# unit, so deg/s here is a DERIVED estimate (same encoder resolution as
+# position, applied to its rate of change) rather than a confirmed figure -
+# hence the "*" in its column header. Worth confirming empirically (command a
+# known Goal_Velocity, time a known angle of travel) before trusting it.
+def _convert(field: str, raw: int) -> tuple[float, str]:
+    if field == "current":
+        return raw * 6.5, "mA"
+    if field == "voltage":
+        return raw * 0.1, "V"
+    if field == "temperature":
+        return float(raw), "°C"
+    if field == "load":
+        return decode_sign_magnitude(raw, 10) / 10.0, "%"
+    if field == "velocity":
+        return decode_sign_magnitude(raw, 15) * DEG_PER_TICK, "deg/s*"
+    return float(raw), ""
 
 
 class TelemetryPanel(QGroupBox):
@@ -56,7 +86,6 @@ class TelemetryPanel(QGroupBox):
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(row, col, item)
         self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(1, 50)  # "Pos" needs 4 digits (e.g. 2048), not just "-"
         # tall enough for all six joints plus the header - gripper is the row
         # that actually matters here, so it must never be the one scrolled off
         self.table.setMinimumHeight(
@@ -84,9 +113,11 @@ class TelemetryPanel(QGroupBox):
         self.tabs.addTab(graph_tab, "Graph")
 
         self.caption = QLabel(
-            "Raw registers at ~10 Hz. Volt = 0.1 V units, Temp = deg C. "
-            "Load/Current encoding is unverified - compare relative stability, "
-            "not absolute magnitude."
+            "~10 Hz. Volt/Temp/Current/Load are cross-checked conversions "
+            "(see _convert() for sourcing); Vel (deg/s*) is a derived estimate, "
+            "not a confirmed unit - verify empirically before trusting it. "
+            "Pos is left as raw encoder ticks to avoid a second, differently-"
+            "zeroed 'degrees' next to Joint Control's calibrated one."
         )
         self.caption.setObjectName("sectionCaption")
         self.caption.setWordWrap(True)
@@ -217,7 +248,8 @@ class TelemetryPanel(QGroupBox):
 
     def _refresh_chart(self) -> None:
         joint, field = self.watched()
-        self.chart.setTitle(f"{joint}.{field}")
+        _, unit = _convert(field, 0)
+        self.chart.setTitle(f"{joint}.{field} ({unit})" if unit else f"{joint}.{field}")
         if not self._samples:
             self.chart_series.clear()
             return
@@ -261,25 +293,27 @@ class TelemetryPanel(QGroupBox):
             values = telemetry.get(name)
             if not values:
                 continue
-            for col, key in enumerate(
-                ("position", "velocity", "load", "current", "voltage", "temperature"), start=1
-            ):
-                self.table.item(row, col).setText(str(values.get(key, "-")))
+            self.table.item(row, 1).setText(str(values.get("position", "-")))  # raw ticks, see _convert() docstring
+            for col, key in enumerate(("velocity", "load", "current", "voltage", "temperature"), start=2):
+                raw = values.get(key)
+                text = "-" if raw is None else f"{_convert(key, raw)[0]:.1f}"
+                self.table.item(row, col).setText(text)
 
         joint, field = self.watched()
-        value = telemetry.get(joint, {}).get(field)
-        if value is None:
+        raw = telemetry.get(joint, {}).get(field)
+        if raw is None:
             return
+        value, unit = _convert(field, raw)
 
         if self._series_start is None:
             self._series_start = time.monotonic()
         self._samples.append((time.monotonic() - self._series_start, value))
 
-        raw_values = [v for _, v in self._samples]
-        lo, hi = min(raw_values), max(raw_values)
-        mean = sum(raw_values) / len(raw_values)
+        values = [v for _, v in self._samples]
+        lo, hi = min(values), max(values)
+        mean = sum(values) / len(values)
         self.stats_label.setText(
-            f"{joint}.{field}  now {value}   min {lo}   max {hi}   "
-            f"spread {hi - lo}   mean {mean:.1f}   n={len(raw_values)}"
+            f"{joint}.{field} ({unit})  now {value:.1f}   min {lo:.1f}   max {hi:.1f}   "
+            f"spread {hi - lo:.1f}   mean {mean:.1f}   n={len(values)}"
         )
         self._refresh_chart()
