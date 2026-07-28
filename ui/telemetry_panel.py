@@ -57,6 +57,19 @@ def _convert(field: str, raw: int) -> tuple[float, str]:
     return float(raw), ""
 
 
+def _ticks_delta(current: int, previous: int, wheel: int = 4096) -> int:
+    """Shortest signed distance from `previous` to `current` on a 12-bit
+    wraparound encoder - without this, a continuous-turn joint (wrist_roll)
+    crossing the 0/4095 boundary would register as a ~4096-tick spike instead
+    of the small step it actually was."""
+    delta = current - previous
+    if delta > wheel // 2:
+        delta -= wheel
+    elif delta < -wheel // 2:
+        delta += wheel
+    return delta
+
+
 class TelemetryPanel(QGroupBox):
     """Live read-out of the servos' own feedback registers, for deciding
     empirically which signal makes a usable grip-force proxy - the point is to
@@ -99,7 +112,10 @@ class TelemetryPanel(QGroupBox):
         table_tab_layout.setContentsMargins(0, 6, 0, 0)
         table_tab_layout.addWidget(self.table)
 
-        self.chart, self.chart_series, self.chart_x_axis, self.chart_y_axis = self._build_chart()
+        (
+            self.chart, self.chart_series, self.computed_series,
+            self.chart_x_axis, self.chart_y_axis,
+        ) = self._build_chart()
         chart_view = QChartView(self.chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setMinimumHeight(self.table.minimumHeight())
@@ -115,9 +131,13 @@ class TelemetryPanel(QGroupBox):
         self.caption = QLabel(
             "~10 Hz. Volt/Temp/Current/Load are cross-checked conversions "
             "(see _convert() for sourcing); Vel (deg/s*) is a derived estimate, "
-            "not a confirmed unit - verify empirically before trusting it. "
-            "Pos is left as raw encoder ticks to avoid a second, differently-"
-            "zeroed 'degrees' next to Joint Control's calibrated one."
+            "not a confirmed unit. Watching velocity overlays a second "
+            "'computed' trace, numerically differentiated from Present_Position "
+            "(already confirmed) over the same interval - if it tracks the "
+            "reported trace, the derived formula is confirmed on THIS hardware, "
+            "not just assumed from documentation. Pos is left as raw encoder "
+            "ticks to avoid a second, differently-zeroed 'degrees' next to "
+            "Joint Control's calibrated one."
         )
         self.caption.setObjectName("sectionCaption")
         self.caption.setWordWrap(True)
@@ -204,7 +224,14 @@ class TelemetryPanel(QGroupBox):
         # (elapsed_seconds, value) pairs for the currently watched signal -
         # backs both the stats line and the chart, so they can never disagree
         self._samples: deque = deque(maxlen=STATS_WINDOW)
+        # same, but for the numerically-differentiated cross-check - only
+        # populated while watching "velocity"
+        self._computed_samples: deque = deque(maxlen=STATS_WINDOW)
         self._series_start: float | None = None
+        # (wall_clock_time, raw_position_ticks) from the previous sample of
+        # whichever joint is currently watched - cleared on every watch
+        # change/reset, so it never straddles a switch to a different joint
+        self._prev_position: tuple[float, int] | None = None
 
     # ---------------------------------------------------------------- chart setup
     def _build_chart(self):
@@ -215,17 +242,29 @@ class TelemetryPanel(QGroupBox):
         muted = QColor(COLORS["text_muted"])
 
         chart = QChart()
-        chart.legend().hide()
+        chart.legend().setLabelColor(muted)
+        chart.legend().hide()  # shown only while watching velocity - see _refresh_chart
         chart.setBackgroundBrush(QColor(COLORS["panel"]))
         chart.setBackgroundPen(QPen(border))
         chart.setTitleBrush(muted)
         chart.setMargins(QMargins(6, 6, 6, 6))
 
         series = QLineSeries()
+        series.setName("reported")
         pen = QPen(QColor(COLORS["accent"]))
         pen.setWidthF(1.8)
         series.setPen(pen)
         chart.addSeries(series)
+
+        # only ever populated while watching "velocity" - the numerically-
+        # differentiated cross-check against Present_Position, see update_telemetry()
+        computed_series = QLineSeries()
+        computed_series.setName("computed")
+        computed_pen = QPen(QColor(COLORS["warn"]))
+        computed_pen.setWidthF(1.8)
+        computed_pen.setStyle(Qt.DashLine)
+        computed_series.setPen(computed_pen)
+        chart.addSeries(computed_series)
 
         x_axis = QValueAxis()
         x_axis.setLabelFormat("%.1f")
@@ -236,6 +275,7 @@ class TelemetryPanel(QGroupBox):
         x_axis.setLinePen(QPen(border))
         chart.addAxis(x_axis, Qt.AlignBottom)
         series.attachAxis(x_axis)
+        computed_series.attachAxis(x_axis)
 
         y_axis = QValueAxis()
         y_axis.setLabelsColor(muted)
@@ -243,25 +283,39 @@ class TelemetryPanel(QGroupBox):
         y_axis.setLinePen(QPen(border))
         chart.addAxis(y_axis, Qt.AlignLeft)
         series.attachAxis(y_axis)
+        computed_series.attachAxis(y_axis)
 
-        return chart, series, x_axis, y_axis
+        return chart, series, computed_series, x_axis, y_axis
 
     def _refresh_chart(self) -> None:
         joint, field = self.watched()
         _, unit = _convert(field, 0)
         self.chart.setTitle(f"{joint}.{field} ({unit})" if unit else f"{joint}.{field}")
+
+        is_velocity = field == "velocity"
+        self.chart.legend().setVisible(is_velocity)
+
         if not self._samples:
             self.chart_series.clear()
+            self.computed_series.clear()
             return
 
         now = self._samples[-1][0]
         points = [(t - now, v) for t, v in self._samples]  # x: seconds ago, 0 = latest
         self.chart_series.replace([QPointF(x, y) for x, y in points])
-
+        all_values = [v for _, v in points]
         x_lo = points[0][0]
+
+        if is_velocity and self._computed_samples:
+            comp_points = [(t - now, v) for t, v in self._computed_samples]
+            self.computed_series.replace([QPointF(x, y) for x, y in comp_points])
+            all_values += [v for _, v in comp_points]
+            x_lo = min(x_lo, comp_points[0][0])
+        else:
+            self.computed_series.clear()
+
         self.chart_x_axis.setRange(min(x_lo, -1.0), 0.0)
-        values = [v for _, v in points]
-        y_lo, y_hi = min(values), max(values)
+        y_lo, y_hi = min(all_values), max(all_values)
         pad = max(1.0, (y_hi - y_lo) * 0.15)
         self.chart_y_axis.setRange(y_lo - pad, y_hi + pad)
 
@@ -273,7 +327,9 @@ class TelemetryPanel(QGroupBox):
 
     def _reset_stats(self) -> None:
         self._samples.clear()
+        self._computed_samples.clear()
         self._series_start = None
+        self._prev_position = None
         self.stats_label.setText("no samples yet")
         self._refresh_chart()
 
@@ -300,20 +356,56 @@ class TelemetryPanel(QGroupBox):
                 self.table.item(row, col).setText(text)
 
         joint, field = self.watched()
-        raw = telemetry.get(joint, {}).get(field)
+        joint_telemetry = telemetry.get(joint, {})
+        raw = joint_telemetry.get(field)
         if raw is None:
             return
         value, unit = _convert(field, raw)
 
         if self._series_start is None:
             self._series_start = time.monotonic()
-        self._samples.append((time.monotonic() - self._series_start, value))
+        sample_t = time.monotonic() - self._series_start
+        self._samples.append((sample_t, value))
+
+        computed_now = None
+        if field == "velocity":
+            computed_now = self._update_computed_velocity(joint_telemetry, sample_t)
 
         values = [v for _, v in self._samples]
         lo, hi = min(values), max(values)
         mean = sum(values) / len(values)
-        self.stats_label.setText(
+        stats_text = (
             f"{joint}.{field} ({unit})  now {value:.1f}   min {lo:.1f}   max {hi:.1f}   "
             f"spread {hi - lo:.1f}   mean {mean:.1f}   n={len(values)}"
         )
+        if field == "velocity" and self._computed_samples:
+            comp_values = [v for _, v in self._computed_samples]
+            comp_mean = sum(comp_values) / len(comp_values)
+            ratio = f"{value / computed_now:.2f}" if computed_now else "-"
+            stats_text += (
+                f"   |   computed now {computed_now:.1f} deg/s"
+                if computed_now is not None else "   |   computed: waiting for 2nd sample"
+            )
+            stats_text += f"   mean {comp_mean:.1f}   ratio(reported/computed) {ratio}"
+        self.stats_label.setText(stats_text)
         self._refresh_chart()
+
+    def _update_computed_velocity(self, joint_telemetry: dict, sample_t: float) -> float | None:
+        """Numerically differentiates the SAME joint's Present_Position (raw
+        ticks, already-confirmed 360/4096 resolution) between this reading and
+        the previous one - an independent, from-first-principles cross-check
+        of the reported Present_Velocity value, using no assumption about
+        Present_Velocity's own units at all."""
+        pos_raw = joint_telemetry.get("position")
+        if pos_raw is None:
+            return None
+        now_wall = time.monotonic()
+        computed = None
+        if self._prev_position is not None:
+            prev_wall, prev_pos = self._prev_position
+            dt = now_wall - prev_wall
+            if dt > 0:
+                computed = _ticks_delta(pos_raw, prev_pos) * DEG_PER_TICK / dt
+                self._computed_samples.append((sample_t, computed))
+        self._prev_position = (now_wall, pos_raw)
+        return computed
