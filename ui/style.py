@@ -76,4 +76,28 @@ QLabel#statusDanger {{ color: {COLORS['danger']}; font-weight: 700; }}
 QLabel#sectionCaption {{ color: {COLORS['text_muted']}; font-size: 11px; letter-spacing: 0.5px; }}
 
 QStatusBar {{ background-color: {COLORS['panel']}; border-top: 1px solid {COLORS['border']}; }}
+
+QFrame#keycap {{
+    background-color: {COLORS['bg']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 8px;
+}}
+QFrame#keycap[active="true"] {{
+    background-color: {COLORS['accent']};
+    border: 1px solid {COLORS['accent_hover']};
+}}
+QLabel#keycapLetter {{
+    font-size: 18px;
+    font-weight: 700;
+    color: {COLORS['text']};
+}}
+QLabel#keycapJoint {{
+    font-size: 10px;
+    color: {COLORS['text_muted']};
+    letter-spacing: 0.3px;
+}}
+QFrame#keycap[active="true"] QLabel#keycapLetter,
+QFrame#keycap[active="true"] QLabel#keycapJoint {{
+    color: white;
+}}
 """

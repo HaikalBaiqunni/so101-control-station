@@ -5,7 +5,7 @@ import json
 import os
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -34,6 +34,7 @@ from .connection_panel import ConnectionPanel
 from .control_source_panel import ControlSourcePanel
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .joint_panel import JointPanel
+from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
 from .teaching_panel import TeachingPanel
 from .telemetry_panel import TelemetryPanel
 from .twin_panel import TwinPanel
@@ -41,6 +42,9 @@ from .twin_panel import TwinPanel
 GAMEPAD_TICK_MS = 33          # ~30 Hz jog integration
 GAMEPAD_DEADZONE = 0.15
 GAMEPAD_MAX_DEG_PER_S = 45.0  # full stick deflection = 45 deg/s
+
+KEYBOARD_JOG_TICK_MS = 33
+KEYBOARD_MAX_DEG_PER_S = 30.0  # gentler than the gamepad's max - keys are on/off, not proportional
 
 PLAYBACK_TICK_MS = 33
 PLAYBACK_ARRIVE_TOLERANCE_DEG = 3.0
@@ -66,6 +70,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("SO-101 Control Station")
         self.resize(1560, 880)
+        self.setFocusPolicy(Qt.StrongFocus)  # so keyPressEvent fires without a child widget stealing focus first
 
         # ================================================================ CONTROL TAB
         self.connection_panel = ConnectionPanel()
@@ -73,6 +78,7 @@ class MainWindow(QMainWindow):
         self.joint_panel = JointPanel()
         self.teaching_panel = TeachingPanel()
         self.gamepad_panel = GamepadPanel()
+        self.keyboard_jog_panel = KeyboardJogPanel()
         self.twin_panel = TwinPanel()
         self.camera_panel = CameraPanel()
         self.telemetry_panel = TelemetryPanel()
@@ -83,6 +89,7 @@ class MainWindow(QMainWindow):
         left.addWidget(self.joint_panel)
         left.addWidget(self.teaching_panel)
         left.addWidget(self.gamepad_panel)
+        left.addWidget(self.keyboard_jog_panel)
         left.addStretch(1)
         left_widget = QWidget()
         left_widget.setLayout(left)
@@ -159,6 +166,8 @@ class MainWindow(QMainWindow):
         self.control_source: str = "manual"
         self._last_gamepad_axes: dict[int, float] = {}
         self._last_tick = time.monotonic()
+        self._held_keys: set = set()
+        self._last_keyboard_tick = time.monotonic()
         # Workers mid-shutdown: stop() only flips a flag, the OS thread is
         # still alive for a bit after that. Dropping the last Python
         # reference to a QThread while its thread is still running makes
@@ -234,6 +243,13 @@ class MainWindow(QMainWindow):
 
         self.gamepad_timer = QTimer(self)
         self.gamepad_timer.timeout.connect(self._gamepad_tick)
+
+        # No hardware to enable/detect (unlike the gamepad) - just runs
+        # continuously and gates on self.control_source inside the tick,
+        # same as the gamepad timer does once it's started.
+        self.keyboard_timer = QTimer(self)
+        self.keyboard_timer.timeout.connect(self._keyboard_jog_tick)
+        self.keyboard_timer.start(KEYBOARD_JOG_TICK_MS)
 
         self._apply_control_source_lock()
 
@@ -334,6 +350,9 @@ class MainWindow(QMainWindow):
     def _on_control_source_changed(self, source: str) -> None:
         self.control_source = source
         self._apply_control_source_lock()
+        if source != "keyboard":
+            self._held_keys.clear()
+            self.keyboard_jog_panel.clear_all()
         self.statusBar().showMessage(f"Control source: {source}")
         self.session_logger.log_event(f"Control source changed to: {source}")
 
@@ -487,6 +506,42 @@ class MainWindow(QMainWindow):
             if abs(value) < GAMEPAD_DEADZONE:
                 continue
             delta = sign * value * GAMEPAD_MAX_DEG_PER_S * dt
+            new_deg = self.current_positions.get(name, 0.0) + delta
+            self._drive_joint_programmatically(name, new_deg)
+
+    # ---------------------------------------------------------------- keyboard jog
+    def keyPressEvent(self, event) -> None:
+        if not event.isAutoRepeat() and event.key() in KEY_JOG_MAP:
+            self._held_keys.add(event.key())
+            self.keyboard_jog_panel.set_key_active(event.key(), True)
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:
+        if not event.isAutoRepeat() and event.key() in KEY_JOG_MAP:
+            self._held_keys.discard(event.key())
+            self.keyboard_jog_panel.set_key_active(event.key(), False)
+            return
+        super().keyReleaseEvent(event)
+
+    def changeEvent(self, event) -> None:
+        # A key physically still held when the window loses focus (alt-tab,
+        # clicking another app) never generates its keyReleaseEvent - without
+        # this, that joint would jog forever until the key is pressed again.
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self._held_keys.clear()
+            self.keyboard_jog_panel.clear_all()
+        super().changeEvent(event)
+
+    def _keyboard_jog_tick(self) -> None:
+        now = time.monotonic()
+        dt = now - self._last_keyboard_tick
+        self._last_keyboard_tick = now
+        if self.control_source != "keyboard" or self._playback_index is not None or not self._held_keys:
+            return
+        for key in self._held_keys:
+            name, sign = KEY_JOG_MAP[key]
+            delta = sign * KEYBOARD_MAX_DEG_PER_S * dt
             new_deg = self.current_positions.get(name, 0.0) + delta
             self._drive_joint_programmatically(name, new_deg)
 

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 from serial.tools import list_ports
 
-SOURCES = ["manual", "gamepad", "leader"]
+SOURCES = ["manual", "gamepad", "leader", "keyboard"]
 
 
 class ControlSourcePanel(QGroupBox):
@@ -33,10 +33,11 @@ class ControlSourcePanel(QGroupBox):
         self.manual_radio = QRadioButton("Manual (sliders)")
         self.gamepad_radio = QRadioButton("Gamepad")
         self.leader_radio = QRadioButton("Leader arm (teleoperate)")
+        self.keyboard_radio = QRadioButton("Keyboard jog")
         self.manual_radio.setChecked(True)
 
         self.group = QButtonGroup(self)
-        for i, rb in enumerate([self.manual_radio, self.gamepad_radio, self.leader_radio]):
+        for i, rb in enumerate([self.manual_radio, self.gamepad_radio, self.leader_radio, self.keyboard_radio]):
             self.group.addButton(rb, i)
         self.group.idClicked.connect(self._on_source_clicked)
 
@@ -76,6 +77,7 @@ class ControlSourcePanel(QGroupBox):
         layout.addWidget(self.gamepad_radio)
         layout.addWidget(self.leader_radio)
         layout.addWidget(self.leader_form)
+        layout.addWidget(self.keyboard_radio)
 
     def _refresh_leader_ports(self) -> None:
         current = self.leader_port_combo.currentText()
