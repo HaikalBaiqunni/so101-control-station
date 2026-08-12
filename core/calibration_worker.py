@@ -97,6 +97,11 @@ class CalibrationWorker(QThread):
     def _handle(self, command: str) -> None:
         try:
             if command == "reset":
+                # Also cancels an in-progress recording pass: reset is the
+                # "start over" escape hatch, and leaving _recording set would
+                # have the loop keep widening the min/max it just cleared,
+                # seeded from wherever the arm happens to be sitting.
+                self._recording = False
                 for name in self.joint_names:
                     self.bus.prepare_for_calibration(name)
                 self.mins = {}
@@ -112,6 +117,17 @@ class CalibrationWorker(QThread):
             elif command == "stop_recording":
                 self._recording = False
             elif command == "finish":
+                # The GUI gates the step order, but finishing without a
+                # recording pass would KeyError deep inside the loop below
+                # after having already written limits to some of the servos -
+                # a half-configured arm. Refuse up front instead.
+                missing = [name for name in self.joint_names if name not in self.mins]
+                if missing:
+                    self.error.emit(
+                        "Cannot finish: no range recorded for "
+                        f"{', '.join(missing)}. Run steps 1-4 first."
+                    )
+                    return
                 for name in FULL_TURN_JOINTS:
                     if name in self.joint_names:
                         self.mins[name] = 0

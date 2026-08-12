@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from serial.tools import list_ports
+
+from .setup_panel import describe_ports
 
 SOURCES = ["manual", "gamepad", "leader", "keyboard"]
 
@@ -23,7 +24,7 @@ class ControlSourcePanel(QGroupBox):
     """Arbitrates who is allowed to command the connected (follower) arm right
     now - only one source drives it at a time, to avoid fighting inputs."""
 
-    source_changed = Signal(str)  # "manual" | "gamepad" | "leader"
+    source_changed = Signal(str)  # one of SOURCES
     leader_connect_requested = Signal(str, str)   # port, calibration_path
     leader_disconnect_requested = Signal()
 
@@ -82,9 +83,18 @@ class ControlSourcePanel(QGroupBox):
     def _refresh_leader_ports(self) -> None:
         current = self.leader_port_combo.currentText()
         self.leader_port_combo.clear()
-        self.leader_port_combo.addItems([p.device for p in list_ports.comports()])
+        for device, label in describe_ports():
+            self.leader_port_combo.addItem(label, device)
         if current:
             self.leader_port_combo.setEditText(current)
+
+    def selected_leader_port(self) -> str:
+        """The combo shows "COM5 - USB-SERIAL CH340"; the SDK needs "COM5"."""
+        text = self.leader_port_combo.currentText().strip()
+        index = self.leader_port_combo.findText(text)
+        if index >= 0:
+            return self.leader_port_combo.itemData(index)
+        return text.split(" - ", 1)[0].strip()
 
     def _browse_leader_calibration(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select leader calibration file", "", "JSON (*.json)")
@@ -99,7 +109,7 @@ class ControlSourcePanel(QGroupBox):
     def _on_leader_connect_clicked(self) -> None:
         if self.leader_connect_btn.text() == "Connect Leader":
             self.leader_connect_requested.emit(
-                self.leader_port_combo.currentText(), self.leader_calib_edit.text()
+                self.selected_leader_port(), self.leader_calib_edit.text()
             )
         else:
             self.leader_disconnect_requested.emit()

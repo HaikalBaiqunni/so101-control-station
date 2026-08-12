@@ -18,11 +18,31 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from serial.tools import list_ports
 
 from core.servo_bus import JOINT_ORDER
 
+from .setup_panel import describe_ports
+
 DEFAULT_CALIBRATION_ROOT = os.path.expanduser("~/.cache/huggingface/lerobot/calibration")
+
+# The five steps, in the only order they are valid in. Each one is enabled
+# only once its predecessor has run: the sequence is stateful on the servos
+# themselves (homing offsets must be cleared before "middle" means anything,
+# and "finish" writes whatever min/max the recording pass happened to collect,
+# which is garbage if no recording ever ran). Nothing in the protocol stops a
+# user clicking 5 straight after connecting - the result is an arm whose
+# limits are a single point, which then refuses to move at all and looks like
+# a hardware fault. Gating the buttons is what makes the order self-evident.
+STEP_SEQUENCE = ["reset", "middle", "start", "stop", "finish"]
+
+STEP_NEXT_HINT = {
+    "reset": "Next: step 1 - clear any previous calibration off the servos.",
+    "middle": "Next: park every joint at the middle of its travel by hand, then step 2.",
+    "start": "Next: step 3, then move each joint through its full range.",
+    "stop": "Recording. Move every joint except wrist_roll through its FULL range, then step 4.",
+    "finish": "Next: step 5 to write the limits and save the file.",
+    None: "Done - calibration saved. Re-run from step 1 any time.",
+}
 
 
 class CalibrationPanel(QWidget):
@@ -71,15 +91,30 @@ class CalibrationPanel(QWidget):
         # -- step buttons -----------------------------------------------------
         steps_box = QGroupBox("2 - CALIBRATION STEPS (run in order)")
         self.reset_btn = QPushButton("1. Reset motors")
-        self.reset_btn.clicked.connect(self.reset_requested)
+        self.reset_btn.clicked.connect(lambda: self._on_step("reset"))
         self.middle_btn = QPushButton("2. Set middle (arm parked at centre now)")
-        self.middle_btn.clicked.connect(self.set_middle_requested)
+        self.middle_btn.clicked.connect(lambda: self._on_step("middle"))
         self.start_btn = QPushButton("3. Start recording range of motion")
-        self.start_btn.clicked.connect(self.start_recording_requested)
+        self.start_btn.clicked.connect(lambda: self._on_step("start"))
         self.stop_btn = QPushButton("4. Stop recording")
-        self.stop_btn.clicked.connect(self.stop_recording_requested)
+        self.stop_btn.clicked.connect(lambda: self._on_step("stop"))
         self.finish_btn = QPushButton("5. Finish && Save...")
-        self.finish_btn.clicked.connect(self.finish_requested)
+        self.finish_btn.clicked.connect(lambda: self._on_step("finish"))
+
+        self._step_buttons = {
+            "reset": self.reset_btn, "middle": self.middle_btn, "start": self.start_btn,
+            "stop": self.stop_btn, "finish": self.finish_btn,
+        }
+        self._step_signals = {
+            "reset": self.reset_requested, "middle": self.set_middle_requested,
+            "start": self.start_recording_requested, "stop": self.stop_recording_requested,
+            "finish": self.finish_requested,
+        }
+        self._next_step: str | None = "reset"
+
+        self.step_hint = QLabel("")
+        self.step_hint.setObjectName("sectionCaption")
+        self.step_hint.setWordWrap(True)
 
         hint = QLabel(
             "Step 2: move all joints (by hand) to roughly the middle of their travel, then click.\n"
@@ -90,7 +125,8 @@ class CalibrationPanel(QWidget):
         hint.setWordWrap(True)
 
         steps_layout = QVBoxLayout(steps_box)
-        for w in (self.reset_btn, self.middle_btn, self.start_btn, self.stop_btn, self.finish_btn, hint):
+        for w in (self.reset_btn, self.middle_btn, self.start_btn, self.stop_btn,
+                  self.finish_btn, self.step_hint, hint):
             steps_layout.addWidget(w)
 
         # -- live table -------------------------------------------------------
@@ -118,22 +154,54 @@ class CalibrationPanel(QWidget):
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()
         self.port_combo.clear()
-        self.port_combo.addItems([p.device for p in list_ports.comports()])
+        for device, label in describe_ports():
+            self.port_combo.addItem(label, device)
         if current:
             self.port_combo.setEditText(current)
+
+    def selected_port(self) -> str:
+        """The combo shows "COM5 - USB-SERIAL CH340"; the SDK needs "COM5"."""
+        text = self.port_combo.currentText().strip()
+        index = self.port_combo.findText(text)
+        if index >= 0:
+            return self.port_combo.itemData(index)
+        return text.split(" - ", 1)[0].strip()
 
     def _on_role_changed(self, _role: str) -> None:
         pass  # role only affects the suggested save path, handled by MainWindow
 
     def _on_connect_clicked(self) -> None:
         if self.connect_btn.text() == "Connect":
-            self.connect_requested.emit(self.port_combo.currentText())
+            self.connect_requested.emit(self.selected_port())
         else:
             self.disconnect_requested.emit()
 
+    def _on_step(self, step: str) -> None:
+        """Emit the step's signal and advance the gate. `finish` is the one
+        step that can legitimately be repeated (the save dialog can be
+        cancelled), so it leaves itself enabled until MainWindow confirms a
+        file was actually written."""
+        self._step_signals[step].emit()
+        if step != "finish":
+            self._next_step = STEP_SEQUENCE[STEP_SEQUENCE.index(step) + 1]
+            self._apply_step_gate()
+
+    def _apply_step_gate(self) -> None:
+        for name, button in self._step_buttons.items():
+            # Step 1 stays live throughout: starting over is always valid, and
+            # is the only way out if the user realises mid-recording that they
+            # parked the arm somewhere wrong.
+            button.setEnabled(name == self._next_step or name == "reset")
+        self.step_hint.setText(STEP_NEXT_HINT.get(self._next_step, ""))
+
     def _set_step_buttons_enabled(self, enabled: bool) -> None:
-        for w in (self.reset_btn, self.middle_btn, self.start_btn, self.stop_btn, self.finish_btn):
-            w.setEnabled(enabled)
+        if enabled:
+            self._next_step = "reset"
+            self._apply_step_gate()
+        else:
+            for button in self._step_buttons.values():
+                button.setEnabled(False)
+            self.step_hint.setText("Connect to begin.")
 
     def role(self) -> str:
         return self.role_combo.currentText().lower()  # "follower" | "leader"
@@ -166,4 +234,10 @@ class CalibrationPanel(QWidget):
             return
         with open(path, "w", encoding="utf-8") as f:
             json.dump(calibration_dict, f, indent=4)
-        QMessageBox.information(self, "Saved", f"Calibration saved to:\n{path}")
+        self._next_step = None
+        self._apply_step_gate()
+        QMessageBox.information(
+            self, "Saved",
+            f"Calibration saved to:\n{path}\n\n"
+            "Point the Control tab's Calibration field at this file to start moving the arm.",
+        )

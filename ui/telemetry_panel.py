@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.servo_bus import JOINT_ORDER, decode_sign_magnitude
+
 from .style import COLORS
 
 COLUMNS = ["Joint", "Pos (ticks)", "Vel (deg/s)*", "Load (%)", "Current (mA)", "Volt (V)", "Temp (C)"]
@@ -43,7 +44,11 @@ DEG_PER_TICK = 360.0 / 4096.0  # same 12-bit encoder resolution as Present_Posit
 # position, applied to its rate of change) rather than a confirmed figure -
 # hence the "*" in its column header. Worth confirming empirically (command a
 # known Goal_Velocity, time a known angle of travel) before trusting it.
-def _convert(field: str, raw: int) -> tuple[float, str]:
+#
+# Public rather than private because the CSV writer in ui/main_window.py logs
+# the converted value alongside the raw one, and a log whose numbers disagree
+# with the table they were read off would be worse than no log at all.
+def convert_telemetry(field: str, raw: int) -> tuple[float, str]:
     if field == "current":
         return raw * 6.5, "mA"
     if field == "voltage":
@@ -130,7 +135,7 @@ class TelemetryPanel(QGroupBox):
 
         self.caption = QLabel(
             "~10 Hz. Volt/Temp/Current/Load are cross-checked conversions "
-            "(see _convert() for sourcing); Vel (deg/s*) is a derived estimate, "
+            "(see convert_telemetry() for sourcing); Vel (deg/s*) is a derived estimate, "
             "not a confirmed unit. Watching velocity overlays a second "
             "'computed' trace, numerically differentiated from Present_Position "
             "(already confirmed) over the same interval - if it tracks the "
@@ -289,7 +294,7 @@ class TelemetryPanel(QGroupBox):
 
     def _refresh_chart(self) -> None:
         joint, field = self.watched()
-        _, unit = _convert(field, 0)
+        _, unit = convert_telemetry(field, 0)
         self.chart.setTitle(f"{joint}.{field} ({unit})" if unit else f"{joint}.{field}")
 
         is_velocity = field == "velocity"
@@ -349,10 +354,10 @@ class TelemetryPanel(QGroupBox):
             values = telemetry.get(name)
             if not values:
                 continue
-            self.table.item(row, 1).setText(str(values.get("position", "-")))  # raw ticks, see _convert() docstring
+            self.table.item(row, 1).setText(str(values.get("position", "-")))  # raw ticks, see convert_telemetry() docstring
             for col, key in enumerate(("velocity", "load", "current", "voltage", "temperature"), start=2):
                 raw = values.get(key)
-                text = "-" if raw is None else f"{_convert(key, raw)[0]:.1f}"
+                text = "-" if raw is None else f"{convert_telemetry(key, raw)[0]:.1f}"
                 self.table.item(row, col).setText(text)
 
         joint, field = self.watched()
@@ -360,7 +365,7 @@ class TelemetryPanel(QGroupBox):
         raw = joint_telemetry.get(field)
         if raw is None:
             return
-        value, unit = _convert(field, raw)
+        value, unit = convert_telemetry(field, raw)
 
         if self._series_start is None:
             self._series_start = time.monotonic()
