@@ -71,7 +71,10 @@ jobs:
       - name: Construct MainWindow headless
         env:
           QT_QPA_PLATFORM: offscreen
-          MUJOCO_GL: osmesa
+          # Nothing here renders - MuJoCo only needs to be importable. It
+          # resolves its GL backend at import time, so naming a real one
+          # (osmesa/egl) would require that library on the runner for no gain.
+          MUJOCO_GL: disable
         run: |
           python - <<'PY'
           from PySide6.QtWidgets import QApplication

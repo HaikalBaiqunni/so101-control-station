@@ -9,11 +9,17 @@ import os
 import sys
 
 # Must happen BEFORE `import mujoco` (transitively pulled in by ui.main_window
-# -> core.digital_twin). On some Windows terminals/consoles, mujoco's default
-# GL backend auto-detection trips ctypes.WinDLL with "[WinError 6] The handle
-# is invalid" while loading mujoco.dll - forcing the native WGL backend avoids
-# whatever console-handle probing triggers that.
-os.environ.setdefault("MUJOCO_GL", "wgl")
+# -> core.digital_twin), which resolves and loads its GL backend at import
+# time rather than on first render.
+#
+# Windows only: mujoco's default backend auto-detection trips ctypes.WinDLL
+# with "[WinError 6] The handle is invalid" while loading mujoco.dll on some
+# terminals/consoles - forcing the native WGL backend avoids whatever
+# console-handle probing triggers that. WGL is a Windows API, so pinning it
+# unconditionally would break the twin everywhere else; other platforms are
+# left to mujoco's own detection (EGL/GLX), which works there.
+if sys.platform == "win32":
+    os.environ.setdefault("MUJOCO_GL", "wgl")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
