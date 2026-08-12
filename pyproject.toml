@@ -1,0 +1,60 @@
+[project]
+name = "so101-control-station"
+version = "0.2.0"
+description = "Standalone GUI for setting up, calibrating and teleoperating a Feetech STS3215-based SO-101 / SO-ARM100 arm"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Haikal Baiqunni" }]
+keywords = ["robotics", "so-101", "so-arm100", "feetech", "sts3215", "lerobot", "mujoco", "teleoperation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+# Kept in lockstep with requirements.txt, which stays the documented install
+# path - a beginner following the README should never need to know what an
+# extras marker is.
+dependencies = [
+    "PySide6>=6.6",
+    "feetech-servo-sdk>=1.0.0",
+    "pyserial>=3.5",
+    "opencv-python>=4.8",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "pygame>=2.5",
+    "pygrabber>=0.2; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/HaikalBaiqunni/so101-control-station"
+Issues = "https://github.com/HaikalBaiqunni/so101-control-station/issues"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = [
+    "E501",  # long lines are almost always the explanatory comments, which
+             # this codebase treats as load-bearing rather than noise
+    "B008",  # Qt signal/slot lambdas legitimately build widgets in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # conftest sets Qt/MuJoCo env vars before any ui import
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

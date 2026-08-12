@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
 )
-from serial.tools import list_ports
+
+from .setup_panel import describe_ports
 
 
 class ConnectionPanel(QGroupBox):
@@ -62,9 +63,18 @@ class ConnectionPanel(QGroupBox):
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()
         self.port_combo.clear()
-        self.port_combo.addItems([p.device for p in list_ports.comports()])
+        for device, label in describe_ports():
+            self.port_combo.addItem(label, device)
         if current:
             self.port_combo.setEditText(current)
+
+    def selected_port(self) -> str:
+        """The combo shows "COM5 - USB-SERIAL CH340"; the SDK needs "COM5"."""
+        text = self.port_combo.currentText().strip()
+        index = self.port_combo.findText(text)
+        if index >= 0:
+            return self.port_combo.itemData(index)
+        return text.split(" - ", 1)[0].strip()
 
     def _browse_calibration(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select calibration file", "", "JSON (*.json)")
@@ -73,7 +83,7 @@ class ConnectionPanel(QGroupBox):
 
     def _on_connect_clicked(self) -> None:
         if self.connect_btn.text() == "Connect":
-            self.connect_requested.emit(self.port_combo.currentText(), self.calib_edit.text())
+            self.connect_requested.emit(self.selected_port(), self.calib_edit.text())
         else:
             self.disconnect_requested.emit()
 

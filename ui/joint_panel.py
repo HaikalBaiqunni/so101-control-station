@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
 from core.servo_bus import JOINT_ORDER
 

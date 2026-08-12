@@ -1,0 +1,83 @@
+name: Bug report
+description: Something crashed, misbehaved, or moved the arm in a way it shouldn't have
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: [docs/TROUBLESHOOTING.md](https://github.com/HaikalBaiqunni/so101-control-station/blob/master/docs/TROUBLESHOOTING.md)
+        covers the failures that hit almost every first-time user — empty bus scans,
+        port-in-use errors, `There is no status packet!`, camera crashes.
+
+  - type: dropdown
+    id: tab
+    attributes:
+      label: Which tab?
+      options:
+        - "1 - Setup"
+        - "2 - Calibration"
+        - "3 - Control"
+        - Startup / the app never opened
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Exact error text
+      description: From the status bar and/or the terminal. Paste it verbatim rather than paraphrasing.
+      render: text
+
+  - type: textarea
+    id: session-log
+    attributes:
+      label: Session log
+      description: |
+        The app writes a timestamped markdown log to `logs/` every run; its path is
+        shown in the status bar. Attach or paste the one from the failing run — it
+        contains every connect, disconnect, error and mode change plus a 2 Hz
+        position feed, and it is usually what makes a report diagnosable.
+      render: markdown
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: "Windows 11 24H2 / Ubuntu 24.04 / macOS 15.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Was real hardware connected?
+      options:
+        - "Yes - a full SO-101"
+        - "Yes - a single servo / partial arm"
+        - "No - GUI only"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Servo firmware, a non-standard MJCF model, a modified gamepad map, etc.

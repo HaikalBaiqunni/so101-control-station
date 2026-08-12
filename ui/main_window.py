@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from core.calibration_worker import CalibrationWorker
 from core.servo_bus import JOINT_ORDER
 from core.session_logger import SessionLogger
+from core.setup_worker import SetupWorker
 from core.twin_worker import TwinWorker
 from core.workers import CameraWorker, GamepadWorker, RobotWorker
 
@@ -35,8 +36,9 @@ from .control_source_panel import ControlSourcePanel
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
+from .setup_panel import SetupPanel
 from .teaching_panel import TeachingPanel
-from .telemetry_panel import TelemetryPanel
+from .telemetry_panel import TelemetryPanel, convert_telemetry
 from .twin_panel import TwinPanel
 
 GAMEPAD_TICK_MS = 33          # ~30 Hz jog integration
@@ -63,6 +65,53 @@ PLAYBACK_MAX_DWELL_S = 4.0  # move on even if a waypoint is never reached exactl
 # "data arrives" from "widgets repaint" is what keeps the main thread from
 # falling behind when both a leader and a follower are streaming at once.
 UI_REFRESH_MS = 33  # ~30 Hz display refresh, independent of control-loop rate
+
+# Telemetry CSV logs BOTH the raw register value and the converted one for
+# every field, with the unit in the column name. Logging only raw counts (what
+# this used to do) means a capture silently disagrees with the on-screen table
+# it was taken from; logging only converted values throws away the one number
+# that is definitely correct, since two of the conversions are cross-checked
+# rather than vendor-documented (see convert_telemetry). Position stays as
+# ticks alone - it has no second unit here, deliberately.
+TELEMETRY_CSV_FIELDS = ("velocity", "load", "current", "voltage", "temperature")
+_TELEMETRY_CSV_UNITS = ("deg_per_s_est", "percent", "ma", "volts", "celsius")
+# strict=True so adding a field without its unit is an import-time error
+# rather than a header that quietly stops describing the columns under it.
+TELEMETRY_CSV_HEADER = ["unix_time", "joint", "position_ticks"] + [
+    column
+    for field, unit in zip(TELEMETRY_CSV_FIELDS, _TELEMETRY_CSV_UNITS, strict=True)
+    for column in (f"{field}_raw", f"{field}_{unit}")
+]
+
+
+def _validate_waypoints(raw) -> list[dict]:
+    """Coerce a loaded .json into the exact shape playback assumes, or raise
+    ValueError naming what's wrong. Unknown joint names are dropped rather
+    than rejected, so a sequence recorded on an arm with an extra joint still
+    loads usefully on a standard SO-101."""
+    if not isinstance(raw, list):
+        raise ValueError("expected a list of waypoints at the top level")
+    validated = []
+    for index, entry in enumerate(raw):
+        where = f"waypoint {index + 1}"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where}: expected an object, got {type(entry).__name__}")
+        positions = entry.get("positions")
+        if not isinstance(positions, dict):
+            raise ValueError(f"{where}: missing a 'positions' object")
+        cleaned = {}
+        for name, value in positions.items():
+            if name not in JOINT_ORDER:
+                continue
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValueError(f"{where}: '{name}' is {value!r}, expected a number of degrees")
+            cleaned[name] = float(value)
+        if not cleaned:
+            raise ValueError(f"{where}: no recognisable joints in 'positions'")
+        validated.append({"label": str(entry.get("label", f"Waypoint {index + 1}")), "positions": cleaned})
+    if not validated:
+        raise ValueError("the file contains no waypoints")
+    return validated
 
 
 class MainWindow(QMainWindow):
@@ -132,12 +181,19 @@ class MainWindow(QMainWindow):
         control_layout.setContentsMargins(0, 0, 0, 0)
         control_layout.addWidget(splitter)
 
-        # ================================================================ CALIBRATION TAB
+        # ================================================================ SETUP + CALIBRATION TABS
+        self.setup_panel = SetupPanel()
         self.calibration_panel = CalibrationPanel()
 
+        # Tabs are ordered and numbered by the order they must actually be
+        # done in, not by how often an experienced user reaches for them:
+        # a servo with no id can't be calibrated, and an uncalibrated arm
+        # can't be jogged. Landing a first-time user on "Control" is what
+        # made this confusing in the first place.
         tabs = QTabWidget()
-        tabs.addTab(control_tab, "Control")
-        tabs.addTab(self.calibration_panel, "Calibration")
+        tabs.addTab(self.setup_panel, "1 - Setup")
+        tabs.addTab(self.calibration_panel, "2 - Calibration")
+        tabs.addTab(control_tab, "3 - Control")
         self.setCentralWidget(tabs)
 
         self.setStatusBar(QStatusBar())
@@ -150,6 +206,7 @@ class MainWindow(QMainWindow):
         self.robot_worker: RobotWorker | None = None
         self.leader_worker: RobotWorker | None = None
         self.calibration_worker: CalibrationWorker | None = None
+        self.setup_worker: SetupWorker | None = None
         self.camera_worker: CameraWorker | None = None
         self.gamepad_worker: GamepadWorker | None = None
         self.twin_worker: TwinWorker | None = None
@@ -228,6 +285,14 @@ class MainWindow(QMainWindow):
         # -- wiring: digital twin -----------------------------------------------
         self.twin_panel.load_requested.connect(self._on_twin_load)
 
+        # -- wiring: first-time motor setup ---------------------------------------
+        self.setup_panel.connect_requested.connect(self._on_setup_connect)
+        self.setup_panel.disconnect_requested.connect(self._on_setup_disconnect)
+        self.setup_panel.scan_requested.connect(self._on_setup_scan)
+        self.setup_panel.deep_scan_requested.connect(self._on_setup_deep_scan)
+        self.setup_panel.assign_id_requested.connect(self._on_setup_assign_id)
+        self.setup_panel.set_baudrate_requested.connect(self._on_setup_set_baudrate)
+
         # -- wiring: calibration -------------------------------------------------
         self.calibration_panel.connect_requested.connect(self._on_calibration_connect)
         self.calibration_panel.disconnect_requested.connect(self._on_calibration_disconnect)
@@ -276,7 +341,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "No calibration",
                 "A LeRobot calibration .json is required - this app refuses to "
-                "move a joint it doesn't know the safe range for.",
+                "move a joint it doesn't know the safe range for.\n\n"
+                "Don't have one yet? Produce it on the Calibration tab (or with "
+                "lerobot-calibrate); both write the same format.",
+            )
+            return
+        if self.setup_worker:
+            QMessageBox.warning(
+                self, "Port already in use",
+                "The Setup tab is holding the serial port - disconnect there first.",
             )
             return
 
@@ -300,6 +373,12 @@ class MainWindow(QMainWindow):
             self.robot_worker = None
             self.session_logger.log_event(f"Follower: disconnecting from {worker.port}")
             self._retire_worker(worker)
+        # Drop the follower's calibrated ranges with it. Keeping them would
+        # leave the jog clamp and the twin's degree->fraction mapping silently
+        # scaled to an arm that is no longer attached - and a NEW connection
+        # with a different calibration only overwrites them on success, so a
+        # failed reconnect would keep using the old one indefinitely.
+        self.joint_deg_ranges.clear()
         self.connection_panel.set_connected(False)
 
     def _on_connection_changed(self, connected: bool) -> None:
@@ -379,6 +458,7 @@ class MainWindow(QMainWindow):
             self.leader_worker = None
             self.session_logger.log_event(f"Leader: disconnecting from {worker.port}")
             self._retire_worker(worker)
+        self.leader_deg_ranges.clear()
         self.control_source_panel.set_leader_connected(False)
 
     def _on_leader_connection_changed(self, connected: bool) -> None:
@@ -546,8 +626,20 @@ class MainWindow(QMainWindow):
             self._drive_joint_programmatically(name, new_deg)
 
     def _drive_joint_programmatically(self, name: str, degrees: float) -> None:
-        """Used by gamepad/leader-relay paths that bypass the (disabled)
-        slider widgets directly - updates state + sends the goal."""
+        """Used by the gamepad/keyboard jog paths that bypass the (disabled)
+        slider widgets directly - updates state + sends the goal.
+
+        Clamps to the calibrated range here as well as in write_goals_deg. The
+        bus-level clamp already protects the hardware, but it clamps the raw
+        ticks it sends, not this integrator: holding a jog key against a limit
+        would otherwise keep adding degrees to current_positions forever, and
+        the joint would then sit motionless for however long it took to unwind
+        that phantom offset once the key was released and reversed. (With a
+        follower connected the 60Hz position feedback overwrites the drift
+        anyway - this is what makes jogging behave with twin-only preview and
+        no hardware attached.)"""
+        lo, hi = self.joint_deg_ranges.get(name, (-180.0, 180.0))
+        degrees = max(lo, min(hi, degrees))
         self.current_positions[name] = degrees
         if self.robot_worker:
             self.robot_worker.request_goal(name, degrees)
@@ -598,10 +690,73 @@ class MainWindow(QMainWindow):
         self.twin_worker.start()
         self.twin_panel.set_caption(f"loaded: {path}")
 
+    # ---------------------------------------------------------------- setup tab (first-time motor ids)
+    #
+    # Shares the physical port with the Control/Calibration tabs, so it holds
+    # its own ServoBus only while its tab is actually connected - two open
+    # handles on one COM port is an OS-level "access denied", not something
+    # either side can recover from gracefully.
+    def _on_setup_connect(self, port: str) -> None:
+        if not port:
+            QMessageBox.warning(self, "No port", "Pick a serial port first.")
+            return
+        if self.robot_worker or self.leader_worker or self.calibration_worker:
+            QMessageBox.warning(
+                self, "Port already in use",
+                "Disconnect on the Control and Calibration tabs first - only one "
+                "of them can hold the serial port at a time.",
+            )
+            return
+        self.session_logger.log_event(f"Setup: connecting on {port}")
+        self.setup_worker = SetupWorker(port)
+        self.setup_worker.connected.connect(self.setup_panel.set_connected)
+        self.setup_worker.error.connect(self._on_setup_error)
+        self.setup_worker.progress.connect(self.setup_panel.set_progress)
+        self.setup_worker.scan_finished.connect(self.setup_panel.set_scan_result)
+        self.setup_worker.id_assigned.connect(
+            lambda old, new: self.session_logger.log_event(f"Setup: servo id {old} -> {new}")
+        )
+        self.setup_worker.start()
+
+    def _on_setup_disconnect(self) -> None:
+        if self.setup_worker:
+            worker = self.setup_worker
+            self.setup_worker = None
+            self.session_logger.log_event("Setup: disconnecting")
+            self._retire_worker(worker)
+        self.setup_panel.set_connected(False)
+
+    def _on_setup_error(self, message: str) -> None:
+        self.setup_panel.set_progress(f"error: {message}")
+        self._on_robot_error(message)
+
+    def _on_setup_scan(self, all_baudrates: bool) -> None:
+        if self.setup_worker:
+            self.setup_worker.request_scan(all_baudrates)
+
+    def _on_setup_deep_scan(self) -> None:
+        if self.setup_worker:
+            self.setup_worker.request_deep_scan()
+
+    def _on_setup_assign_id(self, current_id: int, new_id: int) -> None:
+        if self.setup_worker:
+            self.setup_worker.request_assign_id(current_id, new_id)
+
+    def _on_setup_set_baudrate(self, motor_id: int, baudrate: int) -> None:
+        if self.setup_worker:
+            self.setup_worker.request_set_baudrate(motor_id, baudrate)
+
     # ---------------------------------------------------------------- calibration tab
     def _on_calibration_connect(self, port: str) -> None:
         if not port:
             QMessageBox.warning(self, "No port", "Pick a serial port first.")
+            return
+        if self.setup_worker or self.robot_worker:
+            QMessageBox.warning(
+                self, "Port already in use",
+                "Disconnect on the Setup and Control tabs first - only one of "
+                "them can hold the serial port at a time.",
+            )
             return
         self.calibration_worker = CalibrationWorker(port, JOINT_ORDER)
         self.calibration_worker.connected.connect(self.calibration_panel.set_connected)
@@ -700,11 +855,11 @@ class MainWindow(QMainWindow):
         if self._telemetry_csv_writer:
             stamp = time.time()
             for joint, values in telemetry.items():
-                self._telemetry_csv_writer.writerow([
-                    f"{stamp:.3f}", joint,
-                    values["position"], values["velocity"], values["load"],
-                    values["current"], values["voltage"], values["temperature"],
-                ])
+                row = [f"{stamp:.3f}", joint, values["position"]]
+                for field in TELEMETRY_CSV_FIELDS:
+                    raw = values[field]
+                    row += [raw, f"{convert_telemetry(field, raw)[0]:.3f}"]
+                self._telemetry_csv_writer.writerow(row)
 
     def _on_telemetry_log_toggled(self, enabled: bool) -> None:
         if enabled:
@@ -712,9 +867,7 @@ class MainWindow(QMainWindow):
             path = os.path.join("logs", f"telemetry_{time.strftime('%Y-%m-%d_%H-%M-%S')}.csv")
             self._telemetry_csv = open(path, "w", newline="", encoding="utf-8")
             self._telemetry_csv_writer = csv.writer(self._telemetry_csv)
-            self._telemetry_csv_writer.writerow(
-                ["unix_time", "joint", "position", "velocity", "load", "current", "voltage", "temperature"]
-            )
+            self._telemetry_csv_writer.writerow(TELEMETRY_CSV_HEADER)
             self.telemetry_panel.set_log_path(f"writing {path}")
             self.session_logger.log_event(f"Telemetry: CSV logging started -> {path}")
         else:
@@ -839,6 +992,14 @@ class MainWindow(QMainWindow):
         if self._playback_index is None:
             self.playback_timer.stop()
             return
+        if not self.robot_worker:
+            # Disconnecting (or a bus error retiring the worker) mid-sequence
+            # used to be an AttributeError on the next tick, 33ms later. There
+            # is nothing left to drive, so end the sequence deliberately.
+            self._on_stop_sequence()
+            self.teaching_panel.set_status("Playback stopped - follower disconnected.")
+            self.session_logger.log_event("Teaching: playback aborted (follower disconnected)")
+            return
 
         now = time.monotonic()
         t = max(0.0, min(1.0, (now - self._playback_move_start) / self._playback_move_duration))
@@ -885,23 +1046,45 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Load waypoints", "", "JSON (*.json)")
         if not path:
             return
-        with open(path, encoding="utf-8") as f:
-            self.waypoints = json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                loaded = _validate_waypoints(json.load(f))
+        except (OSError, ValueError) as exc:
+            # Anything malformed used to load fine and then blow up much later,
+            # mid-playback, with the arm already moving - by far the worst
+            # possible moment to discover the file was wrong.
+            QMessageBox.warning(self, "Could not load waypoints", f"{path}\n\n{exc}")
+            self.session_logger.log_event(f"ERROR: waypoint load failed ({path}): {exc}")
+            return
+        self.waypoints = loaded
         self._refresh_waypoint_list()
         self.session_logger.log_event(f"Teaching: loaded {len(self.waypoints)} waypoint(s) from {path}")
 
     # ---------------------------------------------------------------- lifecycle
     def closeEvent(self, event) -> None:
         self.playback_timer.stop()
+        self.ui_refresh_timer.stop()
+        self.keyboard_timer.stop()
+        self.gamepad_timer.stop()
         self._close_telemetry_csv()
+
+        # These all go through _retire_worker, which deliberately does NOT
+        # block - correct while the app is running, but on the way out there
+        # is no event loop left to deliver the `finished` signals that would
+        # otherwise release them, so the process would exit with live QThreads
+        # still touching serial ports (a Qt-level abort, not a clean exit).
+        # Shutdown is the one moment blocking the GUI thread is the right call.
         self._on_disconnect()
         self._on_leader_disconnect()
         self._on_calibration_disconnect()
+        self._on_setup_disconnect()
         self._on_camera_stop()
         if self.gamepad_worker:
             self.gamepad_worker.stop()
-            self.gamepad_worker.wait(2000)
         if self.twin_worker:
             self.twin_worker.stop()
-            self.twin_worker.wait(2000)
+
+        for worker in list(self._shutting_down_workers) + [self.gamepad_worker, self.twin_worker]:
+            if worker is not None:
+                worker.wait(3000)  # a blocked SDK read can sit for ~1s before timing out
         super().closeEvent(event)

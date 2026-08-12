@@ -2,9 +2,14 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
 
 # machine-specific artifacts - not part of the open-source template
 .vscode/
+.idea/
 logs/
 follower_*.json
 leader_*.json
+waypoints*.json

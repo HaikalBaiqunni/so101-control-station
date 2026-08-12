@@ -1,0 +1,62 @@
+name: Setup was confusing
+description: You got stuck or lost during first-time setup, even if nothing crashed
+labels: ["documentation", "ux"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project exists so that a beginner's first hour with an SO-101 isn't
+        spent fighting tooling. **Being confused is a bug here**, not user error —
+        this template is for exactly that, and reports like it are the most useful
+        thing you can contribute.
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where did you get stuck?
+      options:
+        - Install / getting the app to start
+        - Wiring and powering the arm
+        - "Stage 3: assigning servo ids (Setup tab)"
+        - "Stage 4: calibration"
+        - "Stage 5: actually moving the arm"
+        - Digital twin
+        - Camera / gamepad / leader arm
+        - Waypoint teaching
+    validations:
+      required: true
+
+  - type: textarea
+    id: expectation
+    attributes:
+      label: What did you expect to happen?
+      description: What you thought the next step was, or what you thought a button would do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reality
+    attributes:
+      label: What actually happened?
+      description: Including "nothing, and I couldn't tell whether that was correct".
+    validations:
+      required: true
+
+  - type: textarea
+    id: unblocked
+    attributes:
+      label: How did you get unstuck? (if you did)
+      description: Even "I gave up" is useful information.
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What would have helped?
+      description: A different label, a hint line, a doc section, a warning dialog — whatever you wished had been there.
+
+  - type: input
+    id: background
+    attributes:
+      label: Prior experience
+      description: Helps calibrate the docs' assumed baseline. Rough is fine.
+      placeholder: "First robot arm, some Python; or: used LeRobot CLI before"

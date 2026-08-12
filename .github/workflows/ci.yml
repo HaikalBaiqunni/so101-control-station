@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check --output-format=github .
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # PySide6 links against these even when it only ever runs offscreen -
+      # without them the import itself fails on a bare runner.
+      - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libglib2.0-0 libopengl0
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      # tests/conftest.py pins QT_QPA_PLATFORM/MUJOCO_GL, so no hardware,
+      # display or GPU is needed. Anything that needs a real servo is out of
+      # scope for CI by design and is verified by hand.
+      - run: python -m pytest
+
+  # Constructing the whole window catches wiring mistakes (a renamed signal, a
+  # panel that no longer builds) that unit tests on pure functions never see.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libglib2.0-0 libopengl0
+      - run: pip install -r requirements.txt
+      - name: Construct MainWindow headless
+        env:
+          QT_QPA_PLATFORM: offscreen
+          MUJOCO_GL: osmesa
+        run: |
+          python - <<'PY'
+          from PySide6.QtWidgets import QApplication
+          from ui.main_window import MainWindow
+          from ui.style import STYLE_SHEET
+
+          app = QApplication([])
+          app.setStyleSheet(STYLE_SHEET)
+          window = MainWindow()
+          tabs = window.centralWidget()
+          titles = [tabs.tabText(i) for i in range(tabs.count())]
+          assert titles == ["1 - Setup", "2 - Calibration", "3 - Control"], titles
+          print("MainWindow constructed:", titles)
+          PY

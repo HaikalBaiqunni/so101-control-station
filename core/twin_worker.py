@@ -16,7 +16,7 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .digital_twin import DigitalTwin, JOINT_NAMES
+from .digital_twin import JOINT_NAMES, DigitalTwin
 
 RENDER_INTERVAL_S = 1 / 15  # visualization only - 15fps is plenty and leaves headroom
 

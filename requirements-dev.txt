@@ -1,0 +1,5 @@
+# Development/CI extras. The runtime deps are in requirements.txt.
+-r requirements.txt
+
+pytest>=7.4
+ruff>=0.4
