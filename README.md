@@ -16,7 +16,7 @@ a lot of yak-shaving between a beginner and their first taste of physical AI.
 This app collapses it into three tabs you work through in order, with no
 `lerobot` dependency at all.
 
-![Control tab with the MuJoCo digital twin loaded, HUD overlay on, servo telemetry live](docs/screenshot.png)
+![Control tab with the MuJoCo digital twin loaded, HUD overlay on, servo telemetry live](docs/screenshot_control.png)
 
 *Control tab, read left to right: narrow control column (connection, control
 source, joint sliders, teaching), Digital Twin as the centrepiece — with a
