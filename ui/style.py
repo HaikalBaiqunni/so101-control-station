@@ -77,6 +77,45 @@ QLabel#sectionCaption {{ color: {COLORS['text_muted']}; font-size: 11px; letter-
 
 QStatusBar {{ background-color: {COLORS['panel']}; border-top: 1px solid {COLORS['border']}; }}
 
+/* Once any app-wide stylesheet is set, Qt stops using the native OS
+   scrollbar and falls back to a generic one that (with no rule of our own)
+   renders as a thin, low-contrast sliver against this dark theme - easy to
+   mistake for "this panel is just cut off" rather than "this scrolls".
+   Confirmed on the left control column: six stacked panels add up to well
+   over a screen's worth of height by design (QScrollArea, see
+   MainWindow), and the only hint that Gamepad/Keyboard Jog exist below the
+   fold was that near-invisible sliver. Wider + accent-colored makes "there
+   is more below, drag this" obvious instead of assumed-broken. */
+QScrollBar:vertical {{
+    background: {COLORS['bg']};
+    width: 14px;
+    margin: 0;
+}}
+QScrollBar::handle:vertical {{
+    background: {COLORS['border']};
+    min-height: 24px;
+    border-radius: 6px;
+    margin: 2px;
+}}
+QScrollBar::handle:vertical:hover {{ background: {COLORS['accent']}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+
+QScrollBar:horizontal {{
+    background: {COLORS['bg']};
+    height: 14px;
+    margin: 0;
+}}
+QScrollBar::handle:horizontal {{
+    background: {COLORS['border']};
+    min-width: 24px;
+    border-radius: 6px;
+    margin: 2px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: {COLORS['accent']}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
+
 QFrame#keycap {{
     background-color: {COLORS['bg']};
     border: 1px solid {COLORS['border']};

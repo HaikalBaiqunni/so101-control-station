@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/HaikalBaiqunni/so101-control-station/blob/master/docs/TROUBLESHOOTING.md
+    about: Symptom-indexed fixes for the failures that hit almost every first-time user.
+  - name: Getting started
+    url: https://github.com/HaikalBaiqunni/so101-control-station/blob/master/docs/GETTING_STARTED.md
+    about: Unboxed kit to moving arm, stage by stage.
+  - name: LeRobot
+    url: https://github.com/huggingface/lerobot
+    about: For imitation-learning dataset recording and training. Calibration files from this app work there directly.

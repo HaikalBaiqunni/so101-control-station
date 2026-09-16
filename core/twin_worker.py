@@ -16,7 +16,7 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .digital_twin import DigitalTwin, JOINT_NAMES
+from .digital_twin import JOINT_NAMES, DigitalTwin
 
 RENDER_INTERVAL_S = 1 / 15  # visualization only - 15fps is plenty and leaves headroom
 
@@ -31,6 +31,16 @@ class TwinWorker(QThread):
         self.mjcf_path = mjcf_path
         self._fractions: dict[str, float] = {}
         self._neutral_requested = False
+        # Queued (not applied directly here) because DigitalTwin.orbit/pan/
+        # zoom mutate mujoco.MjvCamera fields, which aren't thread-safe to
+        # touch from the GUI thread while render() (this worker's own thread)
+        # might be mid-read of the same camera. A list of small deltas - one
+        # per mouse-move event the GUI thread saw - rather than a single
+        # "latest camera state" is what lets a fast drag still feel
+        # continuous even though this worker only drains the queue once per
+        # ~67ms (15fps) render tick: nothing is dropped/coalesced away.
+        self._camera_ops: list[tuple[str, float, float]] = []
+        self._reset_camera_requested = False
         self._lock = threading.Lock()
         self._running = False
 
@@ -39,6 +49,22 @@ class TwinWorker(QThread):
         for why this, and not raw degrees, is what the twin actually wants."""
         with self._lock:
             self._fractions = dict(fractions)
+
+    def request_orbit(self, dx: float, dy: float) -> None:
+        with self._lock:
+            self._camera_ops.append(("orbit", dx, dy))
+
+    def request_pan(self, dx: float, dy: float) -> None:
+        with self._lock:
+            self._camera_ops.append(("pan", dx, dy))
+
+    def request_zoom(self, dy: float) -> None:
+        with self._lock:
+            self._camera_ops.append(("zoom", 0.0, dy))
+
+    def request_reset_camera(self) -> None:
+        with self._lock:
+            self._reset_camera_requested = True
 
     def request_neutral_snapshot(self) -> None:
         """Ask for one render of this MJCF's own designed zero pose (every
@@ -66,6 +92,20 @@ class TwinWorker(QThread):
                 fractions = dict(self._fractions)
                 neutral_requested = self._neutral_requested
                 self._neutral_requested = False
+                camera_ops = self._camera_ops
+                self._camera_ops = []
+                reset_camera = self._reset_camera_requested
+                self._reset_camera_requested = False
+
+            if reset_camera:
+                twin.reset_camera()
+            for op, dx, dy in camera_ops:
+                if op == "orbit":
+                    twin.orbit(dx, dy)
+                elif op == "pan":
+                    twin.pan(dx, dy)
+                elif op == "zoom":
+                    twin.zoom(dy)
 
             if neutral_requested:
                 twin.set_all_deg(dict.fromkeys(JOINT_NAMES, 0.0))

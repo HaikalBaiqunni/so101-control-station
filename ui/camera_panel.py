@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QComboBox, QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
 from core.camera_enum import list_cameras
 
@@ -31,7 +39,12 @@ class CameraPanel(QGroupBox):
 
         self.view = QLabel("no camera feed")
         self.view.setMinimumSize(320, 240)
-        self.view.setMaximumHeight(480)  # a placeholder/preview box, not "however tall the window happens to be"
+        # Same hint-follows-pixmap ratchet TwinPanel.view had: show_frame()
+        # scales each frame to the label's current size, which then becomes
+        # the label's sizeHint, which the splitter grants, which makes the
+        # next frame bigger. Ignored on both axes keeps the box at whatever
+        # the splitter gave it, feed running or not.
+        self.view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.view.setAlignment(Qt.AlignCenter)
         self.view.setStyleSheet("background-color: #101215; border: 1px solid #3a4048;")
 
@@ -44,8 +57,9 @@ class CameraPanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addLayout(controls)
         layout.addWidget(self.status_label)
-        layout.addWidget(self.view)
-        layout.addStretch(1)  # leftover vertical room goes here, not into the view
+        # With an Ignored policy the view has no height opinion of its own,
+        # so it takes the leftover room and no stretch item competes for it.
+        layout.addWidget(self.view, 1)
 
     def _refresh_devices(self) -> None:
         current_index = self.selected_index()

@@ -30,6 +30,7 @@ class RobotWorker(QThread):
     telemetry_updated = Signal(dict)   # {joint_name: {position, velocity, load, voltage, temperature, current}}
     error = Signal(str)
     connection_changed = Signal(bool)
+    servo_config_read = Signal(str, dict)  # joint, {register: value} - see ServoBus.read_servo_config
 
     def __init__(self, port: str, calibration_path: str, parent=None):
         super().__init__(parent)
@@ -39,6 +40,9 @@ class RobotWorker(QThread):
         # slider drag can't flood the bus with dozens of superseded writes -
         # torque commands are rare/discrete and go through a plain queue.
         self._pending_goals: dict[str, float] = {}
+        # latest commanded value per joint, never cleared (unlike
+        # _pending_goals, which is drained every cycle) - see request_goal
+        self.last_goals: dict[str, float] = {}
         self._goals_lock = threading.Lock()
         self._torque_commands: queue.Queue = queue.Queue()
         self._register_commands: queue.Queue = queue.Queue()
@@ -49,6 +53,14 @@ class RobotWorker(QThread):
     def request_goal(self, name: str, degrees: float) -> None:
         with self._goals_lock:
             self._pending_goals[name] = degrees
+            # Every control source (sliders, leader relay, gamepad, keyboard,
+            # playback) funnels through here, so this is the one place that
+            # sees what was actually asked for. Kept because the logs record
+            # only what the joint DID: without the commanded value beside it,
+            # "it won't open" is indistinguishable from "it was never told to
+            # open", and telling those apart has needed a hardware round trip
+            # every single time.
+            self.last_goals[name] = degrees
 
     def request_torque(self, enabled: bool, name: str | None = None) -> None:
         self._torque_commands.put((enabled, name))
@@ -73,6 +85,17 @@ class RobotWorker(QThread):
             self.error.emit(str(exc))
             self.connection_changed.emit(False)
             return
+
+        # One-shot readback of the gripper's own limit registers, before the
+        # control loop starts competing for bus time. The gripper is the joint
+        # whose EEPROM limits and Torque_Limit have actually caused
+        # hard-to-explain behaviour here, and reading them once at connect is
+        # what makes "saturated at its torque limit" distinguishable from
+        # "mechanically jammed" after the fact.
+        try:
+            self.servo_config_read.emit("gripper", self.bus.read_servo_config("gripper"))
+        except ServoBusError as exc:
+            self.error.emit(f"gripper config readback failed: {exc}")
 
         self.connection_changed.emit(True)
         self._running = True

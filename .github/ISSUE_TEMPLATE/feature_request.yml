@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest something the app should be able to do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task, not the solution. What are you doing with the arm that this would serve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like the app to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How are you working around it today?
+      description: Dropping to the LeRobot CLI, editing a constant in the source, doing it by hand, etc.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Does this need to move hardware?
+      description: |
+        Anything that commands a servo has to go through the calibrated-range clamp
+        and the single-active-control-source rule, which shapes how it can be built.
+      options:
+        - "No - display, logging or UI only"
+        - "Yes - it would command the arm"
+        - "It would write servo registers (ids, limits, gains)"
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you be up for implementing it?
+      options:
+        - label: I'd be willing to open a PR
+        - label: I could test it on real hardware

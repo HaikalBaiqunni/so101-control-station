@@ -1,192 +1,221 @@
 # SO-101 Control Station
 
-A standalone Python GUI for controlling/teleoperating/calibrating a Feetech
-STS3215-based SO-ARM100 / SO-101 arm, with a live MuJoCo digital twin,
-optional camera feed, optional gamepad input, and a JAKA-style waypoint
-teach & playback mode.
+[![CI](https://github.com/HaikalBaiqunni/so101-control-station/actions/workflows/ci.yml/badge.svg)](https://github.com/HaikalBaiqunni/so101-control-station/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-Built deliberately **independent of the full LeRobot package** (no PyTorch,
-no dataset/training stack) so it stays light enough to hand to anyone on a
-bare machine and have it running in a couple of minutes.
+A standalone Python GUI that takes a Feetech STS3215-based **SO-101 /
+SO-ARM100** arm from *"I just opened the box"* to *"it's moving"* — motor id
+assignment, calibration, jogging, teleoperation and waypoint teaching, with a
+live MuJoCo digital twin and servo telemetry.
+
+**The problem it solves:** getting a new SO-101 running normally means several
+terminal tools, a calibration procedure driven by blocking `input()` prompts,
+and a full LeRobot + PyTorch install — before the arm has moved once. That is
+a lot of yak-shaving between a beginner and their first taste of physical AI.
+This app collapses it into three tabs you work through in order, with no
+`lerobot` dependency at all.
 
 ![Control tab with the MuJoCo digital twin loaded](docs/screenshot.png)
 
-*Control tab, read left-to-right: narrow control column (connection, control
-source, joint sliders, teaching), Digital Twin as the centerpiece, Camera
-feed beside it for comparison. No hardware connected in this shot - the
-joint sliders and twin are just posed manually to show the layout.*
+*Control tab, read left to right: narrow control column (connection, control
+source, joint sliders, teaching), Digital Twin as the centrepiece, Camera feed
+beside it for comparison. No hardware connected in this shot — the sliders and
+twin are posed manually to show the layout.*
 
-## Features
+---
 
-- **Two tabs**: **Control** (jog/teleoperate/teach/monitor) and
-  **Calibration** (run a full calibration from scratch, on either arm).
-- **Three interchangeable control sources**, selected with a radio button -
-  only one drives the arm at a time so inputs never fight each other:
-  - **Manual** - the joint sliders.
-  - **Gamepad** - standard Xbox-style controller.
-  - **Leader arm** - connect a second SO-101 (as leader) and it teleoperates
-    the connected arm live, same as `lerobot-teleoperate`, from inside this
-    GUI. Leader and follower are calibrated independently, so the relay maps
-    "leader fully closed/open" onto "follower fully closed/open" by fraction
-    of each arm's own calibrated range, not raw degrees - the two don't need
-    to agree on where zero is.
-- **Digital twin** - a MuJoCo render of the SO-101 (or SO-101 + Aero Hand, or
-  any other MJCF you point it at) that mirrors whatever position is
-  currently commanded/measured, live, regardless of which control source is
-  active. Runs on its own thread so a slow render never lags the control loop.
-- **Camera panel** - any USB webcam via OpenCV (picked by name, not a bare
-  index), independent of everything else - handy for comparing the twin's
-  motion against the real arm side by side.
-- **Teaching tab (waypoints)** - record the follower's current pose (however
-  it got there: hand-guided with torque off, driven by the leader, or the
-  manual sliders) as a named waypoint, then play the recorded sequence back
-  point-to-point. This is scripted playback, not learned behavior - closer to
-  an industrial cobot's teach pendant than to imitation learning. Motion
-  between waypoints is speed-capped and interpolated (`PLAYBACK_DEG_PER_S` in
-  `ui/main_window.py`) instead of jumping straight to each target, and
-  sequences can be saved/loaded as `.json`.
-- **Full in-GUI calibration** - reproduces `lerobot-calibrate`'s exact
-  sequence (reset -> half-turn homing -> record range of motion ->
-  wrist_roll left as a full continuous turn -> write limits) with step
-  buttons and a live min/pos/max table, for either **Follower** or **Leader**
-  role. Clicking **Set middle** first shows a reference image (the digital
-  twin's own zero pose, if one's loaded) so a first-time user knows what
-  "middle" is supposed to look like before parking the real arm there. Saves
-  a calibration `.json` in the same format and, by default, the same folder
-  LeRobot's own CLI uses - so files are interchangeable both ways.
-- **Hard safety clamp** - every commanded position is clamped to the
-  calibrated `range_min`/`range_max` for that joint before it's ever sent to
-  a servo. The Control tab refuses to connect without a calibration file - it
-  will not move a joint it doesn't know the safe range for.
-- **Session logging** - every connect/disconnect/error/control-source-change
-  and a throttled position feed get written to a timestamped markdown file
-  under `logs/` (gitignored - it's a debugging aid, not part of the repo).
+## Quick start
+
+```bash
+git clone https://github.com/HaikalBaiqunni/so101-control-station.git
+cd so101-control-station
+python -m venv venv
+```
+
+```bash
+venv\Scripts\activate
+```
+
+```bash
+source venv/bin/activate
+```
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+**New to this? Read [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).** It
+walks the whole path from an unopened kit to a moving arm and explains what
+each stage is actually for.
+
+---
+
+## The three tabs, in the order you use them
+
+### 1 · Setup — give each servo an ID
+
+Every STS3215 leaves the factory answering to **id 1**. Six of them on one bus
+are electrically fine but logically identical: a read addressed to id 1 gets
+six colliding replies. Nothing else works until each has its own address.
+
+- **Bus scan** across all eight Feetech baudrates and ids 0–20 (plus an opt-in
+  0–253 deep scan), so a servo someone previously reconfigured still turns up.
+- **Arm status checklist** — which of the six joints are present, which are
+  missing, which are on the wrong baudrate.
+- **Guarded id assignment** — only enabled when the scan sees *exactly one*
+  servo, because with several attached they would all take the new id at once.
+- **Baudrate repair** for a servo left at something other than 1 Mbps.
+
+This is the in-GUI equivalent of `lerobot-setup-motors`.
+
+### 2 · Calibration — record what "middle" and "as far as it goes" mean
+
+Reproduces `lerobot-calibrate`'s exact sequence (reset → half-turn homing →
+record range of motion → `wrist_roll` as a full continuous turn → write
+limits) as **five step buttons that unlock in order**, with a live
+Min/Pos/Max table and a hint line saying what to do next.
+
+Clicking **Set middle** first shows a reference image — the digital twin's own
+zero pose — so a first-timer can see what "middle" is supposed to look like
+before parking the real arm there.
+
+Saves a `.json` in LeRobot's format, by default in LeRobot's own folder, so
+files are interchangeable **both ways** with `lerobot-teleoperate` /
+`lerobot-record`. See [docs/CALIBRATION.md](docs/CALIBRATION.md) for what the
+numbers mean.
+
+Works for either **Follower** or **Leader** role.
+
+### 3 · Control — drive it
+
+**Four interchangeable control sources**, radio-selected so only one drives
+the arm at a time and inputs never fight:
+
+- **Manual** — joint sliders.
+- **Keyboard jog** — hold `Q`/`A`, `W`/`S`, `E`/`D`, `R`/`F`, `T`/`G`, `Y`/`H`;
+  on-screen keycaps light up while held, multiple at once. Keys held when the
+  window loses focus release automatically, so nothing runs away.
+- **Gamepad** — standard Xbox-style controller.
+- **Leader arm** — connect a second SO-101 and it teleoperates the first, live,
+  same as `lerobot-teleoperate`. The two are calibrated independently, so the
+  relay maps by *fraction of each arm's own range* rather than raw degrees —
+  "leader fully closed" always means "follower fully closed".
+
+Plus:
+
+- **Digital twin** — a MuJoCo render mirroring the live pose, whichever source
+  is driving. Runs on its own thread so a slow render never lags the control
+  loop.
+- **Camera panel** — any USB webcam via OpenCV, picked by *name* rather than a
+  bare index. Handy for comparing the twin against the real arm side by side.
+- **Teaching (waypoints)** — record the current pose however it got there
+  (hand-guided with torque off, leader-driven, or slider-set), reorder, and
+  play the sequence back at a capped, quintic-eased speed. **Record Grip**
+  records the gripper at its calibrated limit instead of the contact position,
+  so a holding waypoint has real closing force behind it. Sequences save/load
+  as `.json`.
+- **Servo telemetry** — current, load, velocity, voltage and temperature per
+  joint at ~10 Hz, as a table or a live graph, with CSV capture. Includes a
+  live cross-check that differentiates `Present_Position` and overlays it on
+  the reported `Present_Velocity`, so you can confirm the unit on *your*
+  hardware rather than trusting a datasheet.
+- **Session logging** — every connect/disconnect/error/mode change plus a
+  throttled position feed, to a timestamped markdown file under `logs/`.
+
+---
+
+## Safety
+
+This app is deliberately opinionated about not moving hardware it doesn't
+understand:
+
+- The Control tab **refuses to connect without a calibration file**. There is
+  no "just let me move it" mode.
+- Every commanded position is **clamped to the calibrated range** in raw ticks
+  before it reaches a servo — a GUI bug or a wild slider drag cannot exceed it.
+- **Torque-on seeds the goal with the current measured pose**, so re-enabling
+  torque holds still instead of lurching toward a stale target at the servo
+  firmware's own uncontrolled max speed.
+- **Id assignment requires exactly one servo on the bus.**
+- **Calibration steps are gated in order**, and finishing without a completed
+  recording pass is refused rather than writing garbage limits.
+
+---
 
 ## Requirements
 
 - Python 3.10+
-- A LeRobot-format calibration file per arm (produce one either with
-  `lerobot-calibrate`, or with this app's own **Calibration** tab - see below).
+- An SO-101 / SO-ARM100 with Feetech STS3215 servos, a USB serial adapter, and
+  its **5 V power supply** (USB powers the adapter, not the servos — this is
+  the single most common "my arm is dead" cause)
+- Optional: a MuJoCo MJCF model for the twin, a USB webcam, a gamepad
 
-## Install
+Installs `PySide6`, `feetech-servo-sdk`, `pyserial`, `opencv-python`, `mujoco`,
+`numpy`, `pygame`. **No PyTorch, no `lerobot`.**
 
-```bash
-python -m venv venv
-# Windows: venv\Scripts\activate   |   macOS/Linux: source venv/bin/activate
-pip install -r requirements.txt
-```
+---
 
-## Run
+## Documentation
 
-```bash
-python main.py
-```
+| Document | For |
+|---|---|
+| [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Unboxed kit → moving arm, stage by stage |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptom-indexed fixes for everything that commonly goes wrong |
+| [CALIBRATION.md](docs/CALIBRATION.md) | What the calibration numbers mean, and LeRobot interop |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module map, threading model, how to extend it |
+| [technical-report.html](docs/technical-report.html) | Narrative engineering write-up with diagrams (EN/JA) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
+| [CHANGELOG.md](CHANGELOG.md) | What changed when |
 
-### Control tab - jogging one arm
+---
 
-1. **Connection panel**: pick the serial port, browse to that arm's
-   calibration `.json`, click **Connect**.
-2. **Torque ON** before trying to move it, **Torque OFF** when handling it by hand.
-3. **Control Source panel**: leave on **Manual** to drive it with the sliders below.
-4. **Digital Twin panel**: browse to an MJCF `scene.xml` and click **Load** - starts mirroring live.
-5. **Camera panel**: pick a device index, **Start**. Fully independent of the rest.
-6. **Gamepad panel**: plug in a controller, **Enable gamepad**, then select
-   **Gamepad** as the control source to actually let it drive the arm.
+## Relationship to LeRobot
 
-### Control tab - teleoperating with a leader arm
+Built deliberately **independent of the full LeRobot package** — no PyTorch, no
+dataset/training stack — so it stays light enough to hand to anyone on a bare
+machine.
 
-1. Connect the **follower** as above (Connection panel, top-left) and set its **Torque ON**.
-2. In **Control Source**, pick **Leader arm (teleoperate)** - a second
-   port/calibration form appears.
-3. Fill in the *leader's* port + calibration file, **Connect Leader**. The
-   leader's torque is automatically disabled (it's meant to be moved by hand).
-4. Move the leader - the follower (and the digital twin) follow live. Switch
-   back to **Manual** any time to hand control back to the sliders.
+The register map, sign-magnitude encoding and calibration algorithm were
+verified directly against LeRobot's own `lerobot/motors/motors_bus.py`,
+`lerobot/motors/feetech/{tables.py,feetech.py}` and
+`lerobot/robots/so_follower/so_follower.py` (Apache-2.0), then re-implemented
+standalone here rather than imported.
 
-### Control tab - teaching a waypoint sequence
+Calibration files remain byte-compatible in both directions. Use this app for
+setup and calibration, then `lerobot-record` for imitation-learning datasets
+if that's where you're headed — it'll happily read the files saved here.
 
-1. Get the follower to a pose you want to record, by whatever means -
-   **Torque OFF** and hand-guide it directly (the most JAKA-like way), drive
-   it with the leader, or use the manual sliders.
-2. Click **Record Waypoint**. Repeat for every point in the sequence -
-   **Move Up**/**Move Down** to reorder, **Delete Selected** to drop one.
-3. **Play Sequence** - turns torque back on and drives through every
-   waypoint in order at a capped, interpolated speed (not a raw jump to each
-   target). **Stop** interrupts at any time. Other control sources are
-   locked out while a sequence is playing so nothing fights the playback.
-4. **Save.../Load...** to keep a sequence as a `.json` file for reuse.
+---
 
-### Calibration tab - from scratch, either arm
+## Known limitations
 
-1. Pick **Role** (Follower/Leader - only changes the suggested save path/folder).
-2. Pick the port, **Connect**.
-3. **1. Reset motors** - clears any prior homing/limits, disables torque, sets position mode.
-4. Click **2. Set middle** - it first shows a reference pose (a screenshot of
-   the loaded digital twin's own zero pose, if any) with a reminder to park
-   the real arm there by hand before confirming; only locks it in once you
-   click OK.
-5. **3. Start recording range of motion**, slowly move every joint (except
-   `wrist_roll`, which is a full continuous turn by design) through its
-   complete range, watching the live Min/Pos/Max table.
-6. **4. Stop recording** once you've covered the full range of every joint.
-7. **5. Finish & Save...** - writes the limits to the servos and prompts you
-   for where to save the `.json` (defaults to LeRobot's own cache path, so
-   `lerobot-teleoperate`/`lerobot-record` can find it too).
+- **Teaching is scripted waypoint playback, not learned behaviour** —
+  point-to-point positions only, no recorded velocity/force profile, no
+  generalisation to a changed scene. For imitation learning, use
+  `lerobot-record`.
+- **Gamepad mapping is fixed** (edit `DEFAULT_AXIS_MAP` / `DEFAULT_BUTTON_MAP`
+  in `ui/gamepad_panel.py`). An on-screen remapping editor would be a
+  reasonable next step.
+- **One camera at a time** in the UI. Switching between two *different*
+  physical devices back-to-back crashes some Windows/OpenCV combinations, so
+  the device picker is locked while a camera runs — Stop, switch, Start.
+- **`Present_Velocity`'s unit is a derived estimate**, not vendor-documented.
+  The telemetry Graph tab's cross-check exists specifically to let you confirm
+  or refute it on your own hardware; it's marked with `*` everywhere it's
+  shown.
+- **Servo id/baudrate writes are EEPROM writes.** They're bracketed and
+  verified, but they are permanent until changed again.
 
-## Architecture
+---
 
-```
-core/
-  servo_bus.py          - Feetech STS3215 register-level driver (feetech-servo-sdk + pyserial only)
-  calibration_worker.py  - runs the calibrate sequence step-by-step, in the background
-  digital_twin.py         - MuJoCo model/render wrapper (degree- and fraction-based joint setters)
-  twin_worker.py            - runs the digital twin's render loop on its own QThread (15fps)
-  workers.py                  - QThread workers: robot polling loop, camera capture, gamepad polling
-  camera_enum.py                - human-readable camera device names (pygrabber, with a cv2 fallback)
-  session_logger.py               - writes a timestamped markdown debug log under logs/
-ui/
-  main_window.py             - wires everything together, arbitrates control source, owns the
-                                 teaching/playback state machine and the calibration guidance dialog
-  control_source_panel.py     - Manual / Gamepad / Leader selector + leader connection form
-  calibration_panel.py          - Calibration tab: connect, 5 step buttons, live table
-  teaching_panel.py                - waypoint list + record/delete/reorder/play/stop/save/load
-  joint_panel.py                     - slider rows
-  connection_panel.py                  - port/calibration/connect/torque controls (Control tab)
-  camera_panel.py                        - camera view + device dropdown
-  twin_panel.py                            - digital twin view
-  gamepad_panel.py                           - gamepad status/legend
-  style.py                                     - dark industrial theme (QSS)
-```
+## Contributing
 
-All hardware I/O (serial, camera, joystick) runs on background `QThread`s and
-only ever talks to the GUI thread through Qt signals - the window never
-blocks waiting on a servo or a camera frame.
-
-The register map, sign-magnitude encoding, and calibration algorithm (reset /
-half-turn homing / range-of-motion recording / wrist_roll special-case) were
-verified directly against LeRobot's own `lerobot/motors/{motors_bus.py,
-feetech/{tables.py,feetech.py}}` and `lerobot/robots/so_follower/so_follower.py`
-(Apache-2.0) and re-implemented standalone here rather than imported,
-specifically to avoid pulling in the full `lerobot` + `torch` dependency chain.
-
-## Known limitations / good next steps
-
-- **Gamepad mapping is fixed** (edit `DEFAULT_AXIS_MAP` /
-  `DEFAULT_BUTTON_MAP` in `ui/gamepad_panel.py` to remap) - an on-screen
-  mapping editor would be a reasonable v2.
-- **One camera at a time** in the UI, though nothing stops running a second
-  `CameraPanel` instance if you want a wrist + overhead view side by side.
-  Switching between two *different* physical camera devices back-to-back is
-  known to be flaky on some Windows/OpenCV combinations - Stop before
-  picking a different device rather than swapping directly.
-- **Teaching is scripted waypoint playback, not learned behavior** - point-
-  to-point positions only, no recorded velocity/force profile, no
-  generalization to a changed scene. For imitation-learning-style dataset
-  recording, use `lerobot-record` (it'll happily reuse calibration files
-  saved here).
+Issues and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Especially valuable: reports from people setting this up for the first time,
+since the whole point is that the first hour shouldn't be painful.
 
 ## License
 
-MIT (adjust to taste before publishing) - this project intentionally avoids
-GPL/heavy dependencies to keep it easy to fold into other people's robot
-tooling.
+[MIT](LICENSE).
