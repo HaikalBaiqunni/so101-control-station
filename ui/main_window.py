@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.calibration_worker import CalibrationWorker
-from core.servo_bus import JOINT_ORDER
+from core.servo_bus import JOINT_ORDER, MAX_RES, MODEL_RESOLUTION
 from core.session_logger import SessionLogger
 from core.setup_worker import SetupWorker
 from core.twin_worker import TwinWorker
@@ -50,9 +50,10 @@ KEYBOARD_MAX_DEG_PER_S = 30.0  # gentler than the gamepad's max - keys are on/of
 
 PLAYBACK_TICK_MS = 33
 PLAYBACK_ARRIVE_TOLERANCE_DEG = 3.0
-PLAYBACK_DEG_PER_S = 60.0    # smooth playback speed cap - a raw single goal jump lets the
-                             # servo firmware move at whatever its max speed is (jerky/scary);
-                             # interpolating our own trajectory at a capped rate is what tames it
+# Speed cap is user-adjustable at runtime - see TeachingPanel.speed_slider /
+# playback_speed_deg_per_s() - a raw single goal jump lets the servo firmware
+# move at whatever its own max speed is (jerky/scary); interpolating our own
+# trajectory at a capped rate is what tames it.
 PLAYBACK_MIN_MOVE_S = 0.3    # floor so a near-zero-distance waypoint doesn't collapse to 0s
 PLAYBACK_SETTLE_GRACE_S = 1.5  # extra time allowed after the interpolated move finishes, in case
                                 # the real arm lags slightly behind the commanded trajectory
@@ -71,13 +72,15 @@ UI_REFRESH_MS = 33  # ~30 Hz display refresh, independent of control-loop rate
 # this used to do) means a capture silently disagrees with the on-screen table
 # it was taken from; logging only converted values throws away the one number
 # that is definitely correct, since two of the conversions are cross-checked
-# rather than vendor-documented (see convert_telemetry). Position stays as
-# ticks alone - it has no second unit here, deliberately.
+# rather than vendor-documented (see convert_telemetry). Position gets both
+# raw ticks AND the calibrated degree value (see _raw_to_deg) - unlike the
+# other fields there's no vendor scale factor to cross-check, but a plot
+# wants degrees, not an arbitrary 0-4095 count.
 TELEMETRY_CSV_FIELDS = ("velocity", "load", "current", "voltage", "temperature")
 _TELEMETRY_CSV_UNITS = ("deg_per_s_est", "percent", "ma", "volts", "celsius")
 # strict=True so adding a field without its unit is an import-time error
 # rather than a header that quietly stops describing the columns under it.
-TELEMETRY_CSV_HEADER = ["unix_time", "joint", "position_ticks"] + [
+TELEMETRY_CSV_HEADER = ["unix_time", "joint", "position_ticks", "position_deg"] + [
     column
     for field, unit in zip(TELEMETRY_CSV_FIELDS, _TELEMETRY_CSV_UNITS, strict=True)
     for column in (f"{field}_raw", f"{field}_{unit}")
@@ -167,7 +170,7 @@ class MainWindow(QMainWindow):
         right_column.addWidget(self.telemetry_panel)
         right_column.setStretchFactor(0, 1)
         right_column.setStretchFactor(1, 0)
-        right_column.setSizes([500, 380])
+        self._right_column = right_column  # see _size_right_column below
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
@@ -220,6 +223,27 @@ class MainWindow(QMainWindow):
         # (which is the FOLLOWER's/twin's range) - needed to reconcile the two
         # scales during teleop relay, see _on_leader_positions.
         self.leader_deg_ranges: dict[str, tuple[float, float]] = {}
+        # per side: {joint: True if opening counts encoder ticks UP}. Only
+        # populated for joints whose calibration recorded closed/open ticks
+        # (the manual 2-point capture); absent entries mean "unknown", which
+        # _relay_direction_flipped() treats as "don't flip".
+        self.leader_open_directions: dict[str, bool] = {}
+        self.follower_open_directions: dict[str, bool] = {}
+        self.gripper_invert_override: bool = self._load_gripper_invert()
+        # Per-joint constant correction added to the relayed target, in degrees.
+        # A joint's zero is the midpoint of its calibrated range, and for
+        # wrist_roll that midpoint is pinned to nothing physical at all - the
+        # calibration forces its range to a full turn, so the zero is wherever
+        # the arm happened to be held during "Set middle". Two arms homed at
+        # even slightly different wrist orientations therefore disagree by a
+        # constant angle that no amount of range normalisation can remove
+        # (measured here: wrist_flex +10.5 deg, wrist_roll +12.7 deg). This is
+        # the only mechanism that can cancel it.
+        self.relay_trim_deg: dict[str, float] = {
+            name: float(value)
+            for name, value in (self._load_settings().get("relay_trim_deg") or {}).items()
+            if name in JOINT_ORDER
+        }
         self.control_source: str = "manual"
         self._last_gamepad_axes: dict[int, float] = {}
         self._last_tick = time.monotonic()
@@ -235,13 +259,19 @@ class MainWindow(QMainWindow):
         self._shutting_down_workers: list = []
 
         # -- state: teaching (record/playback waypoints) --------------------
-        self.waypoints: list[dict] = []  # [{"label": str, "positions": {joint: deg}}]
+        self.waypoints: list[dict] = []  # [{"label": str, "positions": {joint: deg}, "dwell_ms": int}]
         self._playback_index: int | None = None
         self._playback_start_positions: dict[str, float] = {}
         self._playback_target_positions: dict[str, float] = {}
         self._playback_move_start = 0.0
         self._playback_move_duration = PLAYBACK_MIN_MOVE_S
         self._playback_deadline = 0.0
+        # None = still moving or not yet arrived; once arrived this holds the
+        # monotonic time the dwell ends. Kept separate from _playback_deadline
+        # (a timeout for a move that never arrives) - this is a deliberate
+        # pause AFTER a successful arrival, not a stall fallback.
+        self._playback_hold_until: float | None = None
+        self._playback_dwell_s = 0.0
         self.playback_timer = QTimer(self)
         self.playback_timer.timeout.connect(self._playback_tick)
 
@@ -257,6 +287,10 @@ class MainWindow(QMainWindow):
 
         # -- wiring: control source / teleoperation -------------------------
         self.control_source_panel.source_changed.connect(self._on_control_source_changed)
+        self.control_source_panel.set_gripper_invert(self.gripper_invert_override)
+        self.control_source_panel.gripper_invert_toggled.connect(self._on_gripper_invert_toggled)
+        self.control_source_panel.set_relay_trim(self.relay_trim_deg)
+        self.control_source_panel.relay_trim_changed.connect(self._on_relay_trim_changed)
         self.control_source_panel.leader_connect_requested.connect(self._on_leader_connect)
         self.control_source_panel.leader_disconnect_requested.connect(self._on_leader_disconnect)
 
@@ -277,6 +311,8 @@ class MainWindow(QMainWindow):
         self.teaching_panel.stop_requested.connect(self._on_stop_sequence)
         self.teaching_panel.save_requested.connect(self._on_save_waypoints)
         self.teaching_panel.load_requested.connect(self._on_load_waypoints)
+        self.teaching_panel.delay_set_requested.connect(self._on_set_delay)
+        self.teaching_panel.row_selected.connect(self._on_waypoint_row_selected)
 
         # -- wiring: telemetry ---------------------------------------------------
         self.telemetry_panel.log_toggled.connect(self._on_telemetry_log_toggled)
@@ -301,6 +337,9 @@ class MainWindow(QMainWindow):
         self.calibration_panel.start_recording_requested.connect(self._on_calibration_start_recording)
         self.calibration_panel.stop_recording_requested.connect(self._on_calibration_stop_recording)
         self.calibration_panel.finish_requested.connect(self._on_calibration_finish)
+        self.calibration_panel.gripper_manual_mode_toggled.connect(self._on_gripper_manual_mode_toggled)
+        self.calibration_panel.gripper_capture_requested.connect(self._on_gripper_capture_requested)
+        self.calibration_panel.auto_calibrate_requested.connect(self._on_auto_calibrate_requested)
 
         self.ui_refresh_timer = QTimer(self)
         self.ui_refresh_timer.timeout.connect(self._refresh_ui)
@@ -317,6 +356,30 @@ class MainWindow(QMainWindow):
         self.keyboard_timer.start(KEYBOARD_JOG_TICK_MS)
 
         self._apply_control_source_lock()
+
+        # right_column (view_row + telemetry_panel) has no real height yet
+        # during __init__ - widgets aren't laid out until the event loop
+        # actually processes the initial show(). An earlier attempt at this
+        # called setSizes() here directly using a hardcoded "880" budget
+        # (this window's own requested height) standing in for "how much
+        # room right_column will actually get" - wrong on a real screen once
+        # title bar/tab bar/status bar/taskbar/DPI scaling are accounted
+        # for, and confirmed on real hardware to still open with the
+        # gripper row (telemetry_panel's tallest requirement) clipped.
+        # Deferring to a 0ms singleShot - fired once the event loop starts,
+        # right after the initial layout pass has actually run - means
+        # right_column.height() below is real, not guessed.
+        QTimer.singleShot(0, self._size_right_column)
+
+    def _size_right_column(self) -> None:
+        """Give telemetry_panel exactly the room its own minimumSizeHint says
+        it needs (see TelemetryPanel.__init__ - it's a hard floor there, not
+        just a hint), and let view_row (twin+camera) take whatever's left of
+        right_column's REAL, now-known height. See the singleShot call above
+        for why this can't just run inline in __init__."""
+        total = self._right_column.height()
+        telemetry_h = self.telemetry_panel.minimumSizeHint().height()
+        self._right_column.setSizes([max(0, total - telemetry_h), telemetry_h])
 
     # ---------------------------------------------------------------- shutdown helper
     def _retire_worker(self, worker) -> None:
@@ -355,6 +418,11 @@ class MainWindow(QMainWindow):
 
         self.session_logger.log_event(f"Follower: connecting on {port} (calibration: {calibration_path})")
         self.robot_worker = RobotWorker(port, calibration_path)
+        self.robot_worker.servo_config_read.connect(
+            lambda joint, cfg: self.session_logger.log_event(
+                f"ServoConfig({joint}): " + "  ".join(f"{k}={v}" for k, v in cfg.items())
+            )
+        )
         self.robot_worker.positions_updated.connect(self._on_positions_updated)
         self.robot_worker.telemetry_updated.connect(self._on_telemetry_updated)
         self.robot_worker.error.connect(self._on_robot_error)
@@ -394,10 +462,21 @@ class MainWindow(QMainWindow):
     def _load_joint_limits(self) -> None:
         if not self.robot_worker or not self.robot_worker.bus:
             return
+        bus = self.robot_worker.bus
         for name in JOINT_ORDER:
-            lo, hi = self.robot_worker.bus.deg_limits(name)
+            lo, hi = bus.deg_limits(name)
             self.joint_panel.set_limits(name, lo, hi)
             self.joint_deg_ranges[name] = (lo, hi)
+        self.follower_open_directions = self._open_directions(bus)
+        self._apply_persisted_gripper_torque_limit()
+
+    @staticmethod
+    def _open_directions(bus) -> dict[str, bool]:
+        return {
+            name: cal.opens_with_rising_ticks
+            for name, cal in bus.calibration.items()
+            if cal.opens_with_rising_ticks is not None
+        }
 
     def _on_robot_error(self, message: str) -> None:
         self.statusBar().showMessage(f"Robot error: {message}")
@@ -414,6 +493,13 @@ class MainWindow(QMainWindow):
         via _refresh_ui(), so this can never fall behind."""
         self.current_positions.update(positions)
         self.session_logger.log_positions("follower", positions)  # internally throttled to 2Hz
+        # Log the gripper's commanded value next to its measured one, at the
+        # same throttled rate. "Won't open" and "was never asked to open" look
+        # identical in a log of measured positions alone.
+        if self.robot_worker and "gripper" in self.robot_worker.last_goals:
+            self.session_logger.log_positions(
+                "goal", {"gripper": self.robot_worker.last_goals["gripper"]}
+            )
 
     def _on_goal_changed(self, name: str, degrees: float) -> None:
         """Fired by a slider/spinbox edit - only takes effect in Manual mode
@@ -471,6 +557,8 @@ class MainWindow(QMainWindow):
             if self.leader_worker.bus:
                 for name in JOINT_ORDER:
                     self.leader_deg_ranges[name] = self.leader_worker.bus.deg_limits(name)
+                self.leader_open_directions = self._open_directions(self.leader_worker.bus)
+            self._log_gripper_relay_decision()
             # only source joint_deg_ranges (follower's/twin's) from the leader
             # if the follower isn't already providing them - follower's own
             # calibration is what actually matters once both are connected.
@@ -497,6 +585,162 @@ class MainWindow(QMainWindow):
         else:
             self.current_positions.update(positions)
 
+    # Fraction-remap alone still leaves the gripper joint short of true
+    # full-open/full-close in practice: the leader's jaw handle (the
+    # ORIGINAL, unmodified mechanism) has no crisp, tactile hard stop the way
+    # a UI slider has a definite end-of-travel - a hand squeeze routinely
+    # stops a few percent short of the calibrated extreme, especially now
+    # that the follower's own mechanism (the new belt-driven gripper) feels
+    # nothing like what the operator's hand is actually holding. This snaps
+    # the outer band of the leader's travel to the true extreme, so "squeeze
+    # as far as it goes" reliably means fully closed on the follower even if
+    # the hand doesn't hit the exact calibrated endpoint.
+    #
+    # ONLY for the joints listed in EDGE_SNAP_JOINTS below - a rigid joint
+    # (shoulder/elbow/wrist) has no "mushy end" problem to correct for, and
+    # snapping it would instead be a hazard: the moment the leader arm drifts
+    # into the outer band of ITS OWN calibrated range (easy after any
+    # recalibration shifts that range even slightly), the follower would
+    # suddenly jump straight to its hard mechanical limit instead of tracking
+    # the leader smoothly - which is exactly what "tiba-tiba ga terkendali"
+    # was: this snap firing on a joint it was never meant to apply to.
+    LEADER_EDGE_SNAP_FRACTION = 0.06
+    EDGE_SNAP_JOINTS = {"gripper"}
+
+    # Last-resort manual override, normally empty. "range_min"/"range_max"
+    # cannot say WHICH end is physically closed - that depends on the pose
+    # held during homing and which way the sweep ran, so it comes out
+    # differently from one calibration to the next, and a hardcoded entry
+    # here goes stale the moment either side is recalibrated (it did, twice).
+    # Prefer the manual 2-point capture, which records the answer in the
+    # calibration file and lets _relay_direction_flipped() derive this
+    # instead of guessing. Only add a joint here if that isn't available.
+    INVERTED_LEADER_JOINTS: set[str] = set()
+
+    # Kept OUT of the calibration files on purpose: this is the operator's
+    # answer about the physical setup, not a property of either arm's
+    # calibration, and putting it in a calibration file would mean every
+    # recalibration silently discards it - which is precisely the loop this
+    # switch exists to end.
+    GRIPPER_INVERT_SETTINGS_PATH = "gui_settings.json"
+
+    def _load_settings(self) -> dict:
+        try:
+            with open(self.GRIPPER_INVERT_SETTINGS_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_setting(self, key: str, value) -> None:
+        data = self._load_settings()
+        data[key] = value
+        try:
+            with open(self.GRIPPER_INVERT_SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, sort_keys=True)
+        except OSError as exc:
+            self.statusBar().showMessage(f"Could not save {key}: {exc}")
+
+    def _load_gripper_invert(self) -> bool:
+        return bool(self._load_settings().get("gripper_relay_invert", False))
+
+    def _on_gripper_invert_toggled(self, enabled: bool) -> None:
+        self.gripper_invert_override = enabled
+        self._save_setting("gripper_relay_invert", enabled)
+        self.session_logger.log_event(f"Gripper relay invert -> {enabled}")
+        self._log_gripper_relay_decision()
+
+    def _on_relay_trim_changed(self, joint: str, degrees: float) -> None:
+        if degrees:
+            self.relay_trim_deg[joint] = degrees
+        else:
+            self.relay_trim_deg.pop(joint, None)
+        self._save_setting("relay_trim_deg", self.relay_trim_deg)
+        self.session_logger.log_event(f"Relay trim: {joint} = {degrees:+.1f} deg")
+
+    def _apply_persisted_gripper_torque_limit(self) -> None:
+        """Torque_Limit lives at address 48 - SRAM, not EEPROM - so the servo
+        forgets it every time it loses power, silently reverting to its own
+        default. That made a joint's usable force depend on whether the arm
+        had been power-cycled since the value was last applied, which reads
+        as "it behaves differently every restart" with nothing in software
+        having changed. Re-asserting every persisted value on every connect
+        is what makes an applied value actually mean something.
+
+        Keyed per joint (not just "gripper" - the name stuck around from
+        when this only handled the gripper, but every joint's Torque_Limit
+        is exactly as volatile) since a payload added anywhere else on the
+        arm needs the same headroom to survive a power cycle."""
+        if not self.robot_worker:
+            return
+        settings = self._load_settings()
+        limits = dict(settings.get("torque_limits", {}))
+        legacy = settings.get("gripper_torque_limit")  # pre-generalisation key
+        if legacy is not None and "gripper" not in limits:
+            limits["gripper"] = legacy
+        for joint, value in limits.items():
+            if joint not in JOINT_ORDER:
+                continue
+            self.robot_worker.request_register_write("Torque_Limit", int(value), joint)
+            self.session_logger.log_event(
+                f"Re-applied persisted Torque_Limit={value} -> {joint} (SRAM, lost on power cycle)"
+            )
+
+    def _log_gripper_relay_decision(self) -> None:
+        """Write down what the relay actually decided, so a "gripper goes the
+        wrong way" report can be settled from the log instead of inferred from
+        tick readings. Every input to the decision is stale-able (a JSON edited
+        after connect, a range sourced from the wrong arm, a process still
+        running pre-edit code), and guessing which one it was has cost several
+        rounds of hardware testing already."""
+        name = "gripper"
+        leader_dir = self.leader_open_directions.get(name)
+        follower_dir = self.follower_open_directions.get(name)
+        lo, hi = self.leader_deg_ranges.get(name, (None, None))
+        flo, fhi = self.joint_deg_ranges.get(name, (None, None))
+        parts = [
+            f"leader_opens_rising={leader_dir}",
+            f"follower_opens_rising={follower_dir}",
+            f"flip={self._relay_direction_flipped(name)}",
+            f"user_invert={self.gripper_invert_override}",
+            f"leader_deg_range=({lo}, {hi})",
+            f"follower_deg_range=({flo}, {fhi})",
+            f"follower_range_sourced_from={'follower' if self.robot_worker else 'LEADER (follower not connected!)'}",
+        ]
+        if lo is not None and flo is not None:
+            for label, deg in (("leader_at_lo", lo), ("leader_at_hi", hi)):
+                parts.append(f"{label}->follower_deg={self._leader_deg_to_follower_deg(name, deg):.1f}")
+        self.session_logger.log_event("Relay(gripper): " + "  ".join(parts))
+
+    def _relay_direction_flipped(self, name: str) -> bool:
+        """Whether leader and follower disagree about which encoder direction
+        opens this joint, decided from the closed/open ticks that the manual
+        2-point capture recorded on each side. Returns False when either side
+        never recorded them (any swept calibration), which keeps the previous
+        pass-the-fraction-straight-through behaviour for every joint that
+        isn't captured.
+
+        The gripper's user override is XORed on top. Deriving this direction
+        automatically failed repeatedly in practice, and always for the same
+        reason: whichever physical extreme ends up on the low tick is decided
+        by the pose the jaw happened to be held in during "Set middle", and
+        the human labelling of that pose is exactly what's unreliable (the
+        leader's handle hangs OPEN at rest, so homing it untouched records
+        "open" as the closed end). A switch the operator flips once, after
+        seeing which way it actually moved, needs no such labelling to be
+        correct - and it persists, so a later recalibration on either side
+        can't silently undo it."""
+        flipped = False
+        leader_dir = self.leader_open_directions.get(name)
+        follower_dir = self.follower_open_directions.get(name)
+        if leader_dir is None or follower_dir is None:
+            flipped = name in self.INVERTED_LEADER_JOINTS
+        else:
+            flipped = leader_dir != follower_dir
+        if name == "gripper" and self.gripper_invert_override:
+            flipped = not flipped
+        return flipped
+
     def _leader_deg_to_follower_deg(self, name: str, leader_degrees: float) -> float:
         """Leader and follower are each calibrated independently - their
         degree scales don't necessarily agree on how far "fully closed" is
@@ -509,11 +753,25 @@ class MainWindow(QMainWindow):
         in magnitude."""
         leader_lo, leader_hi = self.leader_deg_ranges.get(name, (-180.0, 180.0))
         follower_lo, follower_hi = self.joint_deg_ranges.get(name, (-180.0, 180.0))
+        trim = self.relay_trim_deg.get(name, 0.0)
         if leader_hi <= leader_lo or follower_hi <= follower_lo:
-            return leader_degrees
+            return leader_degrees + trim
         fraction = (leader_degrees - leader_lo) / (leader_hi - leader_lo)
+        if self._relay_direction_flipped(name):
+            fraction = 1.0 - fraction
+        if name in self.EDGE_SNAP_JOINTS:
+            if fraction < self.LEADER_EDGE_SNAP_FRACTION:
+                fraction = 0.0
+            elif fraction > 1.0 - self.LEADER_EDGE_SNAP_FRACTION:
+                fraction = 1.0
         fraction = max(0.0, min(1.0, fraction))
-        return follower_lo + fraction * (follower_hi - follower_lo)
+        target = follower_lo + fraction * (follower_hi - follower_lo)
+        # Trim is applied AFTER the remap and then re-clamped, so a trim can
+        # shift the whole travel but can never command the follower past its
+        # own calibrated limits - the cost is that the last `trim` degrees at
+        # one end saturate, which is the correct trade for a joint whose zero
+        # was simply set in the wrong place.
+        return max(follower_lo, min(follower_hi, target + trim))
 
     # ---------------------------------------------------------------- camera
     #
@@ -758,18 +1016,86 @@ class MainWindow(QMainWindow):
                 "them can hold the serial port at a time.",
             )
             return
-        self.calibration_worker = CalibrationWorker(port, JOINT_ORDER)
+        joints = self.calibration_panel.joints_to_calibrate()
+        if not joints:
+            QMessageBox.warning(self, "No joints selected", "Check at least one joint to calibrate.")
+            return
+        self.session_logger.log_event(f"Calibration: connecting on {port} (joints: {joints})")
+        self.calibration_worker = CalibrationWorker(port, joints)
         self.calibration_worker.connected.connect(self.calibration_panel.set_connected)
+        self.calibration_worker.connected.connect(
+            lambda ok: self.session_logger.log_event(f"Calibration: {'connected on ' + port if ok else 'connect failed'}")
+        )
         self.calibration_worker.error.connect(self._on_robot_error)
         self.calibration_worker.live_update.connect(self.calibration_panel.update_live_table)
         self.calibration_worker.finished_calibration.connect(self._on_calibration_finished)
+        self.calibration_worker.point_captured.connect(
+            lambda joint, label, raw: self.calibration_panel.set_gripper_capture_point(label, raw)
+            if joint == "gripper" else None
+        )
+        self.calibration_worker.auto_calibrate_awaiting_label.connect(self._on_auto_calibrate_awaiting_label)
         self.calibration_worker.start()
+
+        # Each connect gets a FRESH worker, whose manual_joints starts empty,
+        # while the checkbox keeps whatever the user last ticked - so a still-
+        # ticked box silently meant nothing to the new worker and the gripper
+        # got swept anyway. That is exactly how a captured leader ended up
+        # paired with a swept 24..4091 follower: same panel, box still ticked,
+        # second arm never told. Re-assert the panel's state onto every new
+        # worker, and drop the previous arm's captured ticks.
+        self.calibration_panel.clear_gripper_captures()
+        if self.calibration_panel.gripper_manual_enabled():
+            self.calibration_worker.request_set_manual_joint("gripper", True)
+
+    def _on_gripper_manual_mode_toggled(self, enabled: bool) -> None:
+        if self.calibration_worker:
+            self.calibration_worker.request_set_manual_joint("gripper", enabled)
+
+    def _on_gripper_capture_requested(self, label: str) -> None:
+        if self.calibration_worker:
+            self.calibration_worker.request_capture_point("gripper", label)
+
+    def _on_auto_calibrate_requested(self) -> None:
+        if not self.calibration_worker:
+            return
+        self.statusBar().showMessage(
+            "Auto-calibrating gripper (stall-safe) - driving to both extremes at reduced torque..."
+        )
+        self.session_logger.log_event("Calibration: auto-calibrate started for gripper")
+        self.calibration_worker.request_auto_calibrate("gripper")
+
+    def _on_auto_calibrate_awaiting_label(self, name: str, low_tick: int, high_tick: int) -> None:
+        """The stall search found both extremes and is now holding the joint
+        at low_tick (torque still on, at the reduced search limit) - this is
+        the ONE deliberate, unhurried moment to decide which end is which,
+        instead of that judgment call happening mid-squeeze the way the
+        manual capture flow needed it to. Whichever button is answered
+        determines closed_tick/open_tick; the other extreme gets the
+        opposite label automatically."""
+        self.statusBar().showMessage(f"'{name}' is holding at tick {low_tick} (other extreme: {high_tick}).")
+        self.session_logger.log_event(
+            f"Calibration: auto-calibrate found extremes for '{name}' - low={low_tick} high={high_tick}, awaiting label"
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle("Auto-calibrate: which end is this?")
+        box.setText(
+            f"'{name}' found its two physical extremes and is now holding at tick {low_tick} "
+            f"(the other one is {high_tick}).\n\nLook at it now - is it CLOSED or OPEN?"
+        )
+        closed_btn = box.addButton("Closed", QMessageBox.YesRole)
+        box.addButton("Open", QMessageBox.NoRole)
+        box.exec()
+        low_is = "closed" if box.clickedButton() is closed_btn else "open"
+        self.calibration_worker.request_auto_calibrate_label(name, low_is)
+        self.statusBar().showMessage(f"'{name}' labelled: tick {low_tick}={low_is}.")
+        self.session_logger.log_event(f"Calibration: '{name}' labelled tick {low_tick}={low_is}")
 
     def _on_calibration_disconnect(self) -> None:
         if self.calibration_worker:
             worker = self.calibration_worker
             self.calibration_worker = None
             self._retire_worker(worker)
+            self.session_logger.log_event("Calibration: disconnecting")
         self.calibration_panel.set_connected(False)
 
     def _on_calibration_reset(self) -> None:
@@ -846,20 +1172,98 @@ class MainWindow(QMainWindow):
         if self.calibration_worker:
             self.calibration_worker.request_finish()
 
+    # A sweep records "however far the joint went", which silently includes any
+    # travel past the real mechanism - a belt or rack gripper that disengages
+    # at its stop keeps turning, and the sweep dutifully records most of a full
+    # revolution. That has landed in a saved file four separate times here,
+    # each time only noticed later as the gripper mis-tracking during teleop,
+    # so it's worth saying at save time instead. No physical parallel gripper
+    # or arm joint plausibly needs this much rotation; wrist_roll is exempt
+    # because it IS deliberately a full continuous turn.
+    IMPLAUSIBLE_RANGE_TICKS = 3400  # ~299 deg; healthy joints here span ~2200-2500
+    FULL_TURN_EXEMPT = {"wrist_roll"}
+
+    def _implausible_ranges(self, calibration_dict: dict) -> list[str]:
+        flagged = []
+        for name, entry in calibration_dict.items():
+            if name in self.FULL_TURN_EXEMPT:
+                continue
+            span = entry["range_max"] - entry["range_min"]
+            if span > self.IMPLAUSIBLE_RANGE_TICKS:
+                captured = "closed_tick" in entry
+                flagged.append(
+                    f"  {name}: {entry['range_min']}..{entry['range_max']} "
+                    f"({span} ticks = {span * 360.0 / MAX_RES:.0f} deg)"
+                    + ("" if captured else "  [swept, no 2-point capture]")
+                )
+        return flagged
+
     def _on_calibration_finished(self, calibration_dict: dict) -> None:
+        flagged = self._implausible_ranges(calibration_dict)
+        if flagged:
+            answer = QMessageBox.warning(
+                self,
+                "Suspiciously wide range",
+                "These joints recorded nearly a full revolution, which usually "
+                "means the sweep continued past the real mechanism (a belt or "
+                "rack gripper that disengages at its stop keeps turning):\n\n"
+                + "\n".join(flagged)
+                + "\n\nFor a gripper, tick the \"manual 2-point capture\" box and "
+                  "capture CLOSED/OPEN instead of sweeping.\n\n"
+                  "Save anyway?",
+                QMessageBox.Save | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if answer != QMessageBox.Save:
+                return
         self.calibration_panel.prompt_save(calibration_dict)
 
     # ---------------------------------------------------------------- telemetry
+    def _raw_to_deg(self, joint: str, raw: int) -> float:
+        """Same conversion ServoBus.read_all_positions_deg() uses internally -
+        duplicated here (read-only) so the CSV log can carry the calibrated
+        degree value logged from the SAME raw sample/timestamp as position,
+        instead of relying on the separately-timed positions_updated stream.
+        That's what makes "is raw ticks monotonic but the degree readout
+        isn't" actually checkable from one file instead of eyeballing two
+        panels at once."""
+        cal = self.robot_worker.bus.calibration.get(joint) if self.robot_worker and self.robot_worker.bus else None
+        mid = cal.mid if cal else MODEL_RESOLUTION / 2
+        return (raw - mid) * 360.0 / MAX_RES
+
     def _on_telemetry_updated(self, telemetry: dict) -> None:
         self.telemetry_panel.update_telemetry(telemetry)
+        self.twin_panel.update_telemetry(self._build_hud_telemetry(telemetry))
         if self._telemetry_csv_writer:
             stamp = time.time()
             for joint, values in telemetry.items():
-                row = [f"{stamp:.3f}", joint, values["position"]]
+                row = [
+                    f"{stamp:.3f}", joint,
+                    values["position"], f"{self._raw_to_deg(joint, values['position']):.2f}",
+                ]
                 for field in TELEMETRY_CSV_FIELDS:
                     raw = values[field]
                     row += [raw, f"{convert_telemetry(field, raw)[0]:.3f}"]
                 self._telemetry_csv_writer.writerow(row)
+
+    def _build_hud_telemetry(self, telemetry: dict) -> dict[str, dict[str, float]]:
+        """Reuses telemetry_panel.convert_telemetry() for load/temperature/
+        current so the MuJoCo HUD and the Telemetry tab share one
+        unit-conversion table instead of two that can quietly drift apart.
+        Position is the one exception - it comes from self.current_positions
+        (the same already-calibrated degrees the rest of the app uses, see
+        _raw_to_deg/JointPanel) rather than convert_telemetry's raw-tick
+        passthrough, since "calibrated degrees" is what a human reads on a
+        HUD, not ticks."""
+        hud: dict[str, dict[str, float]] = {}
+        for joint, values in telemetry.items():
+            hud[joint] = {
+                "position_deg": self.current_positions.get(joint, 0.0),
+                "load": convert_telemetry("load", values["load"])[0],
+                "temperature": convert_telemetry("temperature", values["temperature"])[0],
+                "current_mA": convert_telemetry("current", values["current"])[0],
+            }
+        return hud
 
     def _on_telemetry_log_toggled(self, enabled: bool) -> None:
         if enabled:
@@ -888,6 +1292,14 @@ class MainWindow(QMainWindow):
         self.robot_worker.request_register_write(data_name, value, joint or None)
         self.statusBar().showMessage(f"{data_name} = {value} -> {joint or 'all joints'}")
         self.session_logger.log_event(f"Register write: {data_name}={value} on {joint or 'all joints'}")
+        if data_name == "Torque_Limit" and joint in JOINT_ORDER:
+            # SRAM register: the servo drops it on power-down. Remember it so
+            # _apply_persisted_gripper_torque_limit() can put it back, instead
+            # of the value quietly reverting the next time the arm is switched
+            # off and taking that joint's usable force with it.
+            limits = dict(self._load_settings().get("torque_limits", {}))
+            limits[joint] = int(value)
+            self._save_setting("torque_limits", limits)
 
     # ---------------------------------------------------------------- teaching (record & playback)
     def _on_record_waypoint(self, force_grip: bool = False) -> None:
@@ -914,12 +1326,28 @@ class MainWindow(QMainWindow):
             measured = positions["gripper"]
             positions["gripper"] = lo if abs(measured - lo) <= abs(measured - hi) else hi
             label += " (grip)"
-        self.waypoints.append({"label": label, "positions": positions})
+        self.waypoints.append({"label": label, "positions": positions, "dwell_ms": 0})
         self._refresh_waypoint_list()
         self.session_logger.log_event(f"Teaching: recorded '{label}'")
 
     def _refresh_waypoint_list(self) -> None:
-        self.teaching_panel.set_waypoints([wp["label"] for wp in self.waypoints])
+        self.teaching_panel.set_waypoints([
+            f"{wp['label']} - {wp['dwell_ms']} ms delay" if wp.get("dwell_ms") else wp["label"]
+            for wp in self.waypoints
+        ])
+
+    def _on_set_delay(self, ms: int) -> None:
+        index = self.teaching_panel.selected_index()
+        if index is None:
+            QMessageBox.information(self, "No waypoint selected", "Select a waypoint in the list first.")
+            return
+        self.waypoints[index]["dwell_ms"] = ms
+        self._refresh_waypoint_list()  # preserves the current selection, see TeachingPanel.set_waypoints
+        self.session_logger.log_event(f"Teaching: delay on '{self.waypoints[index]['label']}' -> {ms} ms")
+
+    def _on_waypoint_row_selected(self, index: int) -> None:
+        if 0 <= index < len(self.waypoints):
+            self.teaching_panel.set_delay_spin_value(self.waypoints[index].get("dwell_ms", 0))
 
     def _on_delete_waypoint(self) -> None:
         index = self.teaching_panel.selected_index()
@@ -947,6 +1375,19 @@ class MainWindow(QMainWindow):
         if not self.robot_worker:
             QMessageBox.warning(self, "No follower", "Connect the follower first - playback drives it directly.")
             return
+        # Confirmed real failure mode: playback drives the follower directly
+        # via request_goal(), completely independent of control_source - the
+        # leader relay is only blocked from ALSO calling request_goal while
+        # _playback_index is not None. The instant Stop clears that (index ->
+        # None), if Control Source was left on "Leader arm", the relay
+        # resumes immediately and snaps the follower to wherever the leader
+        # physically is right then - torque-off and hand-held, so often
+        # drooped from gravity - which looked exactly like the follower
+        # itself losing torque and falling. It never did; it was commanded
+        # there. Force Manual before playback starts so Stop can never hand
+        # control back to a leader pose nobody was tracking.
+        if self.control_source == "leader":
+            self.control_source_panel.force_manual()
         self.robot_worker.request_torque(True)
         self._playback_index = 0
         self._start_playback_waypoint()
@@ -956,10 +1397,10 @@ class MainWindow(QMainWindow):
 
     def _start_playback_waypoint(self) -> None:
         """Sets up a linear trajectory from wherever the follower is RIGHT
-        NOW to this waypoint's target, capped at PLAYBACK_DEG_PER_S - a raw
-        single Goal_Position jump lets the servo firmware move at whatever
-        its own max speed is (jerky, no ramp), so the smoothing has to
-        happen here, one small intermediate goal per tick, instead."""
+        NOW to this waypoint's target, capped at the Teaching panel's speed
+        slider - a raw single Goal_Position jump lets the servo firmware move
+        at whatever its own max speed is (jerky, no ramp), so the smoothing
+        has to happen here, one small intermediate goal per tick, instead."""
         wp = self.waypoints[self._playback_index]
         self._playback_start_positions = dict(self.current_positions)
         self._playback_target_positions = dict(wp["positions"])
@@ -970,12 +1411,18 @@ class MainWindow(QMainWindow):
             ),
             default=0.0,
         )
-        self._playback_move_duration = max(PLAYBACK_MIN_MOVE_S, max_delta / PLAYBACK_DEG_PER_S)
+        # Read live from the slider rather than a fixed constant, so dragging
+        # it mid-sequence changes the NEXT waypoint-to-waypoint move without
+        # needing to stop and replay.
+        speed = max(1.0, self.teaching_panel.playback_speed_deg_per_s())
+        self._playback_move_duration = max(PLAYBACK_MIN_MOVE_S, max_delta / speed)
         self._playback_move_start = time.monotonic()
         self._playback_deadline = (
             self._playback_move_start + self._playback_move_duration
             + PLAYBACK_SETTLE_GRACE_S + PLAYBACK_MAX_DWELL_S
         )
+        self._playback_dwell_s = wp.get("dwell_ms", 0) / 1000.0
+        self._playback_hold_until = None  # reset - this is a NEW move, not yet arrived
         self.teaching_panel.set_status(
             f"Moving to '{wp['label']}' ({self._playback_index + 1}/{len(self.waypoints)})"
         )
@@ -1017,13 +1464,39 @@ class MainWindow(QMainWindow):
             abs(self.current_positions.get(name, 0.0) - degrees) <= PLAYBACK_ARRIVE_TOLERANCE_DEG
             for name, degrees in self._playback_target_positions.items()
         )
-        if arrived or now >= self._playback_deadline:
-            self._playback_index += 1
-            if self._playback_index >= len(self.waypoints):
-                self._on_stop_sequence()
-                self.session_logger.log_event("Teaching: playback finished")
+        if not (arrived or now >= self._playback_deadline):
+            return
+
+        # Arrived (or gave up waiting) - hold here for this waypoint's own
+        # dwell before moving on. Started lazily on the tick arrival is FIRST
+        # detected, not from move-start, so the dwell is purely time spent
+        # sitting at the target, not counted against the move itself.
+        if self._playback_dwell_s > 0:
+            if self._playback_hold_until is None:
+                self._playback_hold_until = now + self._playback_dwell_s
+                wp = self.waypoints[self._playback_index]
+                self.teaching_panel.set_status(
+                    f"Holding at '{wp['label']}' for {wp.get('dwell_ms', 0)} ms..."
+                )
+            if now < self._playback_hold_until:
                 return
-            self._start_playback_waypoint()
+        self._playback_hold_until = None
+
+        self._playback_index += 1
+        if self._playback_index >= len(self.waypoints):
+            # Checked live (not captured at Play time) so unticking Loop
+            # mid-sequence lets the cycle already under way finish and
+            # stop cleanly, rather than needing Stop to cut it off - see
+            # TeachingPanel.loop_enabled().
+            if self.teaching_panel.loop_enabled():
+                self.session_logger.log_event("Teaching: loop -> restarting from waypoint 1")
+                self._playback_index = 0
+                self._start_playback_waypoint()
+                return
+            self._on_stop_sequence()
+            self.session_logger.log_event("Teaching: playback finished")
+            return
+        self._start_playback_waypoint()
 
     def _on_stop_sequence(self) -> None:
         self.playback_timer.stop()

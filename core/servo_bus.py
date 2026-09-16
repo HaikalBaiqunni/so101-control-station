@@ -28,6 +28,33 @@ EEPROM_WRITE_SETTLE_S = 0.02  # STS3215 needs a beat to finish an EEPROM write
                               # always on a different id, which is exactly this.
 WRITE_RETRIES = 3
 
+# -- torque-limited stall-based auto-calibration ---------------------------
+# Adapted from NormaCore's open-source ST3215 auto-calibration
+# (github.com/norma-core/norma-core, software/drivers/st3215/src/
+# auto_calibrate/): drive the servo toward each extreme at deliberately LOW
+# torque and detect a stall from the encoder position/velocity going flat,
+# instead of either (a) a human hand-sweeping the joint and eyeballing where
+# it stopped (proven unreliable on this gripper - the sweep routinely
+# wanders into a freewheel zone past the real mechanical limit, since a
+# human hand pushes far harder than the servo ever will), or (b) full-torque
+# stall detection (risks stripping the rack-pinion gearing, which is exactly
+# what tooth-skip damage from repeated full-torque stalls looks like).
+# A LOW torque limit makes a stall safe to run into and easy to tell apart
+# from "still making progress".
+AUTO_CAL_TORQUE_LIMIT = 100     # out of 1000 - matches NormaCore's own value for
+                                # the SO-101 gripper specifically (their lowest of
+                                # all 6 joints)
+AUTO_CAL_STEP_TICKS = 1020      # ~90 deg per commanded chunk, same as NormaCore
+AUTO_CAL_POLL_INTERVAL_S = 0.05
+AUTO_CAL_VELOCITY_THRESHOLD = 15     # raw Present_Velocity magnitude counted as "stopped"
+AUTO_CAL_MIN_DISPLACEMENT = 5        # ticks - must move at least this far before stall
+                                      # detection is trusted (ignores pre-motion noise)
+AUTO_CAL_STABLE_READS = 4            # consecutive "stopped" reads required (debounce)
+AUTO_CAL_MAX_IDLE_READS = 80         # ~4s at the poll interval above - bail out if it
+                                      # never starts moving at all (already at the wall)
+AUTO_CAL_OVERSHOOT_TOLERANCE = 50    # falling short of the commanded step by more than
+                                      # this means it hit a real wall, not just settling
+
 # data_name: (address, size_bytes, sign_bit_index_or_None)
 REGISTERS = {
     # -- EEPROM (persistent; see EEPROM_WRITE_SETTLE_S) --
@@ -123,10 +150,26 @@ class MotorCalibration:
     homing_offset: int
     range_min: int
     range_max: int
+    # range_min/range_max alone can't say WHICH end is physically "closed":
+    # that depends on the pose held during homing and which way the sweep
+    # ran, so it comes out differently from one calibration to the next.
+    # These two are written only by the manual 2-point capture flow, where
+    # the operator states outright which extreme is which - see
+    # CalibrationWorker. None means "not recorded" (any swept calibration).
+    closed_tick: int | None = None
+    open_tick: int | None = None
 
     @property
     def mid(self) -> float:
         return (self.range_min + self.range_max) / 2
+
+    @property
+    def opens_with_rising_ticks(self) -> bool | None:
+        """True if opening the jaw counts the encoder UP, False if DOWN,
+        None if this calibration never recorded which end is which."""
+        if self.closed_tick is None or self.open_tick is None:
+            return None
+        return self.open_tick > self.closed_tick
 
 
 class ServoBusError(RuntimeError):
@@ -193,6 +236,8 @@ class ServoBus:
                 homing_offset=entry["homing_offset"],
                 range_min=entry["range_min"],
                 range_max=entry["range_max"],
+                closed_tick=entry.get("closed_tick"),
+                open_tick=entry.get("open_tick"),
             )
             for name, entry in raw.items()
         }
@@ -208,9 +253,38 @@ class ServoBus:
         return JOINT_ORDER
 
     def apply_homing_offsets(self) -> None:
-        """Push the loaded calibration's homing offsets into each servo's EEPROM."""
+        """Push the loaded calibration into each servo's EEPROM: homing offset
+        AND position limits.
+
+        The limits matter as much as the offset and used to be left alone here,
+        which made loading a calibration file only *half* restore the state it
+        was recorded in. Min/Max_Position_Limit are stored by the servo as
+        plain numbers in the homing-corrected frame, so they only mean the
+        physical positions they were meant to when the homing offset still
+        matches the run that wrote them. Connect with a file whose offset came
+        from a different calibration run and every limit silently refers to a
+        position shifted by the difference between the two offsets - 1680
+        ticks (148 deg) in one case seen here - so the servo clamps motion to a
+        region unrelated to the calibration, and the joint sits against a
+        limit refusing to move for no reason visible in the file.
+
+        Writes are skipped where the servo already holds the right value:
+        these are EEPROM registers, and re-writing three of them per joint on
+        every connect is both slow (each needs a settle delay) and pointless
+        wear when nothing changed.
+        """
         for cal in self.calibration.values():
-            self.write_raw("Homing_Offset", cal.id, cal.homing_offset)
+            for data_name, value in (
+                ("Homing_Offset", cal.homing_offset),
+                ("Min_Position_Limit", cal.range_min),
+                ("Max_Position_Limit", cal.range_max),
+            ):
+                try:
+                    if self.read_raw(data_name, cal.id) == value:
+                        continue
+                except ServoBusError:
+                    pass  # can't confirm - fall through and write it
+                self.write_raw(data_name, cal.id, value)
 
     # ---------------------------------------------------------------- low-level I/O
     def write_raw(self, data_name: str, motor_id: int, value: int) -> None:
@@ -253,6 +327,30 @@ class ServoBus:
         with self._lock:
             _model, result, _error = self.packet_handler.ping(self.port_handler, motor_id)
         return result == scs.COMM_SUCCESS
+
+    def read_servo_config(self, name: str) -> dict[str, int]:
+        """Read back the registers that silently decide how far a joint is
+        ALLOWED to go, as the servo itself currently holds them.
+
+        These live in the servo's EEPROM, not in the calibration file, so they
+        survive restarts and recalibrations independently of it - which makes
+        "the JSON says one thing but the arm does another" very hard to reason
+        about from the file alone. Torque_Limit especially: a joint that stops
+        short of its goal while reporting a load percentage equal to its
+        configured limit is saturated, not mechanically jammed, and those two
+        look identical from the outside.
+        """
+        motor_id = self.joint_id(name)
+        config = {}
+        for data_name in (
+            "Min_Position_Limit", "Max_Position_Limit", "Homing_Offset",
+            "Torque_Limit", "Operating_Mode", "CW_Dead_Zone", "CCW_Dead_Zone",
+        ):
+            try:
+                config[data_name] = self.read_raw(data_name, motor_id)
+            except ServoBusError:
+                config[data_name] = -1  # unreadable; keep the rest of the row useful
+        return config
 
     # ---------------------------------------------------------------- first-time motor setup
     # Everything below is for a servo that is NOT yet part of a working arm -
@@ -449,23 +547,37 @@ class ServoBus:
         """Unnormalize degrees -> raw ticks and write ALL given joints in one
         bus transaction (GroupSyncWrite). Every value is clamped to the
         calibrated safe range first, so a GUI bug or wild slider drag can
-        never command a servo past its known mechanical limits."""
+        never command a servo past its known mechanical limits.
+
+        A joint missing from the loaded calibration is skipped rather than
+        aborting the whole call - confirmed as a real failure mode, not just
+        a theoretical one: unplug one servo (its calibration entry now
+        pointless, or simply absent from a trimmed-down calibration file) and
+        the leader relay keeps including it in every batch alongside five
+        perfectly healthy joints. Raising immediately mid-loop, as this used
+        to, throws the GroupSyncWrite away before txPacket() ever runs -
+        which silently halted ALL SIX joints every single cycle over one
+        missing one, indistinguishable from the whole bus being dead."""
         _addr, _size, sign_bit = REGISTERS["Goal_Position"]
+        skipped = [name for name in goals if name not in self.calibration]
 
         self._sync_writer.clearParam()
         for name, degrees in goals.items():
-            if name not in self.calibration:
-                raise ServoBusError(f"No calibration loaded for '{name}' - refusing to move it blind")
+            if name in skipped:
+                continue
             cal = self.calibration[name]
             raw = int(round(degrees * MAX_RES / 360.0 + cal.mid))
             raw = max(cal.range_min, min(cal.range_max, raw))
             packed = encode_sign_magnitude(raw, sign_bit)
             self._sync_writer.addParam(cal.id, [scs.SCS_LOBYTE(packed), scs.SCS_HIBYTE(packed)])
 
-        with self._lock:
-            result = self._sync_writer.txPacket()
-        if result != scs.COMM_SUCCESS:
-            raise ServoBusError(f"sync_write Goal_Position failed: {self.packet_handler.getTxRxResult(result)}")
+        if self._sync_writer.data_dict:
+            with self._lock:
+                result = self._sync_writer.txPacket()
+            if result != scs.COMM_SUCCESS:
+                raise ServoBusError(f"sync_write Goal_Position failed: {self.packet_handler.getTxRxResult(result)}")
+        if skipped:
+            raise ServoBusError(f"No calibration loaded for {skipped} - refusing to move blind (other joints still written)")
 
     def deg_limits(self, name: str) -> tuple[float, float]:
         if name not in self.calibration:
@@ -507,3 +619,91 @@ class ServoBus:
         mid = self.joint_id(name)
         self.write_raw("Min_Position_Limit", mid, range_min)
         self.write_raw("Max_Position_Limit", mid, range_max)
+
+    # ---------------------------------------------------------------- auto-calibration (stall-based)
+    def _wait_for_stall(self, motor_id: int) -> int:
+        """Poll position/velocity until the servo stops making progress, and
+        return where it settled. Detects the same physical event a stall
+        current spike would (the motor pressing against something it can't
+        move past), but through an encoder+velocity plateau instead - no
+        per-servo current threshold to tune, and it still works cleanly
+        during a deliberately low-torque search where the current spike
+        itself would be small anyway."""
+        start_pos = self.read_raw("Present_Position", motor_id)
+        last_pos = start_pos
+        stable_count = 0
+        idle_reads = 0
+        while True:
+            time.sleep(AUTO_CAL_POLL_INTERVAL_S)
+            pos = self.read_raw("Present_Position", motor_id)
+            vel = abs(decode_sign_magnitude(self.read_raw("Present_Velocity", motor_id), 15))
+            displacement = abs(pos - start_pos)
+            step_move = abs(pos - last_pos)
+            last_pos = pos
+
+            if displacement < AUTO_CAL_MIN_DISPLACEMENT:
+                idle_reads += 1
+                if idle_reads >= AUTO_CAL_MAX_IDLE_READS:
+                    return pos  # never got moving - already against something
+                continue
+
+            if vel < AUTO_CAL_VELOCITY_THRESHOLD and step_move < AUTO_CAL_VELOCITY_THRESHOLD:
+                stable_count += 1
+                if stable_count >= AUTO_CAL_STABLE_READS:
+                    return pos
+            else:
+                stable_count = 0
+
+    def _find_extreme(self, motor_id: int, toward_max: bool) -> int:
+        """Push the goal further toward 0 or MAX_RES in fixed chunks, each
+        time waiting for a stall, until the servo demonstrably falls short
+        of the chunk it was just asked to reach. That shortfall is what
+        separates "still making real progress toward the limit" from "found
+        the actual wall" - mirrors NormaCore's find_min()/find_max()."""
+        current_target = self.read_raw("Present_Position", motor_id)
+        final_pos = current_target
+        while (toward_max and current_target < MAX_RES) or (not toward_max and current_target > 0):
+            if toward_max:
+                next_target = min(current_target + AUTO_CAL_STEP_TICKS, MAX_RES)
+            else:
+                next_target = max(current_target - AUTO_CAL_STEP_TICKS, 0)
+            self.write_raw("Goal_Position", motor_id, next_target)
+            final_pos = self._wait_for_stall(motor_id)
+            current_target = next_target
+            if abs(next_target - final_pos) > AUTO_CAL_OVERSHOOT_TOLERANCE:
+                break
+        # CRITICAL: pull Goal_Position back to where the servo actually
+        # settled. Leaving it at next_target (past the real wall - that
+        # shortfall is precisely how a wall gets detected) means the servo
+        # keeps trying to reach a physically unreachable target forever -
+        # harmless at this search's low torque, but violent the instant
+        # normal torque is restored afterward, since it then pushes at full
+        # strength toward the same unreachable point. Confirmed on real
+        # hardware: this is what produced a loud grinding noise and a large
+        # current spike right when auto_calibrate_label restored the
+        # original Torque_Limit, not a direction or labelling problem.
+        self.write_raw("Goal_Position", motor_id, final_pos)
+        return final_pos
+
+    def auto_find_range_raw(self, name: str) -> tuple[int, int]:
+        """Torque-limited stall search for a joint's two true physical
+        extremes - see the AUTO_CAL_* constants' docstring above for why.
+        Returns (low_tick, high_tick); doesn't know or guess which end is
+        physically "closed" vs "open" (neither does NormaCore's version -
+        that's a separate, deliberate decision made by whoever's watching
+        the joint once it's sitting still, not something a blind stall
+        search can determine on its own).
+
+        Leaves the joint sitting at low_tick, holding there at the reduced
+        torque limit (Torque_Enable stays on) so an operator has a stable,
+        unhurried moment to look at it and decide which end it is - the
+        exact moment that kept going wrong when it had to be judged during
+        a live hand squeeze instead. Restoring the original Torque_Limit is
+        the caller's job once that decision is made."""
+        mid = self.joint_id(name)
+        self.write_raw("Operating_Mode", mid, OPERATING_MODE_POSITION)
+        self.write_raw("Torque_Enable", mid, 1)
+        self.write_raw("Torque_Limit", mid, AUTO_CAL_TORQUE_LIMIT)
+        high_tick = self._find_extreme(mid, toward_max=True)
+        low_tick = self._find_extreme(mid, toward_max=False)
+        return low_tick, high_tick

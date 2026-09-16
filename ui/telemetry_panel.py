@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QSpinBox,
@@ -103,15 +104,44 @@ class TelemetryPanel(QGroupBox):
                 item = QTableWidgetItem("-")
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(row, col, item)
-        self.table.resizeColumnsToContents()
-        # tall enough for all six joints plus the header - gripper is the row
-        # that actually matters here, so it must never be the one scrolled off
+        # Stretch (not resizeColumnsToContents) so the 7 columns always sum to
+        # exactly the panel's width - a fixed content width would trigger a
+        # horizontal scrollbar whenever the panel is narrower than that, and
+        # that scrollbar eats into the SAME fixed table height set below,
+        # silently pushing the last row (gripper) out of view without ever
+        # showing a vertical scrollbar to hint why.
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Row height used to come from either a guessed constant
+        # (verticalHeader().defaultSectionSize(), a QStyle-derived metric -
+        # 30px in an offscreen test) or a measurement
+        # (resizeRowsToContents() - 17px in that SAME offscreen test, i.e.
+        # even those two disagreed with each other there). Confirmed on real
+        # hardware: gripper's row was STILL missing after both attempts, on
+        # a panel with visibly plenty of spare room around it - meaning the
+        # actual failure wasn't "not enough total space" at all, it was
+        # "row height assumptions don't hold on whatever style/DPI this
+        # machine renders with". Fixed mode + an explicit size stops asking
+        # Qt to predict or report a row height and just DICTATES one instead
+        # - every row is exactly ROW_H regardless of style, font, or DPI, so
+        # the six-row budget below is finally a real guarantee, not a guess.
+        ROW_H = 26
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.table.verticalHeader().setDefaultSectionSize(ROW_H)
         self.table.setMinimumHeight(
             self.table.horizontalHeader().height()
-            + len(JOINT_ORDER) * self.table.verticalHeader().defaultSectionSize()
+            + len(JOINT_ORDER) * ROW_H
             + 2 * self.table.frameWidth()
-            + 4
+            + 20  # generous slack, not a tight fit - see below
         )
+        # Confirmed by grabbing a real screenshot of this exact table on
+        # real hardware: the row-6 (gripper) geometry was ALREADY entirely
+        # correct - visualRect reported it fully inside the viewport with 4px
+        # to spare - and it still didn't get painted. A margin that tight
+        # gets eaten by DPI/device-pixel rounding between Qt's logical
+        # geometry and what actually lands on screen, so the viewport was
+        # geometrically "big enough" while the rasterizer still clipped the
+        # last row. 20px instead of 4px is deliberately not a tight fit.
         table_tab = QWidget()
         table_tab_layout = QVBoxLayout(table_tab)
         table_tab_layout.setContentsMargins(0, 6, 0, 0)
@@ -185,17 +215,31 @@ class TelemetryPanel(QGroupBox):
         log_row.addWidget(self.log_path_label, 1)
 
         # -- servo-side settings worth experimenting with --
+        # Was hardcoded to "gripper" - confirmed a real limitation: a payload
+        # added anywhere else on the arm (e.g. a sensor bracket on the wrist/
+        # elbow) needs the SAME kind of Torque_Limit headroom, and there was
+        # no way to reach any joint but the gripper from this panel.
+        self.torque_target_combo = QComboBox()
+        self.torque_target_combo.addItems(JOINT_ORDER)
+        self.torque_target_combo.setCurrentText("gripper")
+
         self.torque_limit_spin = QSpinBox()
         self.torque_limit_spin.setRange(0, 1000)
         self.torque_limit_spin.setValue(500)
         self.torque_limit_spin.setToolTip(
             "Torque_Limit (SRAM, reg 48). Caps the servo's own output, so the\n"
             "servo holds a roughly constant force in its internal loop instead\n"
-            "of us watching Present_Current at 60 Hz and reacting ~16 ms late."
+            "of us watching Present_Current at 60 Hz and reacting ~16 ms late.\n"
+            "A joint that stalls under an added payload during smooth/eased\n"
+            "playback (small commanded position error near the start of a\n"
+            "move, not enough torque yet to break static friction + gravity)\n"
+            "usually just needs more headroom here."
         )
-        self.torque_limit_btn = QPushButton("Apply to gripper")
+        self.torque_limit_btn = QPushButton("Apply")
         self.torque_limit_btn.clicked.connect(
-            lambda: self.register_write_requested.emit("Torque_Limit", self.torque_limit_spin.value(), "gripper")
+            lambda: self.register_write_requested.emit(
+                "Torque_Limit", self.torque_limit_spin.value(), self.torque_target_combo.currentText()
+            )
         )
 
         self.deadband_spin = QSpinBox()
@@ -206,10 +250,13 @@ class TelemetryPanel(QGroupBox):
             "stops correcting, so it sets a hard floor on position\n"
             "repeatability. Smaller is tighter but can cause hunting/buzzing."
         )
-        self.deadband_btn = QPushButton("Apply to gripper")
+        self.deadband_btn = QPushButton("Apply")
         self.deadband_btn.clicked.connect(self._apply_deadband)
 
         settings_row = QHBoxLayout()
+        settings_row.addWidget(QLabel("Target"))
+        settings_row.addWidget(self.torque_target_combo)
+        settings_row.addSpacing(8)
         settings_row.addWidget(QLabel("Torque_Limit"))
         settings_row.addWidget(self.torque_limit_spin)
         settings_row.addWidget(self.torque_limit_btn)
@@ -225,6 +272,21 @@ class TelemetryPanel(QGroupBox):
         layout.addLayout(watch_row)
         layout.addLayout(log_row)
         layout.addLayout(settings_row)
+
+        # self.table.setMinimumHeight() above only protects the TABLE - it
+        # says nothing about the caption/watch/log/settings rows stacked
+        # below it competing for the same box. Confirmed on a real run: with
+        # only a computed minimumSizeHint (a hint a squeezed QSplitter is
+        # free to ignore under pressure - a window/screen a bit short,
+        # scaling, whatever), the whole panel got compressed below what its
+        # own children need and the LAST row of the table (gripper) silently
+        # lost its space with no scrollbar to hint why, even though the
+        # table's own minimum was never violated in isolation - dragging the
+        # splitter to give the panel more room brought it straight back.
+        # Locking minimumSize to minimumSizeHint turns "always show all rows"
+        # into a hard floor: the containing splitter must now take the
+        # missing space from the twin/camera row above instead.
+        self.setMinimumHeight(self.minimumSizeHint().height())
 
         # (elapsed_seconds, value) pairs for the currently watched signal -
         # backs both the stats line and the chart, so they can never disagree
@@ -327,8 +389,9 @@ class TelemetryPanel(QGroupBox):
     # ---------------------------------------------------------------- internals
     def _apply_deadband(self) -> None:
         value = self.deadband_spin.value()
-        self.register_write_requested.emit("CW_Dead_Zone", value, "gripper")
-        self.register_write_requested.emit("CCW_Dead_Zone", value, "gripper")
+        target = self.torque_target_combo.currentText()
+        self.register_write_requested.emit("CW_Dead_Zone", value, target)
+        self.register_write_requested.emit("CCW_Dead_Zone", value, target)
 
     def _reset_stats(self) -> None:
         self._samples.clear()
