@@ -16,12 +16,21 @@ a lot of yak-shaving between a beginner and their first taste of physical AI.
 This app collapses it into three tabs you work through in order, with no
 `lerobot` dependency at all.
 
-![Control tab with the MuJoCo digital twin loaded](docs/screenshot.png)
+![Control tab with the MuJoCo digital twin loaded, HUD overlay on, servo telemetry live](docs/screenshot.png)
 
 *Control tab, read left to right: narrow control column (connection, control
-source, joint sliders, teaching), Digital Twin as the centrepiece, Camera feed
-beside it for comparison. No hardware connected in this shot — the sliders and
-twin are posed manually to show the layout.*
+source, joint sliders, teaching), Digital Twin as the centrepiece — with a
+live telemetry HUD painted directly on the render and a mouse-orbitable
+camera — Camera feed beside it for comparison, Servo Telemetry underneath. No
+hardware connected in this shot; the pose and telemetry are simulated to show
+the layout.*
+
+![Demo: driving the digital twin through a joint sweep while orbiting the camera, with the HUD and telemetry table updating live](docs/demo.gif)
+
+*The twin, HUD, joint sliders and telemetry table all reflect the same
+`current_positions`/telemetry state in real time — this is a scripted pose
+sweep for the demo, not a recording of real hardware, but it exercises the
+exact same code path a live arm drives through `RobotWorker`.*
 
 ---
 
@@ -55,6 +64,8 @@ each stage is actually for.
 ## The three tabs, in the order you use them
 
 ### 1 · Setup — give each servo an ID
+
+![Setup tab: bus scan, arm status checklist, guarded id assignment](docs/screenshot_setup.png)
 
 Every STS3215 leaves the factory answering to **id 1**. Six of them on one bus
 are electrically fine but logically identical: a read addressed to id 1 gets
@@ -107,7 +118,12 @@ Plus:
 
 - **Digital twin** — a MuJoCo render mirroring the live pose, whichever source
   is driving. Runs on its own thread so a slow render never lags the control
-  loop.
+  loop. **Mouse-orbitable**: left-drag to orbit, right-drag (or Shift+left) to
+  pan, scroll to zoom, double-click or the Reset View button to return to the
+  default pose — the same `mjv_moveCamera` MuJoCo's own viewer uses, so the
+  feel matches it. A **telemetry HUD** (load/temperature bars per joint) can
+  be painted directly on the render, toggled independently of the Table/Graph
+  tabs below.
 - **Camera panel** — any USB webcam via OpenCV, picked by *name* rather than a
   bare index. Handy for comparing the twin against the real arm side by side.
 - **Teaching (waypoints)** — record the current pose however it got there
