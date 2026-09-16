@@ -945,6 +945,16 @@ class MainWindow(QMainWindow):
         self.twin_worker.frame_ready.connect(self.twin_panel.show_frame)
         self.twin_worker.load_failed.connect(lambda msg: self.twin_panel.set_caption(f"failed to load: {msg}"))
         self.twin_worker.neutral_pose_ready.connect(self._on_neutral_pose_ready)
+        # Re-connected per worker (not once in __init__) because a new scene
+        # load retires the old TwinWorker and starts a fresh one - a signal
+        # connected to the OLD worker's request_orbit/etc would silently stop
+        # doing anything the moment that worker is retired, with nothing
+        # visibly wrong (the mouse events still fire, they'd just vanish into
+        # a QThread nobody drains anymore).
+        self.twin_panel.orbit_requested.connect(self.twin_worker.request_orbit)
+        self.twin_panel.pan_requested.connect(self.twin_worker.request_pan)
+        self.twin_panel.zoom_requested.connect(self.twin_worker.request_zoom)
+        self.twin_panel.reset_view_requested.connect(self.twin_worker.request_reset_camera)
         self.twin_worker.start()
         self.twin_panel.set_caption(f"loaded: {path}")
 

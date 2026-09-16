@@ -23,6 +23,15 @@ class DigitalTwin:
         self.width = width
         self.height = height
         self.renderer = mujoco.Renderer(self.model, height=height, width=width)
+        # A free camera MuJoCo itself owns nothing of - unlike qpos, nothing
+        # about camera pose is simulation state, so it's fine to mutate this
+        # directly from mouse input with no physics implications either way.
+        # mjv_defaultFreeCamera fits it to THIS model's own bounding box, so
+        # a small gripper-only scene and a full arm scene each start at a
+        # sane distance instead of one arbitrary default that's wrong for
+        # most models.
+        self.camera = mujoco.MjvCamera()
+        mujoco.mjv_defaultFreeCamera(self.model, self.camera)
         self._joint_qpos_adr: dict[str, int] = {}
         self._joint_range: dict[str, tuple[float, float]] = {}
         for name in JOINT_NAMES:
@@ -76,7 +85,26 @@ class DigitalTwin:
         for name, fraction in fractions.items():
             self.set_joint_fraction(name, fraction)
 
+    # ---------------------------------------------------------------- camera (mouse-driven)
+    # dx/dy are fractions of the viewport (e.g. pixels-dragged / height), the
+    # same convention MuJoCo's own mjv_moveCamera expects - it scales the
+    # actual rotate/pan/zoom speed by the CURRENT camera distance and the
+    # scene's own bounding box internally, which is what makes one universal
+    # "feel" work for both a close-up gripper-only model and a full-arm one
+    # without a speed constant tuned per scene.
+    def orbit(self, dx: float, dy: float) -> None:
+        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ROTATE_H, dx, dy, self.renderer.scene, self.camera)
+
+    def pan(self, dx: float, dy: float) -> None:
+        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_MOVE_H, dx, dy, self.renderer.scene, self.camera)
+
+    def zoom(self, dy: float) -> None:
+        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, dy, self.renderer.scene, self.camera)
+
+    def reset_camera(self) -> None:
+        mujoco.mjv_defaultFreeCamera(self.model, self.camera)
+
     def render(self) -> np.ndarray:
         mujoco.mj_forward(self.model, self.data)
-        self.renderer.update_scene(self.data)
+        self.renderer.update_scene(self.data, camera=self.camera)
         return self.renderer.render()  # HxWx3 uint8 RGB

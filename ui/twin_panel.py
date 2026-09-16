@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal, QPointF, QRectF
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -29,6 +29,14 @@ HUD_FONT_PX = 11
 # a HUD that visibly *moves* (unlike a slower-updated table) without jittering
 # every single frame.
 HUD_SMOOTHING = 0.35
+
+# Mouse-driven camera. Deltas are normalized by view HEIGHT (not per-axis
+# width/height) before being handed to DigitalTwin.orbit/pan/zoom - matching
+# the convention MuJoCo's own mjv_moveCamera expects (and what its official
+# interactive viewer uses internally), so the drag "feel" (how far you have
+# to move the mouse for a given amount of rotation) is whatever MuJoCo itself
+# considers natural, not a speed this app invented.
+ZOOM_WHEEL_STEP = 0.05  # per 120 units of QWheelEvent.angleDelta() (one "click" on most mice)
 
 # Short call-signs instead of full joint names - this is a HUD panel maybe
 # 190px wide sitting on top of a render, not the telemetry table, which
@@ -72,6 +80,10 @@ class TwinPanel(QGroupBox):
     works on any machine, not just the one this was built on."""
 
     load_requested = Signal(str)  # mjcf path
+    orbit_requested = Signal(float, float)   # dx, dy - normalized by view height
+    pan_requested = Signal(float, float)     # dx, dy - normalized by view height
+    zoom_requested = Signal(float)           # dy - normalized, see ZOOM_WHEEL_STEP
+    reset_view_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__("DIGITAL TWIN (MuJoCo)", parent)
@@ -86,6 +98,19 @@ class TwinPanel(QGroupBox):
         self.hud_check = QCheckBox("HUD overlay")
         self.hud_check.setChecked(True)
         self.hud_check.toggled.connect(lambda _: self._refresh_view())
+
+        reset_view_btn = QPushButton("Reset View")
+        reset_view_btn.setToolTip(
+            "Left-drag to orbit, right-drag (or Shift+left-drag) to pan, "
+            "scroll to zoom, double-click to reset - all only over the render itself."
+        )
+        reset_view_btn.clicked.connect(self.reset_view_requested)
+
+        # Drag state for the mouse-driven camera - see eventFilter(). None
+        # while no button is held; QLabel emits no mouse-move/press/release
+        # signals of its own, hence the filter instead of a subclass.
+        self._drag_mode: str | None = None  # "orbit" | "pan"
+        self._drag_last_pos: QPointF | None = None
 
         # {joint: {"position_deg": float, "load": float, "temperature": float,
         # "current_mA": float}} - see MainWindow._on_telemetry_updated, which
@@ -130,12 +155,14 @@ class TwinPanel(QGroupBox):
         self.view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.view.setAlignment(Qt.AlignCenter)
         self.view.setStyleSheet("background-color: #101215; border: 1px solid #3a4048;")
+        self.view.installEventFilter(self)
 
         path_row = QHBoxLayout()
         path_row.addWidget(self.path_edit)
         path_row.addWidget(browse_btn)
         path_row.addWidget(load_btn)
         path_row.addWidget(self.hud_check)
+        path_row.addWidget(reset_view_btn)
 
         layout = QVBoxLayout(self)
         layout.addLayout(path_row)
@@ -148,6 +175,63 @@ class TwinPanel(QGroupBox):
         path, _ = QFileDialog.getOpenFileName(self, "Select MJCF scene", "", "MuJoCo XML (*.xml)")
         if path:
             self.path_edit.setText(path)
+
+    # ---------------------------------------------------------------- mouse-driven camera
+    def eventFilter(self, obj, event) -> bool:
+        """Only self.view is filtered (see installEventFilter above) - a
+        QLabel emits no mouse signals of its own, so this is the standard Qt
+        way to get press/move/release/wheel on one without subclassing it
+        into its own file just for that."""
+        if obj is not self.view:
+            return super().eventFilter(obj, event)
+
+        etype = event.type()
+        if etype == QEvent.MouseButtonPress:
+            # Shift+left behaves as pan too - a mouse with no right button
+            # (a trackpad, most commonly) still gets the full control set.
+            if event.button() == Qt.RightButton or (
+                event.button() == Qt.LeftButton and event.modifiers() & Qt.ShiftModifier
+            ):
+                self._drag_mode = "pan"
+            elif event.button() == Qt.LeftButton:
+                self._drag_mode = "orbit"
+            else:
+                return False
+            self._drag_last_pos = event.position()
+            self.view.setCursor(Qt.ClosedHandCursor if self._drag_mode == "pan" else Qt.SizeAllCursor)
+            return True
+
+        if etype == QEvent.MouseMove and self._drag_mode is not None and self._drag_last_pos is not None:
+            pos = event.position()
+            height = max(1, self.view.height())
+            dx = (pos.x() - self._drag_last_pos.x()) / height
+            dy = (pos.y() - self._drag_last_pos.y()) / height
+            self._drag_last_pos = pos
+            if self._drag_mode == "orbit":
+                self.orbit_requested.emit(dx, dy)
+            else:
+                self.pan_requested.emit(dx, dy)
+            return True
+
+        if etype == QEvent.MouseButtonRelease and self._drag_mode is not None:
+            self._drag_mode = None
+            self._drag_last_pos = None
+            self.view.unsetCursor()
+            return True
+
+        if etype == QEvent.Wheel:
+            # angleDelta().y() is in eighths of a degree, 120 per notch on
+            # most mice - dividing by 120 turns "one wheel click" into "one
+            # ZOOM_WHEEL_STEP", regardless of a given mouse's actual detent
+            # resolution (some report finer deltas for smooth-scroll wheels).
+            self.zoom_requested.emit(event.angleDelta().y() / 120.0 * ZOOM_WHEEL_STEP)
+            return True
+
+        if etype == QEvent.MouseButtonDblClick:
+            self.reset_view_requested.emit()
+            return True
+
+        return super().eventFilter(obj, event)
 
     def set_caption(self, text: str) -> None:
         self._caption_text = text
