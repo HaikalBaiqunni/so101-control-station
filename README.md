@@ -32,6 +32,12 @@ the layout.*
 sweep for the demo, not a recording of real hardware, but it exercises the
 exact same code path a live arm drives through `RobotWorker`.*
 
+**Want every screen walked through with a screenshot, in English or
+Japanese?** See the illustrated **[User Manual](https://htmlpreview.github.io/?https://github.com/HaikalBaiqunni/so101-control-station/blob/master/docs/MANUAL.html)**
+(rendered; the file itself is [docs/MANUAL.html](docs/MANUAL.html) — GitHub
+shows that link as source code, not a rendered page, so use the link above
+or open the file locally).
+
 ---
 
 ## Quick start
@@ -177,6 +183,7 @@ Installs `PySide6`, `feetech-servo-sdk`, `pyserial`, `opencv-python`, `mujoco`,
 
 | Document | For |
 |---|---|
+| [MANUAL.html](https://htmlpreview.github.io/?https://github.com/HaikalBaiqunni/so101-control-station/blob/master/docs/MANUAL.html) | **Illustrated user manual (EN/日本語 toggle)** — every screen in the app, step by step, with real screenshots. (Link renders it; the raw file lives at `docs/MANUAL.html`.) |
 | [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Unboxed kit → moving arm, stage by stage |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptom-indexed fixes for everything that commonly goes wrong |
 | [CALIBRATION.md](docs/CALIBRATION.md) | What the calibration numbers mean, and LeRobot interop |
