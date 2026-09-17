@@ -84,7 +84,11 @@ jobs:
           app = QApplication([])
           app.setStyleSheet(STYLE_SHEET)
           window = MainWindow()
-          tabs = window.centralWidget()
+          # centralWidget() is a plain QWidget wrapper (the Robot selector
+          # row sits above the tabs, both inside it) - not the QTabWidget
+          # itself since the multi-robot selector was added. window.tabs is
+          # the actual, stable way to reach it.
+          tabs = window.tabs
           titles = [tabs.tabText(i) for i in range(tabs.count())]
           assert titles == ["1 - Setup", "2 - Calibration", "3 - Control"], titles
           print("MainWindow constructed:", titles)
