@@ -268,6 +268,17 @@ class TwinPanel(QGroupBox):
         )
         self._refresh_view()
 
+    def clear_frame(self) -> None:
+        """Back to the pre-load placeholder. Needed for the robot selector:
+        switching to a profile with nothing to auto-load (see MainWindow's
+        robot combo) retires the old TwinWorker so it stops rendering, but
+        without this the LAST frame it ever posted would keep sitting here
+        looking like a live, current render of a robot that isn't the one
+        selected anymore."""
+        self._last_pixmap = None
+        self.view.setPixmap(QPixmap())
+        self.view.setText("twin not loaded")
+
     def update_telemetry(self, hud: dict[str, dict[str, float]]) -> None:
         """`hud`: {joint: {"position_deg", "load", "temperature",
         "current_mA"}} - already unit-converted, see

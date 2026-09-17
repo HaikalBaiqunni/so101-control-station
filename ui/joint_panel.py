@@ -81,12 +81,39 @@ class JointPanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("JOINT CONTROL", parent)
         self.rows: dict[str, JointRow] = {}
-        layout = QGridLayout(self)
-        for i, name in enumerate(JOINT_ORDER):
-            row = JointRow(name)
+        self._layout = QGridLayout(self)
+        self.rebuild(JOINT_ORDER)
+
+    def rebuild(self, joint_names: list[str], limits: dict[str, tuple[float, float]] | None = None) -> None:
+        """Replace every row with a fresh set for `joint_names` - used when
+        switching robot profile (see MainWindow's robot selector), since a
+        different robot has different joints entirely, not just different
+        limits on the same six SO-101 names. The constructor calls this once
+        with JOINT_ORDER, so the default panel is unaffected by this existing
+        at all - only an explicit later call with a different list changes
+        anything."""
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                # takeAt() only stops the LAYOUT from positioning this widget -
+                # the widget itself stays visible at its last geometry, still
+                # a child of this panel, until it's actually destroyed.
+                # deleteLater() alone left exactly that stale-visible window
+                # open (confirmed on a real run: the old and new rows
+                # rendered overlapping each other) since deferred deletion
+                # doesn't necessarily run before the next paint. hide() makes
+                # it stop rendering immediately; deleteLater() still does the
+                # actual cleanup once the event loop gets to it.
+                widget.hide()
+                widget.deleteLater()
+        self.rows = {}
+        limits = limits or {}
+        for i, name in enumerate(joint_names):
+            row = JointRow(name, limits.get(name, (-180.0, 180.0)))
             row.goal_changed.connect(self.goal_changed)
             self.rows[name] = row
-            layout.addWidget(row, i, 0)
+            self._layout.addWidget(row, i, 0)
 
     def set_limits(self, name: str, lo: float, hi: float) -> None:
         if name in self.rows:

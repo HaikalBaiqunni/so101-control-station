@@ -26,9 +26,13 @@ class TwinWorker(QThread):
     load_failed = Signal(str)
     neutral_pose_ready = Signal(object)  # one-off snapshot at all-joints-zero, see request_neutral_snapshot
 
-    def __init__(self, mjcf_path: str, parent=None):
+    def __init__(self, mjcf_path: str, joint_names: list[str] | None = None, parent=None):
         super().__init__(parent)
         self.mjcf_path = mjcf_path
+        # Passed straight through to DigitalTwin - None keeps its own
+        # SO-101 default, so every pre-existing caller is unaffected. See
+        # core/robot_profiles.py for where a non-default list comes from.
+        self.joint_names = list(joint_names) if joint_names is not None else list(JOINT_NAMES)
         self._fractions: dict[str, float] = {}
         self._neutral_requested = False
         # Queued (not applied directly here) because DigitalTwin.orbit/pan/
@@ -42,7 +46,10 @@ class TwinWorker(QThread):
         self._camera_ops: list[tuple[str, float, float]] = []
         self._reset_camera_requested = False
         self._lock = threading.Lock()
-        self._running = False
+        # A plain flag that stop() sets and run()'s loop condition checks -
+        # deliberately never written back to False->True anywhere else (see
+        # stop()/run() below for why that matters).
+        self._stop_requested = False
 
     def set_fractions(self, fractions: dict[str, float]) -> None:
         """`fractions` values are 0.0-1.0 - see DigitalTwin.set_joint_fraction
@@ -76,17 +83,26 @@ class TwinWorker(QThread):
             self._neutral_requested = True
 
     def stop(self) -> None:
-        self._running = False
+        self._stop_requested = True
 
     def run(self) -> None:
         try:
-            twin = DigitalTwin(self.mjcf_path)
+            twin = DigitalTwin(self.mjcf_path, joint_names=self.joint_names)
         except Exception as exc:  # mujoco raises plain Exception/ValueError on bad XML
             self.load_failed.emit(str(exc))
             return
 
-        self._running = True
-        while self._running:
+        # DigitalTwin construction above (MuJoCo XML compile + Renderer/GL
+        # context setup) can easily take longer than the gap between
+        # QThread.start() and this OS thread actually getting a slice of the
+        # interpreter - confirmed directly: stop() was observed landing (and
+        # setting _stop_requested) *while still inside* that construction,
+        # before this method ever reached this line. The loop condition
+        # below reads _stop_requested fresh on every pass and nothing here
+        # ever writes it back to False, so a stop() that arrived before the
+        # loop even started is honored immediately instead of being
+        # silently overwritten by an unconditional "start running" flag.
+        while not self._stop_requested:
             t0 = time.perf_counter()
             with self._lock:
                 fractions = dict(self._fractions)
@@ -108,7 +124,7 @@ class TwinWorker(QThread):
                     twin.zoom(dy)
 
             if neutral_requested:
-                twin.set_all_deg(dict.fromkeys(JOINT_NAMES, 0.0))
+                twin.set_all_deg(dict.fromkeys(self.joint_names, 0.0))
                 self.neutral_pose_ready.emit(twin.render())
                 continue  # skip this cycle's regular frame - next loop iteration resumes it
 

@@ -13,3 +13,4 @@ logs/
 follower_*.json
 leader_*.json
 waypoints*.json
+gui_settings.json

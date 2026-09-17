@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-robot support: reBot B601-DM (Phase 1 — simulation).** A Robot
+  selector above the tabs switches the app between SO-101 (Feetech) and the
+  reBot B601-DM (Damiao CAN motors).
+  - Digital Twin auto-loads the B601-DM's own MuJoCo model and follows the
+    Joint Control sliders, including its gripper's two-finger mimic joint.
+  - **1 · Setup** swaps to a dedicated CAN id assignment panel for Damiao
+    motors — connect one at a time, probe, assign a unique id + master id,
+    save to flash.
+  - Every panel that needs a real bus (Connection, Torque, Control Source,
+    Telemetry, Calibration) is greyed out for this profile — real hardware
+    control is Phase 2, not yet implemented.
+  - `core/robot_profiles.py` (new) is the single source of truth for a
+    profile's joint order, bundled twin path and hardware availability;
+    `DigitalTwin`/`TwinWorker` take joint names as a parameter instead of a
+    hardcoded SO-101-only list.
+
+### Fixed
+
+- A `TwinWorker` startup race where `stop()` arriving while the twin's
+  MuJoCo scene was still compiling could be silently overwritten the moment
+  the render loop actually started, leaving the old worker running forever
+  instead of retiring — visible as a stale frame from the previous robot
+  profile never clearing.
+- A Qt queued-connection race where a retiring `TwinWorker`'s last in-flight
+  frame could still land on the twin panel after the GUI had already moved
+  on to a new profile; frames are now matched against the currently-tracked
+  worker before being displayed.
+- The B601-DM gripper's follower finger never visually moved — MuJoCo only
+  enforces an `<equality>` mimic constraint through simulated stepping
+  (`mj_step`), which the twin's kinematic-preview `render()` never runs.
+  `DigitalTwin` now reads the model's own equality constraints and syncs
+  the follower joint directly, generically (not hardcoded per robot).
+  - Also fixed: the collision-derived geoms MuJoCo's URDF importer keeps
+    alongside the material-split visual meshes were rendering on top of
+    them (both left on the same default group), washing out the B601-DM's
+    real accent colors. Re-grouped and hidden from the twin's render.
+- A joint whose real-world range is in metres rather than degrees (the
+  B601-DM gripper) collapsed the Joint Control slider to zero usable ticks
+  (`int(0.05 * SLIDER_SCALE) == 0`), making it undraggable.
+
 ## [0.2.0] - 2026-08-12
 
 The "first hour shouldn't hurt" release. Closes the gap that made a brand-new

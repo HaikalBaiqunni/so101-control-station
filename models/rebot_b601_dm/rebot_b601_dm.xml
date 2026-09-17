@@ -1,0 +1,157 @@
+<mujoco model="ReBot_Arm_DM">
+  <compiler angle="radian" meshdir="."/>
+
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <visual>
+    <headlight ambient="0.4 0.4 0.4"/>
+  </visual>
+
+
+  <asset>
+    <mesh name="colored_base_link_silver_trim" content_type="model/stl" file="meshes/visual/colored_base_link_silver_trim.stl"/>
+    <mesh name="colored_base_link_hardware_black" content_type="model/stl" file="meshes/visual/colored_base_link_hardware_black.stl"/>
+    <mesh name="colored_base_link_matte_black" content_type="model/stl" file="meshes/visual/colored_base_link_matte_black.stl"/>
+    <mesh name="base_link" content_type="model/stl" file="meshes/collision/base_link.STL"/>
+    <mesh name="colored_link1_matte_black" content_type="model/stl" file="meshes/visual/colored_link1_matte_black.stl"/>
+    <mesh name="colored_link1_hardware_black" content_type="model/stl" file="meshes/visual/colored_link1_hardware_black.stl"/>
+    <mesh name="colored_link1_anodized_grey" content_type="model/stl" file="meshes/visual/colored_link1_anodized_grey.stl"/>
+    <mesh name="link1" content_type="model/stl" file="meshes/collision/link1.STL"/>
+    <mesh name="colored_link2_seeed_yellow" content_type="model/stl" file="meshes/visual/colored_link2_seeed_yellow.stl"/>
+    <mesh name="colored_link2_matte_black" content_type="model/stl" file="meshes/visual/colored_link2_matte_black.stl"/>
+    <mesh name="colored_link2_hardware_black" content_type="model/stl" file="meshes/visual/colored_link2_hardware_black.stl"/>
+    <mesh name="colored_link2_anodized_grey" content_type="model/stl" file="meshes/visual/colored_link2_anodized_grey.stl"/>
+    <mesh name="link2" content_type="model/stl" file="meshes/collision/link2.STL"/>
+    <mesh name="colored_link3_seeed_yellow" content_type="model/stl" file="meshes/visual/colored_link3_seeed_yellow.stl"/>
+    <mesh name="colored_link3_matte_black" content_type="model/stl" file="meshes/visual/colored_link3_matte_black.stl"/>
+    <mesh name="colored_link3_hardware_black" content_type="model/stl" file="meshes/visual/colored_link3_hardware_black.stl"/>
+    <mesh name="colored_link3_anodized_grey" content_type="model/stl" file="meshes/visual/colored_link3_anodized_grey.stl"/>
+    <mesh name="link3" content_type="model/stl" file="meshes/collision/link3.STL"/>
+    <mesh name="colored_link4_seeed_yellow" content_type="model/stl" file="meshes/visual/colored_link4_seeed_yellow.stl"/>
+    <mesh name="colored_link4_matte_black" content_type="model/stl" file="meshes/visual/colored_link4_matte_black.stl"/>
+    <mesh name="colored_link4_hardware_black" content_type="model/stl" file="meshes/visual/colored_link4_hardware_black.stl"/>
+    <mesh name="colored_link4_anodized_grey" content_type="model/stl" file="meshes/visual/colored_link4_anodized_grey.stl"/>
+    <mesh name="link4" content_type="model/stl" file="meshes/collision/link4.STL"/>
+    <mesh name="colored_link5_matte_black" content_type="model/stl" file="meshes/visual/colored_link5_matte_black.stl"/>
+    <mesh name="colored_link5_hardware_black" content_type="model/stl" file="meshes/visual/colored_link5_hardware_black.stl"/>
+    <mesh name="colored_link5_anodized_grey" content_type="model/stl" file="meshes/visual/colored_link5_anodized_grey.stl"/>
+    <mesh name="link5" content_type="model/stl" file="meshes/collision/link5.STL"/>
+    <mesh name="colored_link6_matte_black" content_type="model/stl" file="meshes/visual/colored_link6_matte_black.stl"/>
+    <mesh name="colored_link6_hardware_black" content_type="model/stl" file="meshes/visual/colored_link6_hardware_black.stl"/>
+    <mesh name="link6" content_type="model/stl" file="meshes/collision/link6.STL"/>
+    <mesh name="colored_gripper_base_seeed_yellow" content_type="model/stl" file="meshes/visual/colored_gripper_base_seeed_yellow.stl"/>
+    <mesh name="colored_gripper_base_hardware_black" content_type="model/stl" file="meshes/visual/colored_gripper_base_hardware_black.stl"/>
+    <mesh name="colored_gripper_base_metal" content_type="model/stl" file="meshes/visual/colored_gripper_base_metal.stl"/>
+    <mesh name="gripper_base" content_type="model/stl" file="meshes/collision/gripper_base.stl"/>
+    <mesh name="colored_left_finger_finger_black" content_type="model/stl" file="meshes/visual/colored_left_finger_finger_black.stl"/>
+    <mesh name="colored_left_finger_carriage_grey" content_type="model/stl" file="meshes/shared/colored_left_finger_carriage_grey.stl"/>
+    <mesh name="colored_left_finger_travel_stop_yellow" content_type="model/stl" file="meshes/shared/colored_left_finger_travel_stop_yellow.stl"/>
+    <mesh name="colored_left_finger_rack_metal" content_type="model/stl" file="meshes/visual/colored_left_finger_rack_metal.stl"/>
+    <mesh name="left_finger" content_type="model/stl" file="meshes/collision/left_finger.stl"/>
+    <mesh name="colored_right_finger_finger_black" content_type="model/stl" file="meshes/visual/colored_right_finger_finger_black.stl"/>
+    <mesh name="colored_right_finger_carriage_grey" content_type="model/stl" file="meshes/shared/colored_right_finger_carriage_grey.stl"/>
+    <mesh name="colored_right_finger_travel_stop_yellow" content_type="model/stl" file="meshes/shared/colored_right_finger_travel_stop_yellow.stl"/>
+    <mesh name="colored_right_finger_rack_metal" content_type="model/stl" file="meshes/visual/colored_right_finger_rack_metal.stl"/>
+    <mesh name="right_finger" content_type="model/stl" file="meshes/collision/right_finger.stl"/>
+  </asset>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 2" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
+    <geom name="floor" type="plane" size="1 1 0.05" material="grid"/>
+
+    <geom name="base_link_silver_trim" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.878431 0.890196 0.87451 1" mesh="colored_base_link_silver_trim"/>
+    <geom name="base_link_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_base_link_hardware_black"/>
+    <geom name="base_link_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_base_link_matte_black"/>
+    <geom type="mesh" rgba="0.066667 0.07451 0.070588 1" mesh="base_link" group="3"/>
+    <body name="link1" pos="-8.416e-05 0 0.08465">
+      <inertial pos="0.000113615 -0.00061632 0.0236476" quat="0.672066 0.672066 0.219836 -0.219836" mass="0.1613" diaginertia="0.000272817 0.000213413 0.00015464"/>
+      <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.8 2.8" actuatorfrcrange="-27 27"/>
+      <geom name="link1_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link1_matte_black"/>
+      <geom name="link1_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_link1_hardware_black"/>
+      <geom name="link1_anodized_grey" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_link1_anodized_grey"/>
+      <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="link1" group="3"/>
+      <body name="link2" pos="0.020084 0.031625 0.05555" quat="0.707105 -0.707108 0 0">
+        <inertial pos="-0.132256 -0.0030617 -0.0308307" quat="0.00176765 0.707354 0.00179466 0.706855" mass="1.3266" diaginertia="0.0128139 0.0125599 0.000733734"/>
+        <joint name="joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 0" actuatorfrcrange="-27 27"/>
+        <geom name="link2_seeed_yellow" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.73 0.84 0.12 1" mesh="colored_link2_seeed_yellow"/>
+        <geom name="link2_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link2_matte_black"/>
+        <geom name="link2_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_link2_hardware_black"/>
+        <geom name="link2_anodized_grey" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_link2_anodized_grey"/>
+        <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="link2" group="3"/>
+        <body name="link3" pos="-0.264 0 0">
+          <inertial pos="0.12104 -0.0536211 -0.0310138" quat="-0.00138181 0.704593 0.00278372 0.709605" mass="0.8353" diaginertia="0.00648251 0.00632715 0.000467564"/>
+          <joint name="joint3" pos="0 0 0" axis="0 0 1" range="-3.14 0" actuatorfrcrange="-27 27"/>
+          <geom name="link3_seeed_yellow" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.73 0.84 0.12 1" mesh="colored_link3_seeed_yellow"/>
+          <geom name="link3_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link3_matte_black"/>
+          <geom name="link3_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_link3_hardware_black"/>
+          <geom name="link3_anodized_grey" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_link3_anodized_grey"/>
+          <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="link3" group="3"/>
+          <body name="link4" pos="0.2426 -0.054 -0.001625">
+            <inertial pos="0.0608201 -0.0511712 -0.0302995" quat="0.619751 0.601248 0.365808 0.347267" mass="0.52" diaginertia="0.000889485 0.000667165 0.000323211"/>
+            <joint name="joint4" pos="0 0 0" axis="0 0 1" range="-1.87 1.57" actuatorfrcrange="-7 7"/>
+            <geom name="link4_seeed_yellow" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link4_seeed_yellow"/>
+            <geom name="link4_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link4_matte_black"/>
+            <geom name="link4_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_link4_hardware_black"/>
+            <geom name="link4_anodized_grey" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_link4_anodized_grey"/>
+            <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="link4" group="3"/>
+            <body name="link5" pos="0.078308 -0.0375 -0.03" quat="0.707105 -0.707108 0 0">
+              <inertial pos="-0.00502802 1.73866e-06 0.0386233" quat="0.644154 0.196994 0.180566 0.716697" mass="0.383" diaginertia="0.000217429 0.000212237 0.000157335"/>
+              <joint name="joint5" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" actuatorfrcrange="-7 7"/>
+              <geom name="link5_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link5_matte_black"/>
+              <geom name="link5_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_link5_hardware_black"/>
+              <geom name="link5_anodized_grey" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_link5_anodized_grey"/>
+              <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="link5" group="3"/>
+              <body name="link6" pos="0.028008 0 0.04" quat="0.707105 0 0.707108 0">
+                <inertial pos="-0.0426217 -0.0897279 0.0117718" quat="0.63975 0.735212 -0.175124 -0.139697" mass="0.8663" diaginertia="0.006912 0.00667257 0.000587449"/>
+                <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-7 7"/>
+                <geom name="link6_matte_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_link6_matte_black"/>
+                <geom name="link6_hardware_black" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_link6_hardware_black"/>
+                <geom type="mesh" rgba="0.019608 0.027451 0.023529 1" mesh="link6" group="3"/>
+                <geom name="gripper_base_seeed_yellow" pos="0 0 0.15539" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.725 0.835 0.118 1" mesh="colored_gripper_base_seeed_yellow"/>
+                <geom name="gripper_base_hardware_black" pos="0 0 0.15539" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.019608 0.027451 0.023529 1" mesh="colored_gripper_base_hardware_black"/>
+                <geom name="gripper_base_metal" pos="0 0 0.15539" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_gripper_base_metal"/>
+                <geom pos="0 0 0.15539" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105" type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="gripper_base"/>
+                <body name="finger_left_link" pos="0 0 0.15539" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105">
+                  <joint name="finger_left" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.05" actuatorfrcrange="-8 8"/>
+                  <geom name="finger_left_body" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_left_finger_finger_black"/>
+                  <geom name="finger_left_carriage" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.239 0.278 0.271 1" mesh="colored_left_finger_carriage_grey"/>
+                  <geom name="finger_left_travel_stop" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.725 0.835 0.118 1" mesh="colored_left_finger_travel_stop_yellow"/>
+                  <geom name="finger_left_crossed_rack" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_left_finger_rack_metal"/>
+                  <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="left_finger" group="3"/>
+                </body>
+                <body name="finger_right_link" pos="0 0 0.15539" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105">
+                  <joint name="finger_right" pos="0 0 0" axis="0 1 0" type="slide" range="-0.05 0" actuatorfrcrange="-8 8"/>
+                  <geom name="finger_right_body" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.066667 0.07451 0.070588 1" mesh="colored_right_finger_finger_black"/>
+                  <geom name="finger_right_carriage" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.239 0.278 0.271 1" mesh="colored_right_finger_carriage_grey"/>
+                  <geom name="finger_right_travel_stop" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.725 0.835 0.118 1" mesh="colored_right_finger_travel_stop_yellow"/>
+                  <geom name="finger_right_crossed_rack" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.831373 0.847059 0.831373 1" mesh="colored_right_finger_rack_metal"/>
+                  <geom type="mesh" rgba="0.831373 0.847059 0.831373 1" mesh="right_finger" group="3"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <equality>
+    <joint joint1="finger_left" joint2="finger_right" polycoef="0 -1 0 0 0"/>
+  </equality>
+
+  <actuator>
+    <position name="act_joint1" joint="joint1" ctrlrange="-2.8000 2.8000" kp="200" kv="10"/>
+    <position name="act_joint2" joint="joint2" ctrlrange="-3.1400 0.0000" kp="200" kv="10"/>
+    <position name="act_joint3" joint="joint3" ctrlrange="-3.1400 0.0000" kp="200" kv="10"/>
+    <position name="act_joint4" joint="joint4" ctrlrange="-1.8700 1.5700" kp="200" kv="10"/>
+    <position name="act_joint5" joint="joint5" ctrlrange="-1.5700 1.5700" kp="200" kv="10"/>
+    <position name="act_joint6" joint="joint6" ctrlrange="-3.1400 3.1400" kp="200" kv="10"/>
+    <position name="act_finger_left" joint="finger_left" ctrlrange="0.0000 0.0500" kp="200" kv="10"/>
+  </actuator>
+</mujoco>

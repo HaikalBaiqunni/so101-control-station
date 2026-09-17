@@ -148,6 +148,45 @@ Plus:
 
 ---
 
+## Multi-robot support: reBot B601-DM (Phase 1 — simulation)
+
+A **Robot** selector sits above the tabs and switches the whole app between
+the SO-101 (Feetech) and a second arm, the **reBot B601-DM** (Damiao CAN
+motors) — same GUI, same Digital Twin, entirely different hardware
+underneath.
+
+![reBot B601-DM selected: MuJoCo twin loaded, joint sliders driving a pan sweep and the gripper opening and closing](docs/rebot_b601_dm_demo.gif)
+
+*Switching the Robot selector swaps the Digital Twin's MJCF, rebuilds the
+Joint Control sliders for the new joint set, and greys out every panel that
+only makes sense with a real bus behind it — Joint Control and the twin
+itself work immediately, no hardware required.*
+
+**What works today:**
+
+- The **Digital Twin** loads the B601-DM's own MuJoCo model automatically
+  and follows the Joint Control sliders live — a full kinematic preview,
+  including the gripper's two-finger mimic joint (one motor drives both
+  fingers, matching the real mechanism, reproduced here as a MuJoCo
+  `<equality>` constraint since the URDF's own `<mimic>` tag doesn't survive
+  MuJoCo's importer).
+- **1 · Setup** swaps to a dedicated **CAN id assignment** panel for the
+  B601-DM's Damiao motors — connect one motor at a time over the same
+  USB-serial adapter Damiao's own configuration tool uses, probe it, give it
+  a unique id + master id, saved to flash. Same one-motor-at-a-time
+  reasoning as the Feetech Setup tab: every Damiao motor ships answering to
+  the same factory default id, so several on one bus can't be addressed
+  individually until each has its own.
+
+**What's Phase 2 (not yet implemented):** real hardware control — actually
+driving the Damiao CAN motors. Connection, Torque, Control Source,
+Telemetry and Calibration all stay disabled for this profile until that
+lands; Joint Control only ever drives the twin preview here, it never
+reaches a real bus. Phase 2 needs the per-joint CAN id mapping from the
+Setup panel above as its starting point.
+
+---
+
 ## Safety
 
 This app is deliberately opinionated about not moving hardware it doesn't
@@ -230,6 +269,11 @@ if that's where you're headed — it'll happily read the files saved here.
   shown.
 - **Servo id/baudrate writes are EEPROM writes.** They're bracketed and
   verified, but they are permanent until changed again.
+- **reBot B601-DM support is simulation-only (Phase 1).** The Digital Twin
+  and CAN id assignment work today; real Damiao motor control (position,
+  torque, telemetry) is Phase 2 and not implemented yet — see
+  [Multi-robot support](#multi-robot-support-rebot-b601-dm-phase-1--simulation)
+  above.
 
 ---
 

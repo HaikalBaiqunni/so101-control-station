@@ -8,14 +8,17 @@ import time
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
     QTabWidget,
     QVBoxLayout,
@@ -23,6 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.calibration_worker import CalibrationWorker
+from core.dm_setup_worker import DmSetupWorker
+from core.robot_profiles import DEFAULT_PROFILE_KEY, PROFILES, RobotProfile, get_profile
 from core.servo_bus import JOINT_ORDER, MAX_RES, MODEL_RESOLUTION
 from core.session_logger import SessionLogger
 from core.setup_worker import SetupWorker
@@ -33,6 +38,7 @@ from .calibration_panel import CalibrationPanel
 from .camera_panel import CameraPanel
 from .connection_panel import ConnectionPanel
 from .control_source_panel import ControlSourcePanel
+from .dm_setup_panel import DmSetupPanel
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
@@ -186,6 +192,17 @@ class MainWindow(QMainWindow):
 
         # ================================================================ SETUP + CALIBRATION TABS
         self.setup_panel = SetupPanel()
+        # A per-robot id-assignment scheme (SO-101's Feetech servos and the
+        # B601-DM's Damiao motors are utterly different buses/protocols - see
+        # core/dm_setup_worker.py) means "1 - Setup" swaps its WHOLE content
+        # by profile rather than being one panel with some rows hidden - a
+        # stacked widget is what lets both live fully-built, independently
+        # wired to their own worker, with only one ever visible/enabled at a
+        # time (see _on_robot_profile_changed).
+        self.dm_setup_panel = DmSetupPanel(joint_order=PROFILES["rebot_b601_dm"].joint_order)
+        self.setup_stack = QStackedWidget()
+        self.setup_stack.addWidget(self.setup_panel)
+        self.setup_stack.addWidget(self.dm_setup_panel)
         self.calibration_panel = CalibrationPanel()
 
         # Tabs are ordered and numbered by the order they must actually be
@@ -193,11 +210,30 @@ class MainWindow(QMainWindow):
         # a servo with no id can't be calibrated, and an uncalibrated arm
         # can't be jogged. Landing a first-time user on "Control" is what
         # made this confusing in the first place.
-        tabs = QTabWidget()
-        tabs.addTab(self.setup_panel, "1 - Setup")
-        tabs.addTab(self.calibration_panel, "2 - Calibration")
-        tabs.addTab(control_tab, "3 - Control")
-        self.setCentralWidget(tabs)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.setup_stack, "1 - Setup")
+        self.tabs.addTab(self.calibration_panel, "2 - Calibration")
+        self.tabs.addTab(control_tab, "3 - Control")
+
+        # Robot selection sits ABOVE the tabs, not inside the Control tab -
+        # which robot is being driven decides whether Setup/Calibration make
+        # sense to use AT ALL (see _apply_robot_hardware_gate), not just what
+        # the Control tab shows.
+        self.robot_combo = QComboBox()
+        for profile in PROFILES.values():
+            self.robot_combo.addItem(profile.label, profile.key)
+        self.robot_combo.currentIndexChanged.connect(self._on_robot_profile_changed)
+
+        robot_row = QHBoxLayout()
+        robot_row.addWidget(QLabel("Robot"))
+        robot_row.addWidget(self.robot_combo, 1)
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(6, 6, 6, 0)
+        central_layout.addLayout(robot_row)
+        central_layout.addWidget(self.tabs)
+        self.setCentralWidget(central)
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready.")
@@ -206,10 +242,14 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Ready. Logging to {self.session_logger.path}")
 
         # -- state -------------------------------------------------------
+        self.robot_profile: RobotProfile = get_profile(
+            self._load_settings().get("robot_profile", DEFAULT_PROFILE_KEY)
+        )
         self.robot_worker: RobotWorker | None = None
         self.leader_worker: RobotWorker | None = None
         self.calibration_worker: CalibrationWorker | None = None
         self.setup_worker: SetupWorker | None = None
+        self.dm_setup_worker: DmSetupWorker | None = None
         self.camera_worker: CameraWorker | None = None
         self.gamepad_worker: GamepadWorker | None = None
         self.twin_worker: TwinWorker | None = None
@@ -329,6 +369,13 @@ class MainWindow(QMainWindow):
         self.setup_panel.assign_id_requested.connect(self._on_setup_assign_id)
         self.setup_panel.set_baudrate_requested.connect(self._on_setup_set_baudrate)
 
+        # -- wiring: reBot B601-DM CAN id setup -----------------------------------
+        self.dm_setup_panel.connect_requested.connect(self._on_dm_setup_connect)
+        self.dm_setup_panel.disconnect_requested.connect(self._on_dm_setup_disconnect)
+        self.dm_setup_panel.probe_requested.connect(self._on_dm_setup_probe)
+        self.dm_setup_panel.assign_requested.connect(self._on_dm_setup_assign)
+        self.dm_setup_panel.set_mapping(self._load_settings().get("dm_can_id_mapping", {}))
+
         # -- wiring: calibration -------------------------------------------------
         self.calibration_panel.connect_requested.connect(self._on_calibration_connect)
         self.calibration_panel.disconnect_requested.connect(self._on_calibration_disconnect)
@@ -357,6 +404,33 @@ class MainWindow(QMainWindow):
 
         self._apply_control_source_lock()
 
+        # Apply whichever robot profile was persisted (default: SO-101) -
+        # setCurrentIndex() only actually fires currentIndexChanged when the
+        # index is genuinely different from the combo's own already-default
+        # 0, so the common "still on SO-101" case would otherwise never run
+        # _on_robot_profile_changed at all. Calling it explicitly makes
+        # startup behave identically whichever profile was last selected.
+        # setCurrentIndex(N) only fires currentIndexChanged (and therefore
+        # _on_robot_profile_changed) when N actually differs from the
+        # combo's current value - which is only sometimes true here,
+        # depending on whether the persisted profile happens to be the
+        # combo's own already-default index 0. Confirmed the hard way:
+        # calling _on_robot_profile_changed explicitly on top of that,
+        # unconditionally, meant a persisted non-default profile (index 1)
+        # got the handler invoked TWICE at startup - once from the signal,
+        # once from this line - which raced two TwinWorkers into existence
+        # for the same profile and left one of them stopped but never
+        # actually torn down, still holding the render view on a stale
+        # frame from a robot no longer selected. Call the handler exactly
+        # once, from whichever path is actually needed.
+        default_index = self.robot_combo.findData(self.robot_profile.key)
+        if default_index < 0:
+            default_index = 0
+        if self.robot_combo.currentIndex() == default_index:
+            self._on_robot_profile_changed(default_index)
+        else:
+            self.robot_combo.setCurrentIndex(default_index)
+
         # right_column (view_row + telemetry_panel) has no real height yet
         # during __init__ - widgets aren't laid out until the event loop
         # actually processes the initial show(). An earlier attempt at this
@@ -380,6 +454,112 @@ class MainWindow(QMainWindow):
         total = self._right_column.height()
         telemetry_h = self.telemetry_panel.minimumSizeHint().height()
         self._right_column.setSizes([max(0, total - telemetry_h), telemetry_h])
+
+    # ---------------------------------------------------------------- robot profile
+    def _on_robot_profile_changed(self, index: int) -> None:
+        """Fires when the user picks a different entry in the Robot combo
+        (and once at startup - see __init__ - so the persisted profile is
+        applied identically whichever one it is)."""
+        key = self.robot_combo.itemData(index)
+        profile = get_profile(key)
+        self.robot_profile = profile
+        self._save_setting("robot_profile", key)
+
+        if not profile.hardware_available:
+            # Nothing should be left talking to real hardware behind a
+            # disabled Connection/Torque/Telemetry panel - disconnecting
+            # explicitly rather than just disabling the widgets keeps the
+            # app's actual state consistent with what it visually shows.
+            if self.robot_worker:
+                self._on_disconnect()
+            if self.leader_worker:
+                self._on_leader_disconnect()
+            if self.calibration_worker:
+                self._on_calibration_disconnect()
+            if self.setup_worker:
+                self._on_setup_disconnect()
+        if key != "rebot_b601_dm" and self.dm_setup_worker:
+            # Mirrors the block above but keyed on the SPECIFIC profile
+            # rather than hardware_available - DM setup is the one thing
+            # that IS meant to work for this "no hardware_available" robot
+            # (see _apply_robot_hardware_gate), so it needs its own release
+            # condition instead of piggybacking on that flag.
+            self._on_dm_setup_disconnect()
+
+        # A different robot has entirely different joints, not just
+        # different limits on the same SO-101 six - current_positions/
+        # joint_deg_ranges get reseeded, and the Joint Control sliders
+        # rebuild with fresh rows (see JointPanel.rebuild). preview_ranges
+        # is empty for SO-101, so joint_deg_ranges just starts empty there
+        # too, exactly as it always has - a real connect's _load_joint_limits
+        # overwrites it either way.
+        self.current_positions = dict.fromkeys(profile.joint_order, 0.0)
+        self.joint_deg_ranges = dict(profile.preview_ranges)
+        self.joint_panel.rebuild(list(profile.joint_order), limits=profile.preview_ranges)
+
+        # Auto-load this profile's twin - a customized path from a previous
+        # session (if any) wins over the profile's own bundled default, so
+        # switching back and forth doesn't keep discarding a path the user
+        # deliberately typed in.
+        mjcf_paths = self._load_settings().get("mjcf_path_by_profile", {})
+        path = mjcf_paths.get(key) or profile.default_mjcf_path
+        if path:
+            self.twin_panel.path_edit.setText(path)
+            self._on_twin_load(path)
+        else:
+            # No bundled/remembered path for this profile - confirmed a real
+            # gap here without this: clearing just the caption/path text
+            # left the OLD robot's last-rendered frame sitting in the view,
+            # looking like a live render of whatever's selected now, while a
+            # TwinWorker nothing points at anymore kept quietly running.
+            self.twin_panel.path_edit.clear()
+            self.twin_panel.set_caption("not loaded - pick a scene.xml and click Load")
+            self.twin_panel.clear_frame()
+            if self.twin_worker:
+                worker = self.twin_worker
+                self.twin_worker = None
+                self._retire_worker(worker)
+
+        self._apply_robot_hardware_gate()
+        self.statusBar().showMessage(f"Robot: {profile.label}")
+        self.session_logger.log_event(f"Robot profile changed to: {profile.label}")
+
+    def _apply_robot_hardware_gate(self) -> None:
+        """Grey out every panel that only makes sense with a real bus behind
+        it, for a robot this app has no hardware backend for yet (Phase 1:
+        reBot B601-DM is twin/preview-only - see core/robot_profiles.py).
+        Joint Control, the Digital Twin and the Camera panel stay enabled:
+        sliders already only reach hardware through
+        `if self.robot_worker: ...` guards, so with no worker ever
+        constructed for this profile they just drive the twin preview, and
+        the camera is robot-agnostic regardless.
+
+        Setup is its own case, deliberately NOT gated by hardware_available:
+        CAN id assignment for the B601-DM's Damiao motors genuinely works
+        today (see core/dm_setup_worker.py) even though driving the arm
+        doesn't yet - so "1 - Setup" swaps to a whole different, fully
+        enabled panel for this profile instead of being greyed out with
+        everything else."""
+        available = self.robot_profile.hardware_available
+        note = "" if available else f"Not available for {self.robot_profile.label} yet."
+        for panel in (
+            self.connection_panel,
+            self.control_source_panel,
+            self.teaching_panel,
+            self.gamepad_panel,
+            self.keyboard_jog_panel,
+            self.telemetry_panel,
+            self.calibration_panel,
+        ):
+            panel.setEnabled(available)
+            panel.setToolTip(note)
+
+        if self.robot_profile.key == "rebot_b601_dm":
+            self.setup_stack.setCurrentWidget(self.dm_setup_panel)
+        else:
+            self.setup_stack.setCurrentWidget(self.setup_panel)
+            self.setup_panel.setEnabled(available)
+            self.setup_panel.setToolTip(note)
 
     # ---------------------------------------------------------------- shutdown helper
     def _retire_worker(self, worker) -> None:
@@ -932,6 +1112,14 @@ class MainWindow(QMainWindow):
     def _on_twin_load(self, path: str) -> None:
         if not path:
             return
+        # Remembered per robot profile (not one single global path), so
+        # switching the Robot combo back and forth doesn't keep discarding
+        # a path the user deliberately typed in for one of them - covers
+        # both this being reached from the user's own Browse+Load click and
+        # from _on_robot_profile_changed's auto-load.
+        mjcf_paths = dict(self._load_settings().get("mjcf_path_by_profile", {}))
+        mjcf_paths[self.robot_profile.key] = path
+        self._save_setting("mjcf_path_by_profile", mjcf_paths)
         if self.twin_worker:
             old_worker = self.twin_worker
             self.twin_worker = None
@@ -940,9 +1128,23 @@ class MainWindow(QMainWindow):
         else:
             self._start_twin_worker(path)
 
+    def _on_twin_frame(self, frame) -> None:
+        # A QueuedConnection's emit() posts its event to this thread's queue
+        # at emit time - once posted, a later disconnect() can't retract it,
+        # so the worker that's being retired can always land exactly one
+        # more frame here after we've already moved on from it (confirmed
+        # directly: disconnecting frame_ready in the retire path did not
+        # stop this). self.sender() is that specific worker, tracked
+        # per-connection by Qt regardless of what self.twin_worker points at
+        # by the time this actually runs - comparing the two is what
+        # actually discards a straggler instead of racing disconnect timing.
+        if self.sender() is not self.twin_worker:
+            return
+        self.twin_panel.show_frame(frame)
+
     def _start_twin_worker(self, path: str) -> None:
-        self.twin_worker = TwinWorker(path)
-        self.twin_worker.frame_ready.connect(self.twin_panel.show_frame)
+        self.twin_worker = TwinWorker(path, joint_names=list(self.robot_profile.joint_order))
+        self.twin_worker.frame_ready.connect(self._on_twin_frame)
         self.twin_worker.load_failed.connect(lambda msg: self.twin_panel.set_caption(f"failed to load: {msg}"))
         self.twin_worker.neutral_pose_ready.connect(self._on_neutral_pose_ready)
         # Re-connected per worker (not once in __init__) because a new scene
@@ -1013,6 +1215,47 @@ class MainWindow(QMainWindow):
     def _on_setup_set_baudrate(self, motor_id: int, baudrate: int) -> None:
         if self.setup_worker:
             self.setup_worker.request_set_baudrate(motor_id, baudrate)
+
+    # ---------------------------------------------------------------- reBot B601-DM CAN id setup
+    def _on_dm_setup_connect(self, port: str) -> None:
+        if not port:
+            QMessageBox.warning(self, "No port", "Pick a serial port first.")
+            return
+        self.session_logger.log_event(f"DM setup: connecting on {port}")
+        self.dm_setup_worker = DmSetupWorker(port)
+        self.dm_setup_worker.connected.connect(self.dm_setup_panel.set_connected)
+        self.dm_setup_worker.error.connect(self._on_dm_setup_error)
+        self.dm_setup_worker.probe_result.connect(self.dm_setup_panel.set_probe_result)
+        self.dm_setup_worker.id_assigned.connect(self._on_dm_id_assigned)
+        self.dm_setup_worker.start()
+
+    def _on_dm_setup_disconnect(self) -> None:
+        if self.dm_setup_worker:
+            worker = self.dm_setup_worker
+            self.dm_setup_worker = None
+            self.session_logger.log_event("DM setup: disconnecting")
+            self._retire_worker(worker)
+        self.dm_setup_panel.set_connected(False)
+
+    def _on_dm_setup_error(self, message: str) -> None:
+        self.statusBar().showMessage(f"DM setup error: {message}")
+        self.session_logger.log_event(f"DM setup error: {message}")
+
+    def _on_dm_setup_probe(self, current_id: int) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_probe(current_id)
+
+    def _on_dm_setup_assign(self, current_id: int, new_id: int, new_master_id: int) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_assign(current_id, new_id, new_master_id)
+
+    def _on_dm_id_assigned(self, current_id: int, new_id: int, new_master_id: int) -> None:
+        joint = self.dm_setup_panel.target_combo.currentText()
+        mapping = dict(self._load_settings().get("dm_can_id_mapping", {}))
+        mapping[joint] = {"can_id": new_id, "master_id": new_master_id}
+        self._save_setting("dm_can_id_mapping", mapping)
+        self.dm_setup_panel.set_mapping(mapping)
+        self.session_logger.log_event(f"DM setup: {joint} id {current_id:#04x} -> {new_id:#04x}")
 
     # ---------------------------------------------------------------- calibration tab
     def _on_calibration_connect(self, port: str) -> None:
@@ -1561,6 +1804,7 @@ class MainWindow(QMainWindow):
         self._on_leader_disconnect()
         self._on_calibration_disconnect()
         self._on_setup_disconnect()
+        self._on_dm_setup_disconnect()
         self._on_camera_stop()
         if self.gamepad_worker:
             self.gamepad_worker.stop()
