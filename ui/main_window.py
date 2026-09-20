@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import time
 
+import numpy as np
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -27,7 +29,14 @@ from PySide6.QtWidgets import (
 
 from core.calibration_worker import CalibrationWorker
 from core.dm_setup_worker import DmSetupWorker
-from core.robot_profiles import DEFAULT_PROFILE_KEY, PROFILES, RobotProfile, get_profile
+from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
+from core.robot_profiles import (
+    DEFAULT_PROFILE_KEY,
+    PROFILES,
+    RobotProfile,
+    get_profile,
+    profile_arm_joints,
+)
 from core.servo_bus import JOINT_ORDER, MAX_RES, MODEL_RESOLUTION
 from core.session_logger import SessionLogger
 from core.setup_worker import SetupWorker
@@ -40,6 +49,7 @@ from .connection_panel import ConnectionPanel
 from .control_source_panel import ControlSourcePanel
 from .dm_setup_panel import DmSetupPanel
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
+from .jog_panel import JogPanel
 from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
 from .setup_panel import SetupPanel
@@ -53,6 +63,20 @@ GAMEPAD_MAX_DEG_PER_S = 45.0  # full stick deflection = 45 deg/s
 
 KEYBOARD_JOG_TICK_MS = 33
 KEYBOARD_MAX_DEG_PER_S = 30.0  # gentler than the gamepad's max - keys are on/off, not proportional
+
+JOG_TICK_MS = 33
+# What 100% on the Jog panel's speed slider means. The slider defaults to 30%, so
+# a first press is ~14 deg/s or ~24 mm/s - deliberately slow. Cartesian speeds
+# are in the TWIN MODEL's units (see MainWindow._build_kinematics): a real arm
+# whose calibrated joint ranges differ from the model's moves proportionally
+# more or less than these numbers say.
+JOG_MAX_JOINT_DEG_S = 45.0
+JOG_MAX_LINEAR_MM_S = 80.0
+JOG_MAX_ANGULAR_DEG_S = 45.0
+# The ghost is only drawn when its pose is meaningfully away from the real arm's:
+# drawn on top of an arm that is already there it would just z-fight with it.
+GHOST_MIN_DIFF_DEG = 2.0
+JOG_GHOST_LINGER_S = 2.0  # keep showing a jog's target briefly after release, while the arm catches up
 
 PLAYBACK_TICK_MS = 33
 PLAYBACK_ARRIVE_TOLERANCE_DEG = 3.0
@@ -134,6 +158,7 @@ class MainWindow(QMainWindow):
         self.connection_panel = ConnectionPanel()
         self.control_source_panel = ControlSourcePanel()
         self.joint_panel = JointPanel()
+        self.jog_panel = JogPanel(self.joint_panel)
         self.teaching_panel = TeachingPanel()
         self.gamepad_panel = GamepadPanel()
         self.keyboard_jog_panel = KeyboardJogPanel()
@@ -144,7 +169,7 @@ class MainWindow(QMainWindow):
         left = QVBoxLayout()
         left.addWidget(self.connection_panel)
         left.addWidget(self.control_source_panel)
-        left.addWidget(self.joint_panel)
+        left.addWidget(self.jog_panel)
         left.addWidget(self.teaching_panel)
         left.addWidget(self.gamepad_panel)
         left.addWidget(self.keyboard_jog_panel)
@@ -160,10 +185,13 @@ class MainWindow(QMainWindow):
         left_scroll = QScrollArea()
         left_scroll.setWidget(left_widget)
         left_scroll.setWidgetResizable(True)
-        left_scroll.setMinimumWidth(360)  # enough for "Refresh"/"Browse"/"DISCONNECTED" to not clip
+        # Wide enough that no panel in the column forces a horizontal scrollbar - the
+        # widest (Control Source) needs ~390px plus the vertical scrollbar. Below that the
+        # column scrolls sideways and the right-hand buttons (the Jog panel's +) vanish.
+        left_scroll.setMinimumWidth(426)
 
-        # twin + camera side by side on top, telemetry filling the dead space
-        # that used to sit underneath them
+        # twin + camera side by side. Telemetry used to sit underneath them; it now
+        # has its own tab (4 - Telemetry), so this pair gets the whole column.
         view_row = QSplitter(Qt.Horizontal)
         view_row.addWidget(self.twin_panel)
         view_row.addWidget(self.camera_panel)
@@ -171,19 +199,12 @@ class MainWindow(QMainWindow):
         view_row.setStretchFactor(1, 1)   # camera: secondary, for comparison
         view_row.setSizes([760, 420])
 
-        right_column = QSplitter(Qt.Vertical)
-        right_column.addWidget(view_row)
-        right_column.addWidget(self.telemetry_panel)
-        right_column.setStretchFactor(0, 1)
-        right_column.setStretchFactor(1, 0)
-        self._right_column = right_column  # see _size_right_column below
-
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
-        splitter.addWidget(right_column)
+        splitter.addWidget(view_row)
         splitter.setStretchFactor(0, 0)   # controls: stay narrow
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([380, 1180])
+        splitter.setSizes([430, 1130])
 
         control_tab = QWidget()
         control_layout = QVBoxLayout(control_tab)
@@ -214,6 +235,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.setup_stack, "1 - Setup")
         self.tabs.addTab(self.calibration_panel, "2 - Calibration")
         self.tabs.addTab(control_tab, "3 - Control")
+        # Monitoring, not operating: it has its own tab so the Control tab can give
+        # the twin and camera the whole window.
+        self.tabs.addTab(self.telemetry_panel, "4 - Telemetry")
 
         # Robot selection sits ABOVE the tabs, not inside the Control tab -
         # which robot is being driven decides whether Setup/Calibration make
@@ -289,6 +313,22 @@ class MainWindow(QMainWindow):
         self._last_tick = time.monotonic()
         self._held_keys: set = set()
         self._last_keyboard_tick = time.monotonic()
+
+        # -- state: Jog panel (JAKA-style manual movement) ------------------------
+        # Cartesian jogging runs on the twin's own MJCF; None until a twin is
+        # loaded (or if its model can't be used), which greys out World/Tool.
+        self.kinematics: KinematicChain | None = None
+        # {(mode, axis): [direction, expires_at_or_None]}. None = a held button
+        # (continuous); a time = a fixed-size step that runs to completion.
+        self._jog_active: dict[tuple[str, str], list] = {}
+        # Where the jog is heading, in degrees. Integrated from THIS rather than
+        # from current_positions each tick: with a follower connected,
+        # current_positions is the MEASURED pose and lags the command, so
+        # integrating from it would make the arm chase itself and crawl. It is
+        # also exactly the "commanded target" the ghost shows.
+        self._jog_target: dict[str, float] = {}
+        self._jog_ghost_until = 0.0
+        self._last_jog_tick = time.monotonic()
         # Workers mid-shutdown: stop() only flips a flag, the OS thread is
         # still alive for a bit after that. Dropping the last Python
         # reference to a QThread while its thread is still running makes
@@ -323,7 +363,10 @@ class MainWindow(QMainWindow):
         self.connection_panel.connect_requested.connect(self._on_connect)
         self.connection_panel.disconnect_requested.connect(self._on_disconnect)
         self.connection_panel.torque_requested.connect(self._on_torque)
-        self.joint_panel.goal_changed.connect(self._on_goal_changed)
+        self.jog_panel.goal_changed.connect(self._on_goal_changed)
+        self.jog_panel.jog_pressed.connect(self._on_jog_pressed)
+        self.jog_panel.jog_released.connect(self._on_jog_released)
+        self.jog_panel.mode_changed.connect(self._on_jog_mode_changed)
 
         # -- wiring: control source / teleoperation -------------------------
         self.control_source_panel.source_changed.connect(self._on_control_source_changed)
@@ -402,6 +445,10 @@ class MainWindow(QMainWindow):
         self.keyboard_timer.timeout.connect(self._keyboard_jog_tick)
         self.keyboard_timer.start(KEYBOARD_JOG_TICK_MS)
 
+        self.jog_timer = QTimer(self)
+        self.jog_timer.timeout.connect(self._jog_tick)
+        self.jog_timer.start(JOG_TICK_MS)
+
         self._apply_control_source_lock()
 
         # Apply whichever robot profile was persisted (default: SO-101) -
@@ -430,30 +477,6 @@ class MainWindow(QMainWindow):
             self._on_robot_profile_changed(default_index)
         else:
             self.robot_combo.setCurrentIndex(default_index)
-
-        # right_column (view_row + telemetry_panel) has no real height yet
-        # during __init__ - widgets aren't laid out until the event loop
-        # actually processes the initial show(). An earlier attempt at this
-        # called setSizes() here directly using a hardcoded "880" budget
-        # (this window's own requested height) standing in for "how much
-        # room right_column will actually get" - wrong on a real screen once
-        # title bar/tab bar/status bar/taskbar/DPI scaling are accounted
-        # for, and confirmed on real hardware to still open with the
-        # gripper row (telemetry_panel's tallest requirement) clipped.
-        # Deferring to a 0ms singleShot - fired once the event loop starts,
-        # right after the initial layout pass has actually run - means
-        # right_column.height() below is real, not guessed.
-        QTimer.singleShot(0, self._size_right_column)
-
-    def _size_right_column(self) -> None:
-        """Give telemetry_panel exactly the room its own minimumSizeHint says
-        it needs (see TelemetryPanel.__init__ - it's a hard floor there, not
-        just a hint), and let view_row (twin+camera) take whatever's left of
-        right_column's REAL, now-known height. See the singleShot call above
-        for why this can't just run inline in __init__."""
-        total = self._right_column.height()
-        telemetry_h = self.telemetry_panel.minimumSizeHint().height()
-        self._right_column.setSizes([max(0, total - telemetry_h), telemetry_h])
 
     # ---------------------------------------------------------------- robot profile
     def _on_robot_profile_changed(self, index: int) -> None:
@@ -496,6 +519,16 @@ class MainWindow(QMainWindow):
         self.current_positions = dict.fromkeys(profile.joint_order, 0.0)
         self.joint_deg_ranges = dict(profile.preview_ranges)
         self.joint_panel.rebuild(list(profile.joint_order), limits=profile.preview_ranges)
+        # Anything mid-jog belonged to the previous robot, and so does its
+        # kinematic model. A robot with no hardware backend can only ever be
+        # driven from the Jog panel (its Control Source panel is greyed out), so
+        # make sure that panel is the live one.
+        self._jog_release_all()
+        self._jog_target = {}
+        self.kinematics = None
+        self.jog_panel.set_cartesian_available(False, "Load a digital twin to enable World/Tool jogging.")
+        if not profile.hardware_available and self.control_source != "manual":
+            self.control_source_panel.force_manual()
 
         # Auto-load this profile's twin - a customized path from a previous
         # session (if any) wins over the profile's own bundled default, so
@@ -703,9 +736,11 @@ class MainWindow(QMainWindow):
 
     def _apply_control_source_lock(self) -> None:
         manual = self.control_source == "manual"
-        for row in self.joint_panel.rows.values():
-            row.slider.setEnabled(manual)
-            row.spin.setEnabled(manual)
+        # Manual = the Jog panel. Disabling a button mid-press can swallow its
+        # release, so drop any motion in progress first rather than trust it.
+        if not manual:
+            self._jog_release_all()
+        self.jog_panel.set_input_enabled(manual)
 
     def _on_leader_connect(self, port: str, calibration_path: str) -> None:
         if not port or not calibration_path:
@@ -1085,6 +1120,200 @@ class MainWindow(QMainWindow):
         if row:
             row.set_feedback_deg(degrees)
 
+    # ---------------------------------------------------------------- jog panel (JAKA-style)
+    #
+    # Joint mode moves one joint at a time. World/Tool modes move the tool centre
+    # point through space and let core/kinematics.py work out the joints. Either
+    # way the result is a set of joint targets in degrees, driven through
+    # _drive_joint_programmatically - the same path keyboard and gamepad jogging
+    # use - so the calibrated-range clamp, the twin and the hardware all see it
+    # exactly as they see any other source.
+    def _build_kinematics(self, path: str) -> None:
+        self.kinematics = None
+        profile = self.robot_profile
+        try:
+            chain = KinematicChain(path, profile_arm_joints(profile), self._tcp_spec())
+        except Exception as exc:  # bad/missing MJCF - the twin reports its own load error
+            self.jog_panel.set_cartesian_available(False, f"World/Tool jogging unavailable: {exc}")
+            return
+        self.kinematics = chain
+        self.jog_panel.set_cartesian_available(True)
+        note = (
+            f"TCP: {chain.tcp.description}. Pose is in the WORLD frame, measured on the twin model - "
+            "if the real arm's calibrated ranges differ from the model's, real distances scale with them."
+        )
+        if chain.n < 6:
+            note += (
+                f" This arm has {chain.n} joints in its kinematic chain, so it cannot make every "
+                "direction: buttons drawn dashed are only partly reachable from the current pose."
+            )
+        self.jog_panel.set_tcp_note(note)
+
+    def _tcp_spec(self) -> TcpSpec:
+        profile = self.robot_profile
+        return TcpSpec(site=profile.tcp_site, body=profile.tcp_body, offset=profile.tcp_offset)
+
+    def _jog_rate(self, mode: str, axis: str) -> float:
+        """deg/s for a joint or rotation, mm/s for a translation, at the
+        panel's current speed."""
+        speed = self.jog_panel.speed_fraction()
+        if mode == "joint":
+            return JOG_MAX_JOINT_DEG_S * speed
+        return (JOG_MAX_LINEAR_MM_S if axis in ("x", "y", "z") else JOG_MAX_ANGULAR_DEG_S) * speed
+
+    def _on_jog_pressed(self, mode: str, axis: str, direction: int) -> None:
+        if self.control_source != "manual" or self._playback_index is not None:
+            return
+        if mode != "joint" and self.kinematics is None:
+            return
+        now = time.monotonic()
+        if not self._jog_active:
+            # A fresh jog starts from wherever the arm actually is.
+            self._jog_target = dict(self.current_positions)
+            self._last_jog_tick = now
+        step = self.jog_panel.step_size()
+        expires = now + step / max(self._jog_rate(mode, axis), 1e-6) if step > 0 else None
+        self._jog_active[(mode, axis)] = [direction, expires]
+
+    def _on_jog_released(self, mode: str, axis: str, direction: int) -> None:
+        entry = self._jog_active.get((mode, axis))
+        # A step move runs to completion whatever the button does; only a held
+        # (continuous) jog stops on release.
+        if entry is not None and entry[1] is None and entry[0] == direction:
+            del self._jog_active[(mode, axis)]
+            self._jog_ghost_until = time.monotonic() + JOG_GHOST_LINGER_S
+
+    def _on_jog_mode_changed(self, _mode: str) -> None:
+        self._jog_release_all()
+
+    def _jog_release_all(self) -> None:
+        if self._jog_active:
+            self._jog_ghost_until = time.monotonic() + JOG_GHOST_LINGER_S
+        self._jog_active.clear()
+        self.jog_panel.set_status("")
+
+    def _jog_tick(self) -> None:
+        now = time.monotonic()
+        dt = min(now - self._last_jog_tick, 0.1)  # a stalled GUI must not turn into one huge lunge
+        self._last_jog_tick = now
+        if not self._jog_active:
+            return
+        if self.control_source != "manual" or self._playback_index is not None:
+            self._jog_release_all()
+            return
+        # {(mode, axis): (direction, weight)} - weight is how much of THIS tick the
+        # command is still owed. A held button gets all of it; a fixed-size step
+        # only up to its own expiry. Without that partial last tick a step falls
+        # short by up to one tick's travel (measured: a 5 mm step covering
+        # 4.0 mm), a visible error on exactly the small steps this mode is for.
+        # Snapshotted before expired entries are dropped, so the last sliver still
+        # knows which way it was going.
+        commands: dict[tuple[str, str], tuple[int, float]] = {}
+        for key, (direction, expires) in list(self._jog_active.items()):
+            if expires is None:
+                commands[key] = (direction, 1.0)
+                continue
+            owed = min(now, expires) - (now - dt)
+            commands[key] = (direction, max(0.0, min(1.0, owed / dt)) if dt > 0 else 0.0)
+            if now >= expires:
+                del self._jog_active[key]
+                self._jog_ghost_until = now + JOG_GHOST_LINGER_S
+
+        mode = next(iter(commands))[0]
+        if mode == "joint":
+            self._jog_joints(dt, commands)
+        else:
+            self._jog_cartesian(mode, dt, commands)
+        if not self._jog_active:
+            self.jog_panel.set_status("")
+
+    def _jog_joints(self, dt: float, commands: dict[tuple[str, str], tuple[int, float]]) -> None:
+        for (_mode, name), (direction, weight) in commands.items():
+            if name not in self._jog_target:
+                continue
+            lo, hi = self.joint_deg_ranges.get(name, (-180.0, 180.0))
+            target = self._jog_target[name] + direction * self._jog_rate("joint", name) * dt * weight
+            target = max(lo, min(hi, target))
+            self._jog_target[name] = target
+            self._drive_joint_programmatically(name, target)
+
+    def _jog_cartesian(
+        self, frame: str, dt: float, commands: dict[tuple[str, str], tuple[int, float]]
+    ) -> None:
+        chain = self.kinematics
+        if chain is None:
+            return
+        twist = np.zeros(6)
+        for (_mode, axis), (direction, weight) in commands.items():
+            i = AXES.index(axis)
+            rate = self._jog_rate(frame, axis)
+            twist[i] += direction * weight * (rate / 1000.0 if i < 3 else math.radians(rate))  # m/s, rad/s
+
+        fractions = self._positions_to_fractions(self._jog_target)
+        q = chain.fractions_to_q({n: fractions[n] for n in chain.joint_names if n in fractions})
+        result = chain.step(q, twist, frame, dt)
+        for name, fraction in chain.q_to_fractions(result.q).items():
+            lo, hi = self.joint_deg_ranges.get(name, (-180.0, 180.0))
+            degrees = lo + fraction * (hi - lo)
+            self._jog_target[name] = degrees
+            self._drive_joint_programmatically(name, degrees)
+
+        if result.blocked:
+            self.jog_panel.set_status(f"At joint limit: {', '.join(result.blocked)} - sliding along the boundary.")
+        elif result.saturated:
+            self.jog_panel.set_status("Near a singularity: speed reduced to keep joint speeds safe.")
+        else:
+            self.jog_panel.set_status("")
+
+    def _update_cartesian_readout(self) -> None:
+        """TCP pose and per-axis reachability for the Cartesian page, only while
+        that page is actually showing."""
+        chain = self.kinematics
+        mode = self.jog_panel.mode()
+        if chain is None or mode == "joint":
+            return
+        fractions = self._positions_to_fractions()
+        chain.set_q(chain.fractions_to_q({n: fractions[n] for n in chain.joint_names if n in fractions}))
+        position, rotation = chain.tcp_pose()
+        self.jog_panel.set_pose(position, rpy_deg_from_matrix(rotation))
+        self.jog_panel.set_reach(chain.reachability(mode))
+
+    # ---------------------------------------------------------------- twin overlays (ghost, axes)
+    def _differs_from_live(self, positions: dict[str, float]) -> bool:
+        return any(
+            abs(degrees - self.current_positions.get(name, degrees)) > GHOST_MIN_DIFF_DEG
+            for name, degrees in positions.items()
+        )
+
+    def _compute_ghost(self) -> dict[str, float] | None:
+        """The pose the ghost arm should be drawn at, as twin fractions, or None
+        for no ghost. In priority order: the waypoint playback is moving toward,
+        then the target a jog is driving to (while it lasts and shortly after),
+        then whichever waypoint is selected in the list. A candidate identical to
+        where the arm already is is dropped - see GHOST_MIN_DIFF_DEG."""
+        if not self.twin_panel.ghost_enabled():
+            return None
+        candidates: list[dict[str, float]] = []
+        if self._playback_index is not None and self._playback_target_positions:
+            candidates.append(self._playback_target_positions)
+        if self._jog_target and self.robot_worker and (
+            self._jog_active or time.monotonic() < self._jog_ghost_until
+        ):
+            candidates.append(self._jog_target)
+        index = self.teaching_panel.selected_index()
+        if index is not None and 0 <= index < len(self.waypoints) and self.teaching_panel.isEnabled():
+            candidates.append(self.waypoints[index]["positions"])
+        for positions in candidates:
+            if self._differs_from_live(positions):
+                return self._positions_to_fractions(positions)
+        return None
+
+    def _frame_overlay(self) -> str | None:
+        if not self.twin_panel.axes_enabled() or self.kinematics is None:
+            return None
+        mode = self.jog_panel.mode()
+        return mode if mode in ("world", "tool") else "world"
+
     # ---------------------------------------------------------------- UI refresh (bounded rate)
     def _refresh_ui(self) -> None:
         """The ONLY place sliders/spinboxes and the twin actually repaint.
@@ -1092,16 +1321,22 @@ class MainWindow(QMainWindow):
         arriving from one or two robot workers - this is what keeps the main
         thread from ever falling behind."""
         self.joint_panel.update_feedback(self.current_positions)
+        self._update_cartesian_readout()
         if self.twin_worker:
             self.twin_worker.set_fractions(self._positions_to_fractions())
+            self.twin_worker.set_ghost(self._compute_ghost())
+            self.twin_worker.set_frame_overlay(self._frame_overlay())
 
-    def _positions_to_fractions(self) -> dict[str, float]:
+    def _positions_to_fractions(self, positions: dict[str, float] | None = None) -> dict[str, float]:
         """Real degrees -> 0..1 fraction of that joint's OWN calibrated
         range, so the twin can map it into the MJCF's own joint range instead
         of assuming the two zero-references happen to agree (they don't, at
-        least not for the gripper - see DigitalTwin.set_joint_fraction)."""
+        least not for the gripper - see DigitalTwin.set_joint_fraction).
+
+        `positions` defaults to the live pose; pass any other {joint: degrees}
+        (a waypoint, a jog target) to get the same mapping for it."""
         fractions = {}
-        for name, degrees in self.current_positions.items():
+        for name, degrees in (self.current_positions if positions is None else positions).items():
             lo, hi = self.joint_deg_ranges.get(name, (-180.0, 180.0))
             if hi <= lo:
                 continue
@@ -1112,6 +1347,7 @@ class MainWindow(QMainWindow):
     def _on_twin_load(self, path: str) -> None:
         if not path:
             return
+        self._build_kinematics(path)
         # Remembered per robot profile (not one single global path), so
         # switching the Robot combo back and forth doesn't keep discarding
         # a path the user deliberately typed in for one of them - covers
@@ -1143,7 +1379,12 @@ class MainWindow(QMainWindow):
         self.twin_panel.show_frame(frame)
 
     def _start_twin_worker(self, path: str) -> None:
-        self.twin_worker = TwinWorker(path, joint_names=list(self.robot_profile.joint_order))
+        self.twin_worker = TwinWorker(
+            path,
+            joint_names=list(self.robot_profile.joint_order),
+            tcp_spec=self._tcp_spec(),
+            arm_joints=list(profile_arm_joints(self.robot_profile)),
+        )
         self.twin_worker.frame_ready.connect(self._on_twin_frame)
         self.twin_worker.load_failed.connect(lambda msg: self.twin_panel.set_caption(f"failed to load: {msg}"))
         self.twin_worker.neutral_pose_ready.connect(self._on_neutral_pose_ready)
@@ -1641,6 +1882,7 @@ class MainWindow(QMainWindow):
         # control back to a leader pose nobody was tracking.
         if self.control_source == "leader":
             self.control_source_panel.force_manual()
+        self._jog_release_all()
         self.robot_worker.request_torque(True)
         self._playback_index = 0
         self._start_playback_waypoint()
@@ -1792,6 +2034,7 @@ class MainWindow(QMainWindow):
         self.ui_refresh_timer.stop()
         self.keyboard_timer.stop()
         self.gamepad_timer.stop()
+        self.jog_timer.stop()
         self._close_telemetry_csv()
 
         # These all go through _retire_worker, which deliberately does NOT

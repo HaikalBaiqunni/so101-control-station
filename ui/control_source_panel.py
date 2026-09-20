@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from core.servo_bus import JOINT_ORDER
 
-from .setup_panel import describe_ports
+from .setup_panel import configure_port_combo, fill_port_combo
 
 SOURCES = ["manual", "gamepad", "leader", "keyboard"]
 
@@ -40,7 +40,7 @@ class ControlSourcePanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("CONTROL SOURCE", parent)
 
-        self.manual_radio = QRadioButton("Manual (sliders)")
+        self.manual_radio = QRadioButton("Manual (jog panel)")
         self.gamepad_radio = QRadioButton("Gamepad")
         self.leader_radio = QRadioButton("Leader arm (teleoperate)")
         self.keyboard_radio = QRadioButton("Keyboard jog")
@@ -55,6 +55,7 @@ class ControlSourcePanel(QGroupBox):
         self.leader_form = QWidget()
         self.leader_port_combo = QComboBox()
         self.leader_port_combo.setEditable(True)
+        configure_port_combo(self.leader_port_combo)
         self._refresh_leader_ports()
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_leader_ports)
@@ -174,8 +175,7 @@ class ControlSourcePanel(QGroupBox):
     def _refresh_leader_ports(self) -> None:
         current = self.leader_port_combo.currentText()
         self.leader_port_combo.clear()
-        for device, label in describe_ports():
-            self.leader_port_combo.addItem(label, device)
+        fill_port_combo(self.leader_port_combo)
         if current:
             self.leader_port_combo.setEditText(current)
 

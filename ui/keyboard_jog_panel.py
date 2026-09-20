@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QGroupBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout
 
 # QWERTY top row jogs a joint positive, the row below jogs it negative -
 # left-to-right in the same order as Joint Control's own slider stack, so the
@@ -33,7 +33,10 @@ class _KeyCap(QFrame):
         super().__init__(parent)
         self.setObjectName("keycap")
         self.setProperty("active", False)
-        self.setFixedSize(76, 60)
+        # Flexible, not fixed: six 76px keys were 548px wide, which made the whole
+        # control column scroll sideways. They now share whatever width there is.
+        self.setMinimumSize(44, 54)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         letter_label = QLabel(letter)
         letter_label.setObjectName("keycapLetter")
@@ -44,7 +47,7 @@ class _KeyCap(QFrame):
         joint_label.setAlignment(Qt.AlignCenter)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 6, 4, 6)
+        layout.setContentsMargins(2, 6, 2, 6)
         layout.setSpacing(2)
         layout.addWidget(letter_label)
         layout.addWidget(joint_label)
@@ -67,7 +70,7 @@ class KeyboardJogPanel(QGroupBox):
 
         top_row = QHBoxLayout()
         top_row.setSpacing(6)
-        top_row.addSpacing(22)  # stagger, like a real keyboard
+        top_row.addSpacing(8)  # stagger, like a real keyboard
         for key, letter in _TOP_ROW:
             joint, _sign = KEY_JOG_MAP[key]
             cap = _KeyCap(letter, joint, "▲")

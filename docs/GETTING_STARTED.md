@@ -51,9 +51,9 @@ Verify it starts:
 python main.py
 ```
 
-You should get a dark window with three tabs: **1 · Setup**, **2 ·
-Calibration**, **3 · Control**. Nothing will work yet — that's expected, no
-hardware is connected.
+You should get a dark window with four tabs: **1 · Setup**, **2 ·
+Calibration**, **3 · Control** and **4 · Telemetry**. Nothing will work yet —
+that's expected, no hardware is connected.
 
 > **Linux users:** you will also need permission to open serial ports.
 > `sudo usermod -a -G dialout $USER`, then log out and back in.
@@ -185,10 +185,35 @@ Open the **3 · Control** tab.
    calibration `.json` you just saved, **Connect**.
 2. Click **Torque ON**. The arm will now hold position — it becomes stiff.
    Click **Torque OFF** whenever you want to move it by hand.
-3. Under **Control source**, leave **Manual (sliders)** selected and drag a
-   joint slider. The arm should follow.
+3. Under **Control source**, leave **Manual (jog panel)** selected. In the
+   **Jog** panel, keep the mode on **Joint** and **hold** a **+** or **−**
+   button — the arm moves while you hold it and stops when you let go. Speed
+   starts at a gentle 30 %. To go to an exact angle, type it in the box and
+   press **Enter**.
 
 That's the whole loop. Everything below is optional.
+
+### Optional: jog in space (World / Tool)
+
+Once a **digital twin** is loaded (next section), the Jog panel's **World** and
+**Tool** modes become available. They move the *gripper* through space instead
+of one joint at a time — X/Y/Z to translate, Rx/Ry/Rz to rotate:
+
+- **World** — directions fixed to the robot's base. **+Z is always straight up.**
+- **Tool** — the same six directions, measured from the gripper itself, so **+Z is
+  along the way the gripper points**. Use this to push forward or pull back
+  along the approach direction, wherever the wrist is aimed.
+
+Tick **Axes** above the twin to see both frames drawn on the arm (red / green /
+blue = X / Y / Z) — the one you are jogging in is drawn thick.
+
+Buttons drawn **dashed** are directions this arm can only partly do from where
+it is now. That is normal for the 5-joint SO-101; it still moves as far as it
+can, just not in a clean straight line along that axis.
+
+Set **Step** to a number (for example 5) to make each press one fixed move
+instead of moving while held. Tick **Ghost** to see a translucent copy of the arm
+at the position it is heading to.
 
 ### Optional: digital twin
 
