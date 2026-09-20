@@ -156,14 +156,25 @@ class DigitalTwin:
     # scene's own bounding box internally, which is what makes one universal
     # "feel" work for both a close-up gripper-only model and a full-arm one
     # without a speed constant tuned per scene.
+    def _move_camera(self, action, dx: float, dy: float) -> None:
+        """mjv_moveCamera's Python signature changed between MuJoCo releases:
+        older ones take (model, action, dx, dy, scene, camera), newer ones
+        (3.11 confirmed) dropped `scene` and take (model, action, dx, dy,
+        camera). Calling the wrong arity is a TypeError that kills the twin's
+        render thread, so try the newer form and fall back to the older one."""
+        try:
+            mujoco.mjv_moveCamera(self.model, action, dx, dy, self.camera)
+        except TypeError:
+            mujoco.mjv_moveCamera(self.model, action, dx, dy, self.renderer.scene, self.camera)
+
     def orbit(self, dx: float, dy: float) -> None:
-        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ROTATE_H, dx, dy, self.renderer.scene, self.camera)
+        self._move_camera(mujoco.mjtMouse.mjMOUSE_ROTATE_H, dx, dy)
 
     def pan(self, dx: float, dy: float) -> None:
-        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_MOVE_H, dx, dy, self.renderer.scene, self.camera)
+        self._move_camera(mujoco.mjtMouse.mjMOUSE_MOVE_H, dx, dy)
 
     def zoom(self, dy: float) -> None:
-        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, dy, self.renderer.scene, self.camera)
+        self._move_camera(mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, dy)
 
     def reset_camera(self) -> None:
         mujoco.mjv_defaultFreeCamera(self.model, self.camera)
