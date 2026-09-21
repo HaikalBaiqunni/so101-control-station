@@ -90,6 +90,6 @@ jobs:
           # the actual, stable way to reach it.
           tabs = window.tabs
           titles = [tabs.tabText(i) for i in range(tabs.count())]
-          assert titles == ["1 - Setup", "2 - Calibration", "3 - Control"], titles
+          assert titles == ["1 - Setup", "2 - Calibration", "3 - Control", "4 - Telemetry"], titles
           print("MainWindow constructed:", titles)
           PY

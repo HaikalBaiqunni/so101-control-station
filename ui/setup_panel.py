@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -42,6 +42,25 @@ def describe_ports() -> list[tuple[str, str]]:
     return described
 
 
+def configure_port_combo(combo: QComboBox) -> None:
+    """Keep a port dropdown from sizing itself to its longest entry.
+
+    A combo box's minimum width defaults to its widest item, and the descriptive
+    labels above ("COM5 - USB-Enhanced-SERIAL CH343 (COM5)") are long - enough
+    that one such dropdown pushed the whole 360px control column wider than its
+    viewport, hiding the Refresh button next to it and growing a horizontal
+    scrollbar. Fixed to a small minimum instead; the full text is still in the
+    popup and in each item's tooltip."""
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(8)
+
+
+def fill_port_combo(combo: QComboBox) -> None:
+    for device, label in describe_ports():
+        combo.addItem(label, device)
+        combo.setItemData(combo.count() - 1, label, Qt.ToolTipRole)
+
+
 class SetupPanel(QWidget):
     """First-time motor setup: find the servos, then give each one its own id.
 
@@ -68,6 +87,7 @@ class SetupPanel(QWidget):
         conn_box = QGroupBox("1 - CONNECT TO THE BUS")
         self.port_combo = QComboBox()
         self.port_combo.setEditable(True)
+        configure_port_combo(self.port_combo)
         self._refresh_ports()
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_ports)
@@ -209,8 +229,7 @@ class SetupPanel(QWidget):
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()
         self.port_combo.clear()
-        for device, label in describe_ports():
-            self.port_combo.addItem(label, device)
+        fill_port_combo(self.port_combo)
         if current:
             self.port_combo.setEditText(current)
 

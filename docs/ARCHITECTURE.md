@@ -42,28 +42,36 @@ core/
   twin_worker.py       The twin's render loop on its own QThread, 15 fps.
   camera_enum.py       Human-readable camera names (pygrabber, cv2 fallback).
   session_logger.py    Timestamped markdown debug log under logs/.
+  kinematics.py        Cartesian kinematics on the twin's MJCF: TCP pose, Jacobian,
+                       resolved-rate jog step in the World or Tool frame,
+                       per-axis reachability. Private MjModel, no GL.
 
 ui/
   main_window.py       Wires everything together. Owns control-source
                        arbitration, the teach/playback state machine, the
                        telemetry CSV writer and the calibration guidance
                        dialog.
-  setup_panel.py       Tab 1. Also exports describe_ports(), used by every
-                       other port dropdown.
+  setup_panel.py       Tab 1. Also exports describe_ports() and the port-combo
+                       helpers used by every other port dropdown.
   calibration_panel.py Tab 2. Sequential step gating + live min/pos/max table.
   connection_panel.py  Tab 3: port/calibration/connect/torque.
   control_source_panel.py  Manual/Gamepad/Leader/Keyboard selector.
-  joint_panel.py       Slider rows.
+  jog_panel.py         The JAKA-style Jog panel: Joint/World/Tool selector,
+                       speed and step, the Cartesian page (pose readout,
+                       per-axis reachability). Emits (mode, axis, direction).
+  joint_panel.py       The joint page inside the Jog panel: hold-to-jog rows,
+                       typed entry that commits on Enter.
   teaching_panel.py    Waypoint list + record/reorder/play/save.
   keyboard_jog_panel.py  Key-cap layout that lights up while keys are held.
   gamepad_panel.py     Gamepad status + mapping legend.
-  telemetry_panel.py   Table/Graph tabs, unit conversion, CSV toggle.
+  telemetry_panel.py   Tab 4. Table/Graph tabs, unit conversion, CSV toggle.
   twin_panel.py        Twin display.
   camera_panel.py      Camera display + device picker.
   style.py             Dark industrial-HMI QSS theme.
 
 tests/                 Pure-logic tests: encoding, unit conversion, waypoint
-                       validation. No hardware required.
+                       validation, kinematics, and the jog panel/engine (driven by a
+                       fake clock). No hardware required.
 ```
 
 ## Threading model
@@ -112,7 +120,7 @@ that would otherwise release the references.
 
 ## Control-source arbitration
 
-Four sources can command the arm: manual sliders, gamepad, keyboard jog,
+Four sources can command the arm: manual (the Jog panel), gamepad, keyboard jog,
 leader arm. **Exactly one is live at a time**, selected by radio button, so
 inputs can never fight each other.
 

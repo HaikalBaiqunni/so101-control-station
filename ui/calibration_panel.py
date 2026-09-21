@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from core.servo_bus import JOINT_ORDER
 
-from .setup_panel import describe_ports
+from .setup_panel import configure_port_combo, fill_port_combo
 
 DEFAULT_CALIBRATION_ROOT = os.path.expanduser("~/.cache/huggingface/lerobot/calibration")
 
@@ -74,6 +74,7 @@ class CalibrationPanel(QWidget):
 
         self.port_combo = QComboBox()
         self.port_combo.setEditable(True)
+        configure_port_combo(self.port_combo)
         self._refresh_ports()
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_ports)
@@ -228,8 +229,7 @@ class CalibrationPanel(QWidget):
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()
         self.port_combo.clear()
-        for device, label in describe_ports():
-            self.port_combo.addItem(label, device)
+        fill_port_combo(self.port_combo)
         if current:
             self.port_combo.setEditText(current)
 

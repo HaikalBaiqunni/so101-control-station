@@ -49,6 +49,19 @@ class RobotProfile:
     # that row's " deg" suffix is cosmetically wrong for this one joint,
     # a known, deliberately-not-solved-here Phase 1 simplification.
     preview_ranges: dict[str, tuple[float, float]] = None  # type: ignore[assignment]
+    # -- Cartesian jogging (core/kinematics.py) ---------------------------------
+    # Which of joint_order carry the TCP through space. The gripper is
+    # deliberately absent: it doesn't move the tool centre point, and a jog
+    # solver that could "use" it to hit a target would just open the jaws.
+    # Empty means "every joint but the last" (the gripper, by convention).
+    arm_joints: tuple[str, ...] = ()
+    # Where the tool centre point is in that robot's MJCF. Plain strings
+    # rather than kinematics.TcpSpec so this module stays free of MuJoCo
+    # imports (see the module docstring) - MainWindow builds the TcpSpec.
+    # Empty tcp_site + empty tcp_body = let the kinematics auto-detect one.
+    tcp_site: str = ""
+    tcp_body: str = ""
+    tcp_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self):
         if self.preview_ranges is None:
@@ -67,6 +80,11 @@ PROFILES: dict[str, RobotProfile] = {
         joint_order=tuple(DEFAULT_JOINT_IDS.keys()),
         default_mjcf_path="",
         hardware_available=True,
+        # Five joints move the tool; the sixth servo is the gripper. So Cartesian
+        # jogging on an SO-101 is inherently 5-DoF - see KinematicChain.reachability.
+        arm_joints=("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"),
+        # No bundled MJCF to name a site in - the kinematics tries the usual
+        # site names and otherwise falls back to the wrist_roll body's origin.
     ),
     "rebot_b601_dm": RobotProfile(
         key="rebot_b601_dm",
@@ -78,6 +96,12 @@ PROFILES: dict[str, RobotProfile] = {
         joint_order=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "finger_left"),
         default_mjcf_path=os.path.join(_MODELS_DIR, "rebot_b601_dm", "rebot_b601_dm.xml"),
         hardware_available=False,
+        arm_joints=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"),
+        # This MJCF has no <site>. Its gripper fingers hang off link6 at
+        # z = 0.15539 (finger_left_link's pos in the model), which is the tool
+        # centre for a two-finger gripper.
+        tcp_body="link6",
+        tcp_offset=(0.0, 0.0, 0.15539),
         preview_ranges={
             "joint1": (-160.4, 160.4),
             "joint2": (-179.9, 0.0),
@@ -100,6 +124,12 @@ PROFILES: dict[str, RobotProfile] = {
 }
 
 DEFAULT_PROFILE_KEY = "so101"
+
+
+def profile_arm_joints(profile: RobotProfile) -> tuple[str, ...]:
+    """The joints that place the TCP - explicit if the profile says so,
+    otherwise everything except the trailing gripper joint."""
+    return profile.arm_joints or profile.joint_order[:-1]
 
 
 def get_profile(key: str) -> RobotProfile:
