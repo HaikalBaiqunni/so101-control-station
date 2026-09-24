@@ -5,7 +5,7 @@ from collections import deque
 
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
 from PySide6.QtCore import QMargins, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -23,7 +24,13 @@ from PySide6.QtWidgets import (
 
 from core.servo_bus import JOINT_ORDER, decode_sign_magnitude
 
-from .style import COLORS
+from .style import COLORS, JOINT_LINE_COLORS
+
+GRAPH_FIELDS = ["current", "load", "velocity", "voltage", "temperature"]
+# "torque" isn't a separate quantity on a Feetech STS3215 - Present_Load
+# already IS the servo's own % of its rated torque output, so it's the one
+# already in GRAPH_FIELDS above rather than a second, redundant entry.
+CHART_MIN_HEIGHT = 170  # a trend line reads fine well short of the table's own height
 
 COLUMNS = ["Joint", "Pos (ticks)", "Vel (deg/s)*", "Load (%)", "Current (mA)", "Volt (V)", "Temp (C)"]
 STATS_WINDOW = 200  # ~20 s at the 10 Hz telemetry rate
@@ -86,24 +93,24 @@ class TelemetryPanel(QGroupBox):
 
     Table and Graph are separate tabs rather than both always on screen - a
     live chart repainting has more visual weight than a row of numbers, and
-    most of the time only one or the other is what's actually being watched."""
+    most of the time only one or the other is what's actually being watched.
+
+    Takes `joint_order` so a different robot profile's joints replace
+    SO-101's six (see MainWindow._on_robot_profile_changed, which calls
+    rebuild() the same way it already does for JointPanel) rather than this
+    panel staying hardcoded to one arm forever."""
 
     log_toggled = Signal(bool)
     register_write_requested = Signal(str, int, str)  # data_name, value, joint ("" = all)
 
-    def __init__(self, parent=None):
+    def __init__(self, joint_order: tuple[str, ...] | None = None, parent=None):
         super().__init__("SERVO TELEMETRY", parent)
+        self.joint_order: tuple[str, ...] = tuple(joint_order) if joint_order is not None else tuple(JOINT_ORDER)
 
-        self.table = QTableWidget(len(JOINT_ORDER), len(COLUMNS))
+        self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        for row, name in enumerate(JOINT_ORDER):
-            self.table.setItem(row, 0, QTableWidgetItem(name))
-            for col in range(1, len(COLUMNS)):
-                item = QTableWidgetItem("-")
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.table.setItem(row, col, item)
         # Stretch (not resizeColumnsToContents) so the 7 columns always sum to
         # exactly the panel's width - a fixed content width would trigger a
         # horizontal scrollbar whenever the panel is narrower than that, and
@@ -123,37 +130,25 @@ class TelemetryPanel(QGroupBox):
         # "row height assumptions don't hold on whatever style/DPI this
         # machine renders with". Fixed mode + an explicit size stops asking
         # Qt to predict or report a row height and just DICTATES one instead
-        # - every row is exactly ROW_H regardless of style, font, or DPI, so
-        # the six-row budget below is finally a real guarantee, not a guess.
-        ROW_H = 26
+        # - every row is exactly ROW_H regardless of style, font, or DPI.
+        self._row_h = 26
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(ROW_H)
-        self.table.setMinimumHeight(
-            self.table.horizontalHeader().height()
-            + len(JOINT_ORDER) * ROW_H
-            + 2 * self.table.frameWidth()
-            + 20  # generous slack, not a tight fit - see below
-        )
-        # Confirmed by grabbing a real screenshot of this exact table on
-        # real hardware: the row-6 (gripper) geometry was ALREADY entirely
-        # correct - visualRect reported it fully inside the viewport with 4px
-        # to spare - and it still didn't get painted. A margin that tight
-        # gets eaten by DPI/device-pixel rounding between Qt's logical
-        # geometry and what actually lands on screen, so the viewport was
-        # geometrically "big enough" while the rasterizer still clipped the
-        # last row. 20px instead of 4px is deliberately not a tight fit.
+        self.table.verticalHeader().setDefaultSectionSize(self._row_h)
+
         table_tab = QWidget()
         table_tab_layout = QVBoxLayout(table_tab)
         table_tab_layout.setContentsMargins(0, 6, 0, 0)
         table_tab_layout.addWidget(self.table)
 
-        (
-            self.chart, self.chart_series, self.computed_series,
-            self.chart_x_axis, self.chart_y_axis,
-        ) = self._build_chart()
+        self.chart, self.chart_x_axis, self.chart_y_axis = self._build_chart_shell()
+        self.chart_series: dict[str, QLineSeries] = {}  # joint -> its line - see rebuild()
         chart_view = QChartView(self.chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
-        chart_view.setMinimumHeight(self.table.minimumHeight())
+        # NOT tied to the table's height (it used to be) - a trend line reads
+        # fine well short of six fixed-height table rows, and forcing it that
+        # tall was inflating this whole panel's minimum footprint, squeezing
+        # the Digital Twin/Camera row above it in the process.
+        chart_view.setMinimumHeight(CHART_MIN_HEIGHT)
         graph_tab = QWidget()
         graph_tab_layout = QVBoxLayout(graph_tab)
         graph_tab_layout.setContentsMargins(0, 6, 0, 0)
@@ -163,31 +158,38 @@ class TelemetryPanel(QGroupBox):
         self.tabs.addTab(table_tab, "Table")
         self.tabs.addTab(graph_tab, "Graph")
 
-        self.caption = QLabel(
+        # A single-line, elided caption with the full explanation in a
+        # tooltip - the same idiom TwinPanel's caption already uses. The
+        # unabridged text used to sit here word-wrapped across several lines,
+        # which (like the graph's height above) was inflating this panel's
+        # forced minimum height for no real benefit - the explanation is
+        # still one hover away, just not permanently taking up several lines
+        # of vertical space.
+        self._caption_text = (
             "~10 Hz. Volt/Temp/Current/Load are cross-checked conversions "
             "(see convert_telemetry() for sourcing); Vel (deg/s*) is a derived estimate, "
             "not a confirmed unit. Watching velocity overlays a second "
-            "'computed' trace, numerically differentiated from Present_Position "
-            "(already confirmed) over the same interval - if it tracks the "
-            "reported trace, the derived formula is confirmed on THIS hardware, "
-            "not just assumed from documentation. Pos is left as raw encoder "
-            "ticks to avoid a second, differently-zeroed 'degrees' next to "
-            "Joint Control's calibrated one."
+            "'computed' trace in the stats line below, numerically differentiated from "
+            "Present_Position (already confirmed) over the same interval - if it tracks "
+            "the reported value, the derived formula is confirmed on THIS hardware, not "
+            "just assumed from documentation. Pos is left as raw encoder ticks to avoid a "
+            "second, differently-zeroed 'degrees' next to Joint Control's calibrated one."
         )
+        self.caption = QLabel()
         self.caption.setObjectName("sectionCaption")
-        self.caption.setWordWrap(True)
+        self.caption.setToolTip(self._caption_text)
+        self.caption.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         # -- noise tracker for one joint (the whole reason this panel exists) --
-        # drives BOTH the stats line below and the Graph tab - one signal
-        # picked at a time, so the two views never disagree about what
-        # they're showing.
+        # drives the stats line below. The Graph tab now shows every joint at
+        # once for whichever field is picked here - this combo genuinely
+        # selects the field for BOTH; only the stats line still needs a
+        # single joint singled out.
         self.watch_combo = QComboBox()
-        self.watch_combo.addItems(JOINT_ORDER)
-        self.watch_combo.setCurrentText("gripper")
         self.watch_combo.currentTextChanged.connect(lambda _: self._reset_stats())
 
         self.watch_field = QComboBox()
-        self.watch_field.addItems(["current", "load", "velocity", "voltage", "temperature"])
+        self.watch_field.addItems(GRAPH_FIELDS)
         self.watch_field.currentTextChanged.connect(lambda _: self._reset_stats())
 
         self.stats_label = QLabel("no samples yet")
@@ -215,13 +217,7 @@ class TelemetryPanel(QGroupBox):
         log_row.addWidget(self.log_path_label, 1)
 
         # -- servo-side settings worth experimenting with --
-        # Was hardcoded to "gripper" - confirmed a real limitation: a payload
-        # added anywhere else on the arm (e.g. a sensor bracket on the wrist/
-        # elbow) needs the SAME kind of Torque_Limit headroom, and there was
-        # no way to reach any joint but the gripper from this panel.
         self.torque_target_combo = QComboBox()
-        self.torque_target_combo.addItems(JOINT_ORDER)
-        self.torque_target_combo.setCurrentText("gripper")
 
         self.torque_limit_spin = QSpinBox()
         self.torque_limit_spin.setRange(0, 1000)
@@ -273,36 +269,98 @@ class TelemetryPanel(QGroupBox):
         layout.addLayout(log_row)
         layout.addLayout(settings_row)
 
-        # self.table.setMinimumHeight() above only protects the TABLE - it
-        # says nothing about the caption/watch/log/settings rows stacked
-        # below it competing for the same box. Confirmed on a real run: with
-        # only a computed minimumSizeHint (a hint a squeezed QSplitter is
-        # free to ignore under pressure - a window/screen a bit short,
-        # scaling, whatever), the whole panel got compressed below what its
-        # own children need and the LAST row of the table (gripper) silently
-        # lost its space with no scrollbar to hint why, even though the
-        # table's own minimum was never violated in isolation - dragging the
-        # splitter to give the panel more room brought it straight back.
-        # Locking minimumSize to minimumSizeHint turns "always show all rows"
-        # into a hard floor: the containing splitter must now take the
-        # missing space from the twin/camera row above instead.
-        self.setMinimumHeight(self.minimumSizeHint().height())
-
         # (elapsed_seconds, value) pairs for the currently watched signal -
         # backs both the stats line and the chart, so they can never disagree
         self._samples: deque = deque(maxlen=STATS_WINDOW)
         # same, but for the numerically-differentiated cross-check - only
         # populated while watching "velocity"
         self._computed_samples: deque = deque(maxlen=STATS_WINDOW)
+        # one deque per joint, for the Graph tab's all-joints-at-once view -
+        # separate from _samples above (that one is always the single
+        # watch_combo joint; this is every joint, for whatever field
+        # watch_field currently says)
+        self._graph_samples: dict[str, deque] = {}
         self._series_start: float | None = None
         # (wall_clock_time, raw_position_ticks) from the previous sample of
         # whichever joint is currently watched - cleared on every watch
         # change/reset, so it never straddles a switch to a different joint
         self._prev_position: tuple[float, int] | None = None
 
+        self.rebuild(self.joint_order)
+
+    # ---------------------------------------------------------------- rebuild for a different robot
+    def rebuild(self, joint_order: tuple[str, ...]) -> None:
+        """Replace every joint-dependent row/series/combo entry for
+        `joint_order` - used when switching robot profile (see JointPanel's
+        own rebuild, which this mirrors). Also called once from __init__ so
+        the constructor and a later profile switch share one code path."""
+        self.joint_order = tuple(joint_order)
+
+        self.table.setRowCount(len(self.joint_order))
+        for row, name in enumerate(self.joint_order):
+            self.table.setItem(row, 0, QTableWidgetItem(name))
+            for col in range(1, len(COLUMNS)):
+                item = QTableWidgetItem("-")
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(row, col, item)
+        # See the ROW_H comment above for why this is dictated, not measured.
+        # Confirmed on real hardware: without a matching MINIMUM on the panel
+        # itself (not just the table), a squeezed QSplitter could still
+        # compress this whole box below what its children need and the last
+        # row (gripper) would silently lose its space with no scrollbar to
+        # hint why - locking minimumSize to minimumSizeHint turns "always
+        # show every row" into a hard floor instead of a hint the splitter
+        # is free to ignore under pressure.
+        self.table.setMinimumHeight(
+            self.table.horizontalHeader().height()
+            + len(self.joint_order) * self._row_h
+            + 2 * self.table.frameWidth()
+            + 20  # generous slack, not a tight fit - see the ROW_H comment above
+        )
+
+        for series in self.chart_series.values():
+            self.chart.removeSeries(series)
+        self.chart_series = {}
+        for i, name in enumerate(self.joint_order):
+            series = QLineSeries()
+            series.setName(name)
+            pen = QPen(QColor(JOINT_LINE_COLORS[i % len(JOINT_LINE_COLORS)]))
+            pen.setWidthF(1.8)
+            series.setPen(pen)
+            self.chart.addSeries(series)
+            series.attachAxis(self.chart_x_axis)
+            series.attachAxis(self.chart_y_axis)
+            self.chart_series[name] = series
+
+        for combo in (self.watch_combo, self.torque_target_combo):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(self.joint_order)
+            # "gripper" (SO-101) is the joint this panel's own docstring is
+            # about (grip-force noise) - preselect it as a convenience where
+            # it exists; a robot with no such name just keeps combo index 0.
+            if "gripper" in self.joint_order:
+                combo.setCurrentText("gripper")
+            combo.blockSignals(False)
+
+        self._elide_caption()
+        self.setMinimumHeight(self.minimumSizeHint().height())
+        self._reset_stats()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide_caption()
+
+    def _elide_caption(self) -> None:
+        width = max(0, self.caption.width() - 2)
+        metrics = QFontMetrics(self.caption.font())
+        self.caption.setText(metrics.elidedText(self._caption_text, Qt.ElideRight, width))
+
     # ---------------------------------------------------------------- chart setup
-    def _build_chart(self):
-        """A QLineSeries styled to match this app's dark theme (ui/style.py) -
+    def _build_chart_shell(self):
+        """The chart itself, axes and styling only - no data series yet
+        (those are per-joint and built in rebuild(), since the joint list
+        can change). Styled to match this app's dark theme (ui/style.py) -
         QtCharts isn't reachable through QSS, so its colors are set directly
         via the Qt Charts API instead."""
         border = QColor(COLORS["border"])
@@ -310,28 +368,11 @@ class TelemetryPanel(QGroupBox):
 
         chart = QChart()
         chart.legend().setLabelColor(muted)
-        chart.legend().hide()  # shown only while watching velocity - see _refresh_chart
+        chart.legend().setVisible(True)  # one color per joint now - always needs the legend to read
         chart.setBackgroundBrush(QColor(COLORS["panel"]))
         chart.setBackgroundPen(QPen(border))
         chart.setTitleBrush(muted)
         chart.setMargins(QMargins(6, 6, 6, 6))
-
-        series = QLineSeries()
-        series.setName("reported")
-        pen = QPen(QColor(COLORS["accent"]))
-        pen.setWidthF(1.8)
-        series.setPen(pen)
-        chart.addSeries(series)
-
-        # only ever populated while watching "velocity" - the numerically-
-        # differentiated cross-check against Present_Position, see update_telemetry()
-        computed_series = QLineSeries()
-        computed_series.setName("computed")
-        computed_pen = QPen(QColor(COLORS["warn"]))
-        computed_pen.setWidthF(1.8)
-        computed_pen.setStyle(Qt.DashLine)
-        computed_series.setPen(computed_pen)
-        chart.addSeries(computed_series)
 
         x_axis = QValueAxis()
         x_axis.setLabelFormat("%.1f")
@@ -341,45 +382,39 @@ class TelemetryPanel(QGroupBox):
         x_axis.setGridLineColor(border)
         x_axis.setLinePen(QPen(border))
         chart.addAxis(x_axis, Qt.AlignBottom)
-        series.attachAxis(x_axis)
-        computed_series.attachAxis(x_axis)
 
         y_axis = QValueAxis()
         y_axis.setLabelsColor(muted)
         y_axis.setGridLineColor(border)
         y_axis.setLinePen(QPen(border))
         chart.addAxis(y_axis, Qt.AlignLeft)
-        series.attachAxis(y_axis)
-        computed_series.attachAxis(y_axis)
 
-        return chart, series, computed_series, x_axis, y_axis
+        return chart, x_axis, y_axis
 
     def _refresh_chart(self) -> None:
-        joint, field = self.watched()
+        _, field = self.watched()
         _, unit = convert_telemetry(field, 0)
-        self.chart.setTitle(f"{joint}.{field} ({unit})" if unit else f"{joint}.{field}")
+        self.chart.setTitle(f"all joints · {field} ({unit})" if unit else f"all joints · {field}")
 
-        is_velocity = field == "velocity"
-        self.chart.legend().setVisible(is_velocity)
+        all_values = []
+        x_lo = 0.0
+        any_samples = False
+        for name, series in self.chart_series.items():
+            samples = self._graph_samples.get(name)
+            if not samples:
+                series.clear()
+                continue
+            any_samples = True
+            now = samples[-1][0]
+            points = [(t - now, v) for t, v in samples]  # x: seconds ago, 0 = latest
+            series.replace([QPointF(x, y) for x, y in points])
+            all_values.extend(v for _, v in points)
+            x_lo = min(x_lo, points[0][0])
 
-        if not self._samples:
-            self.chart_series.clear()
-            self.computed_series.clear()
+        if not any_samples:
+            self.chart_x_axis.setRange(-1.0, 0.0)
+            self.chart_y_axis.setRange(-1.0, 1.0)
             return
-
-        now = self._samples[-1][0]
-        points = [(t - now, v) for t, v in self._samples]  # x: seconds ago, 0 = latest
-        self.chart_series.replace([QPointF(x, y) for x, y in points])
-        all_values = [v for _, v in points]
-        x_lo = points[0][0]
-
-        if is_velocity and self._computed_samples:
-            comp_points = [(t - now, v) for t, v in self._computed_samples]
-            self.computed_series.replace([QPointF(x, y) for x, y in comp_points])
-            all_values += [v for _, v in comp_points]
-            x_lo = min(x_lo, comp_points[0][0])
-        else:
-            self.computed_series.clear()
 
         self.chart_x_axis.setRange(min(x_lo, -1.0), 0.0)
         y_lo, y_hi = min(all_values), max(all_values)
@@ -396,6 +431,7 @@ class TelemetryPanel(QGroupBox):
     def _reset_stats(self) -> None:
         self._samples.clear()
         self._computed_samples.clear()
+        self._graph_samples = {name: deque(maxlen=STATS_WINDOW) for name in self.joint_order}
         self._series_start = None
         self._prev_position = None
         self.stats_label.setText("no samples yet")
@@ -413,7 +449,7 @@ class TelemetryPanel(QGroupBox):
         self.log_path_label.setText(text)
 
     def update_telemetry(self, telemetry: dict[str, dict[str, int]]) -> None:
-        for row, name in enumerate(JOINT_ORDER):
+        for row, name in enumerate(self.joint_order):
             values = telemetry.get(name)
             if not values:
                 continue
@@ -424,15 +460,28 @@ class TelemetryPanel(QGroupBox):
                 self.table.item(row, col).setText(text)
 
         joint, field = self.watched()
+        if self._series_start is None:
+            self._series_start = time.monotonic()
+        sample_t = time.monotonic() - self._series_start
+
+        # Every joint's own sample for the Graph tab's all-joints overlay -
+        # independent of which single joint the stats line below is watching.
+        for name in self.joint_order:
+            joint_values = telemetry.get(name)
+            if not joint_values:
+                continue
+            raw = joint_values.get(field)
+            if raw is None:
+                continue
+            value, _ = convert_telemetry(field, raw)
+            self._graph_samples.setdefault(name, deque(maxlen=STATS_WINDOW)).append((sample_t, value))
+        self._refresh_chart()
+
         joint_telemetry = telemetry.get(joint, {})
         raw = joint_telemetry.get(field)
         if raw is None:
             return
         value, unit = convert_telemetry(field, raw)
-
-        if self._series_start is None:
-            self._series_start = time.monotonic()
-        sample_t = time.monotonic() - self._series_start
         self._samples.append((sample_t, value))
 
         computed_now = None
@@ -456,14 +505,16 @@ class TelemetryPanel(QGroupBox):
             )
             stats_text += f"   mean {comp_mean:.1f}   ratio(reported/computed) {ratio}"
         self.stats_label.setText(stats_text)
-        self._refresh_chart()
 
     def _update_computed_velocity(self, joint_telemetry: dict, sample_t: float) -> float | None:
         """Numerically differentiates the SAME joint's Present_Position (raw
         ticks, already-confirmed 360/4096 resolution) between this reading and
         the previous one - an independent, from-first-principles cross-check
         of the reported Present_Velocity value, using no assumption about
-        Present_Velocity's own units at all."""
+        Present_Velocity's own units at all. Text-only (in the stats line) -
+        deliberately not a second line on the shared Graph tab, since that
+        chart shows one line per JOINT for one field; doubling every joint's
+        line for this one diagnostic would just make it noisy."""
         pos_raw = joint_telemetry.get("position")
         if pos_raw is None:
             return None

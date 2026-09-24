@@ -13,6 +13,21 @@ COLORS = {
     "danger": "#d9534f",
 }
 
+# Categorical palette for "one line per joint on the same chart" (see
+# TelemetryPanel's Graph tab) - distinct enough from each other AND from the
+# semantic colors above at a glance, on this dark background. Seven entries
+# covers the largest joint_order this app knows about today (the B601-DM's
+# 6 arm joints + gripper); a robot with more joints just cycles the list.
+JOINT_LINE_COLORS = [
+    "#3b82c4",  # blue
+    "#e0824a",  # orange
+    "#4caf82",  # green
+    "#d9534f",  # red
+    "#a374d5",  # purple
+    "#2ec4c6",  # teal
+    "#d9a441",  # yellow
+]
+
 STYLE_SHEET = f"""
 QWidget {{
     background-color: {COLORS['bg']};

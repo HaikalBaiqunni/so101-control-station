@@ -496,6 +496,7 @@ class MainWindow(QMainWindow):
         self.current_positions = dict.fromkeys(profile.joint_order, 0.0)
         self.joint_deg_ranges = dict(profile.preview_ranges)
         self.joint_panel.rebuild(list(profile.joint_order), limits=profile.preview_ranges)
+        self.telemetry_panel.rebuild(profile.joint_order)
 
         # Auto-load this profile's twin - a customized path from a previous
         # session (if any) wins over the profile's own bundled default, so
@@ -521,6 +522,16 @@ class MainWindow(QMainWindow):
                 self._retire_worker(worker)
 
         self._apply_robot_hardware_gate()
+        # telemetry_panel.rebuild() above can change its minimum height (a
+        # different joint count means a different number of table rows) -
+        # confirmed directly: without this, switching to a robot with MORE
+        # joints then back to one with fewer left telemetry holding onto the
+        # extra room it grew into, since a QSplitter never proactively
+        # reclaims space from a child whose minimum shrank on its own. Unlike
+        # the startup call (see the singleShot in __init__), the window is
+        # already laid out for real by the time a profile switch can happen,
+        # so this can run synchronously instead of needing a deferral.
+        self._size_right_column()
         self.statusBar().showMessage(f"Robot: {profile.label}")
         self.session_logger.log_event(f"Robot profile changed to: {profile.label}")
 
