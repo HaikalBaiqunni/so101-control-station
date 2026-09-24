@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -120,16 +121,20 @@ class TeachingPanel(QGroupBox):
         self.status_label.setObjectName("sectionCaption")
         self.status_label.setWordWrap(True)
 
-        edit_row = QHBoxLayout()
-        edit_row.addWidget(self.record_btn)
-        edit_row.addWidget(self.record_grip_btn)
-        edit_row.addWidget(self.delete_btn)
-        edit_row.addWidget(self.up_btn)
-        edit_row.addWidget(self.down_btn)
+        # A grid, not one row of five: five buttons side by side need ~600px, far
+        # more than the control column has, which made the whole column scroll
+        # sideways and pushed the Jog panel's right-hand buttons off-screen.
+        edit_row = QGridLayout()
+        edit_row.addWidget(self.record_btn, 0, 0)
+        edit_row.addWidget(self.record_grip_btn, 0, 1)
+        edit_row.addWidget(self.up_btn, 1, 0)
+        edit_row.addWidget(self.down_btn, 1, 1)
+        edit_row.addWidget(self.delete_btn, 2, 0, 1, 2)
 
+        delay_label = QLabel("Delay after selected waypoint")
+        delay_label.setObjectName("sectionCaption")
         delay_row = QHBoxLayout()
-        delay_row.addWidget(QLabel("Delay after selected waypoint"))
-        delay_row.addWidget(self.delay_spin)
+        delay_row.addWidget(self.delay_spin, 1)
         delay_row.addWidget(self.set_delay_btn)
 
         play_row = QHBoxLayout()
@@ -149,6 +154,7 @@ class TeachingPanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addWidget(self.list_widget)
         layout.addLayout(edit_row)
+        layout.addWidget(delay_label)
         layout.addLayout(delay_row)
         layout.addLayout(play_row)
         layout.addLayout(speed_row)

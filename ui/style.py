@@ -146,12 +146,64 @@ QLabel#keycapLetter {{
     color: {COLORS['text']};
 }}
 QLabel#keycapJoint {{
-    font-size: 10px;
+    font-size: 9px;
     color: {COLORS['text_muted']};
     letter-spacing: 0.3px;
 }}
 QFrame#keycap[active="true"] QLabel#keycapLetter,
 QFrame#keycap[active="true"] QLabel#keycapJoint {{
     color: white;
+}}
+/* Jog panel: press-and-hold buttons and the Joint/World/Tool selector. */
+QPushButton#jogButton {{
+    background-color: {COLORS['bg']};
+    color: {COLORS['text']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 4px;
+    padding: 0;
+    font-size: 17px;
+    font-weight: 700;
+}}
+QPushButton#jogButton:hover {{ border-color: {COLORS['accent_hover']}; }}
+QPushButton#jogButton:pressed {{
+    background-color: {COLORS['accent']};
+    border-color: {COLORS['accent_hover']};
+    color: white;
+}}
+QPushButton#jogButton:disabled {{
+    background-color: {COLORS['panel']};
+    color: {COLORS['border']};
+}}
+/* An axis this arm can only partly produce from its current pose (a 5-DoF arm
+   always has at least one): still usable, but drawn so it reads as "limited". */
+QPushButton#jogButton[limited="true"] {{
+    color: {COLORS['warn']};
+    border: 1px dashed {COLORS['warn']};
+}}
+QPushButton#segButton {{
+    background-color: {COLORS['bg']};
+    color: {COLORS['text_muted']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 0;
+    padding: 6px 14px;
+    font-weight: 600;
+}}
+QPushButton#segButton:hover {{ color: {COLORS['text']}; }}
+QPushButton#segButton:checked {{
+    background-color: {COLORS['accent']};
+    border-color: {COLORS['accent_hover']};
+    color: white;
+}}
+QPushButton#segButton:disabled {{
+    color: {COLORS['border']};
+    background-color: {COLORS['panel']};
+}}
+QLabel#poseReadout {{
+    font-family: "Consolas", "Menlo", monospace;
+    color: {COLORS['text']};
+    background-color: {COLORS['bg']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 3px;
+    padding: 4px 8px;
 }}
 """

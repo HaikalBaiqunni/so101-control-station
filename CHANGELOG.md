@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **JAKA-style Jog panel** replaces the per-joint sliders on the Control tab.
+  - **Joint / World / Tool** modes with press-and-hold **−/+** buttons, a speed
+    setting (default 30 %), and *Continuous* or fixed-**Step** moves.
+  - **Cartesian jogging** — X/Y/Z and Rx/Ry/Rz in the **World** frame (fixed to
+    the base) or the **Tool** frame (turning with the gripper) — via the new
+    `core/kinematics.py`: MuJoCo forward kinematics and Jacobian on the twin's
+    own MJCF, resolved-rate damped least squares with damping only near
+    singularities, joint-limit sliding and a joint-speed cap. Live TCP pose
+    readout in the world frame.
+  - **Per-axis reachability**: a 5-joint SO-101 cannot make every direction, so
+    partly-reachable axes are drawn dashed with a tooltip instead of pretending.
+  - Typed entry in the joint rows now commits on Enter, not on every keystroke
+    (typing `120` used to command 1, then 12, then 120).
+- **Ghost arm** in the Digital Twin: a translucent copy at the target — the
+  waypoint being played, the target a jog is driving toward while the real arm
+  catches up, or the selected waypoint. Toggle: *Ghost*.
+- **World / Tool axis triads** drawn in the twin, the active jog frame thick and
+  the other faint. Toggle: *Axes*.
+- **Telemetry has its own tab** (**4 · Telemetry**), so the Control tab can give
+  the twin and camera the whole window.
+- `core/robot_profiles.py`: `arm_joints`, `tcp_site`, `tcp_body`, `tcp_offset`
+  per profile (which joints place the tool, and where the tool centre is).
+- 80+ new tests: kinematics (FK, Jacobian vs finite differences, frames, limits,
+  5-DoF reachability, the bundled 6-DoF reBot) and the jog panel/engine driven by
+  a fake clock.
+
 - **Multi-robot support: reBot B601-DM (Phase 1 — simulation).** A Robot
   selector above the tabs switches the app between SO-101 (Feetech) and the
   reBot B601-DM (Damiao CAN motors).
@@ -25,8 +51,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `DigitalTwin`/`TwinWorker` take joint names as a parameter instead of a
     hardcoded SO-101-only list.
 
+### Changed
+
+- The Control Source option **Manual (sliders)** is now **Manual (jog panel)**.
+- The left control column is wider (minimum 426 px, was 360) and the Teaching
+  and Keyboard-jog panels wrap to fit it. Together with the port dropdowns
+  below, this removes the horizontal scrollbar that hid the right-hand buttons
+  of every panel in the column.
+
 ### Fixed
 
+- **Port dropdowns forced the whole control column wider than its viewport.**
+  Since the descriptive port labels (`COM5 - USB-Enhanced-SERIAL CH343 (COM5)`)
+  a combo box sized itself to its longest entry, pushing the Refresh/Browse
+  buttons out of view. Port combos now have a small minimum width; the full text
+  stays in the popup and tooltip.
 - A `TwinWorker` startup race where `stop()` arriving while the twin's
   MuJoCo scene was still compiling could be silently overwritten the moment
   the render loop actually started, leaving the old worker running forever

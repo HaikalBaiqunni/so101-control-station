@@ -99,6 +99,26 @@ class TwinPanel(QGroupBox):
         self.hud_check.setChecked(True)
         self.hud_check.toggled.connect(lambda _: self._refresh_view())
 
+        # Overlays drawn INTO the render by the twin thread (see
+        # DigitalTwin._draw_ghost/_draw_frames). Ticked by default: they only
+        # appear when there is something to show (a target that differs from
+        # where the arm is, a jog frame to point out), so leaving them on costs
+        # nothing on a quiet screen.
+        self.ghost_check = QCheckBox("Ghost")
+        self.ghost_check.setChecked(True)
+        self.ghost_check.setToolTip(
+            "A translucent copy of the arm at where it is HEADING: the selected or\n"
+            "playing waypoint, or the target a jog is driving toward while the real\n"
+            "arm catches up."
+        )
+        self.axes_check = QCheckBox("Axes")
+        self.axes_check.setChecked(True)
+        self.axes_check.setToolTip(
+            "Draw the World axes at the base and the Tool axes at the gripper tip.\n"
+            "Red / green / blue = X / Y / Z. The frame the jog buttons act in is\n"
+            "drawn thick, the other faint."
+        )
+
         reset_view_btn = QPushButton("Reset View")
         reset_view_btn.setToolTip(
             "Left-drag to orbit, right-drag (or Shift+left-drag) to pan, "
@@ -162,6 +182,8 @@ class TwinPanel(QGroupBox):
         path_row.addWidget(browse_btn)
         path_row.addWidget(load_btn)
         path_row.addWidget(self.hud_check)
+        path_row.addWidget(self.ghost_check)
+        path_row.addWidget(self.axes_check)
         path_row.addWidget(reset_view_btn)
 
         layout = QVBoxLayout(self)
@@ -170,6 +192,12 @@ class TwinPanel(QGroupBox):
         # The view takes the leftover room now (with an Ignored policy it has
         # no opinion of its own about height), so nothing competes for it.
         layout.addWidget(self.view, 1)
+
+    def ghost_enabled(self) -> bool:
+        return self.ghost_check.isChecked()
+
+    def axes_enabled(self) -> bool:
+        return self.axes_check.isChecked()
 
     def _browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select MJCF scene", "", "MuJoCo XML (*.xml)")

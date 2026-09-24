@@ -13,21 +13,22 @@ live MuJoCo digital twin and servo telemetry.
 terminal tools, a calibration procedure driven by blocking `input()` prompts,
 and a full LeRobot + PyTorch install — before the arm has moved once. That is
 a lot of yak-shaving between a beginner and their first taste of physical AI.
-This app collapses it into three tabs you work through in order, with no
-`lerobot` dependency at all.
+This app collapses it into three tabs you work through in order (plus a fourth
+for monitoring), with no `lerobot` dependency at all.
 
 ![Control tab with the MuJoCo digital twin loaded, HUD overlay on, servo telemetry live](docs/screenshot_control.png)
 
 *Control tab, read left to right: narrow control column (connection, control
-source, joint sliders, teaching), Digital Twin as the centrepiece — with a
+source, jog panel, teaching), Digital Twin as the centrepiece — with a
 live telemetry HUD painted directly on the render and a mouse-orbitable
-camera — Camera feed beside it for comparison, Servo Telemetry underneath. No
-hardware connected in this shot; the pose and telemetry are simulated to show
-the layout.*
+camera — Camera feed beside it for comparison. No hardware connected in this
+shot; the pose and telemetry are simulated to show the layout. (This image
+predates the JAKA-style Jog panel and the separate Telemetry tab described
+below, so the left column and the bottom of the window look different now.)*
 
 ![Demo: driving the digital twin through a joint sweep while orbiting the camera, with the HUD and telemetry table updating live](docs/demo.gif)
 
-*The twin, HUD, joint sliders and telemetry table all reflect the same
+*The twin, HUD, joint values and telemetry table all reflect the same
 `current_positions`/telemetry state in real time — this is a scripted pose
 sweep for the demo, not a recording of real hardware, but it exercises the
 exact same code path a live arm drives through `RobotWorker`.*
@@ -67,7 +68,7 @@ each stage is actually for.
 
 ---
 
-## The three tabs, in the order you use them
+## The tabs, in the order you use them
 
 ### 1 · Setup — give each servo an ID
 
@@ -110,7 +111,7 @@ Works for either **Follower** or **Leader** role.
 **Four interchangeable control sources**, radio-selected so only one drives
 the arm at a time and inputs never fight:
 
-- **Manual** — joint sliders.
+- **Manual** — the **Jog panel**, JAKA-style (see below).
 - **Keyboard jog** — hold `Q`/`A`, `W`/`S`, `E`/`D`, `R`/`F`, `T`/`G`, `Y`/`H`;
   on-screen keycaps light up while held, multiple at once. Keys held when the
   window loses focus release automatically, so nothing runs away.
@@ -119,6 +120,52 @@ the arm at a time and inputs never fight:
   same as `lerobot-teleoperate`. The two are calibrated independently, so the
   relay maps by *fraction of each arm's own range* rather than raw degrees —
   "leader fully closed" always means "follower fully closed".
+
+#### The Jog panel — JAKA-style manual movement
+
+Pick a mode, then **hold a button** to move; let go and it stops.
+
+| Mode | The buttons move… |
+|---|---|
+| **Joint** | one joint at a time (J1…Jn), with a typed-entry box for an exact angle |
+| **World** | the tool centre point along **X / Y / Z** and about **Rx / Ry / Rz**, in directions fixed to the robot base |
+| **Tool** | the same six, but in the *gripper's own* frame — it turns with the arm, so **+Z is always "along the approach axis"** |
+
+- **Speed** (defaults to a deliberately slow 30 %) and **Step**: *Continuous*
+  moves while the button is held; a number makes each press one fixed move of
+  that many degrees (millimetres for X/Y/Z).
+- The X/Y/Z/Rx/Ry/Rz readout is the tool's pose **in the world frame**,
+  measured on the twin's model, whichever mode is active.
+- **Cartesian jogging is built on the twin's own MJCF** (MuJoCo Jacobian,
+  damped least squares), so it needs a twin loaded. Without one, World/Tool are
+  greyed out and Joint mode still works.
+- **A 5-joint arm cannot do every direction.** The SO-101 has five joints that
+  place the tool, so at any pose at least one of the six directions is only
+  partly reachable (typically pure sideways translation without also turning).
+  Those buttons are drawn **dashed** with a tooltip saying how much of the axis is
+  available; pressing one still does the best the arm can. The 6-joint reBot has
+  no such limit away from singularities.
+- Held against a joint limit, the arm slides along the workspace boundary
+  instead of stalling; near a singularity the speed is reduced and the panel
+  says so.
+
+**Ghost and Axes** (checkboxes above the twin):
+
+- **Ghost** — a translucent copy of the arm at where it is *heading*: the
+  waypoint playback is moving to, the target a jog is driving toward while the
+  real arm catches up, or whichever waypoint is selected in the list. It is
+  hidden whenever it would sit on top of the real arm.
+- **Axes** — the **World** triad at the base and the **Tool** triad on the
+  gripper tip (red / green / blue = X / Y / Z). The frame the jog buttons act
+  in is drawn thick, the other faint, so "which +X is this button?" is answered
+  by looking at the arrow it will follow.
+
+> **Cartesian distances are measured on the twin model.** The app maps each
+> joint through "fraction of its own calibrated range" onto the model (see
+> [docs/CALIBRATION.md](docs/CALIBRATION.md)), so if a real joint's calibrated
+> span differs from the model's, real-world distances scale with it. Joint
+> jogging is unaffected. Treat the mm readout as the twin's, and check the first
+> few Cartesian moves at low speed.
 
 Plus:
 
@@ -133,7 +180,7 @@ Plus:
 - **Camera panel** — any USB webcam via OpenCV, picked by *name* rather than a
   bare index. Handy for comparing the twin against the real arm side by side.
 - **Teaching (waypoints)** — record the current pose however it got there
-  (hand-guided with torque off, leader-driven, or slider-set), reorder, and
+  (hand-guided with torque off, leader-driven, or jog-set), reorder, and
   play the sequence back at a capped, quintic-eased speed. **Record Grip**
   records the gripper at its calibrated limit instead of the contact position,
   so a holding waypoint has real closing force behind it. Sequences save/load
@@ -158,14 +205,14 @@ underneath.
 ![reBot B601-DM selected: MuJoCo twin loaded, joint sliders driving a pan sweep and the gripper opening and closing](docs/rebot_b601_dm_demo.gif)
 
 *Switching the Robot selector swaps the Digital Twin's MJCF, rebuilds the
-Joint Control sliders for the new joint set, and greys out every panel that
-only makes sense with a real bus behind it — Joint Control and the twin
+Jog panel for the new joint set, and greys out every panel that
+only makes sense with a real bus behind it — the Jog panel and the twin
 itself work immediately, no hardware required.*
 
 **What works today:**
 
 - The **Digital Twin** loads the B601-DM's own MuJoCo model automatically
-  and follows the Joint Control sliders live — a full kinematic preview,
+  and follows the Jog panel live — a full kinematic preview,
   including the gripper's two-finger mimic joint (one motor drives both
   fingers, matching the real mechanism, reproduced here as a MuJoCo
   `<equality>` constraint since the URDF's own `<mimic>` tag doesn't survive

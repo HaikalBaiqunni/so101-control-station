@@ -17,6 +17,7 @@ import time
 from PySide6.QtCore import QThread, Signal
 
 from .digital_twin import JOINT_NAMES, DigitalTwin
+from .kinematics import TcpSpec
 
 RENDER_INTERVAL_S = 1 / 15  # visualization only - 15fps is plenty and leaves headroom
 
@@ -26,9 +27,26 @@ class TwinWorker(QThread):
     load_failed = Signal(str)
     neutral_pose_ready = Signal(object)  # one-off snapshot at all-joints-zero, see request_neutral_snapshot
 
-    def __init__(self, mjcf_path: str, joint_names: list[str] | None = None, parent=None):
+    def __init__(
+        self,
+        mjcf_path: str,
+        joint_names: list[str] | None = None,
+        tcp_spec: TcpSpec | None = None,
+        arm_joints: list[str] | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.mjcf_path = mjcf_path
+        # Only the gizmo needs these (see DigitalTwin) - None falls back to the
+        # twin's own guess, so a caller that doesn't care about the frame
+        # overlay is unaffected.
+        self.tcp_spec = tcp_spec
+        self.arm_joints = list(arm_joints) if arm_joints is not None else None
+        # Overlay state, written by the GUI thread and read by the render
+        # thread under _lock, like the pose itself. The ghost is a dict of
+        # 0..1 fractions or None; the frame is "world"/"tool"/None.
+        self._ghost_fractions: dict[str, float] | None = None
+        self._frame_overlay: str | None = None
         # Passed straight through to DigitalTwin - None keeps its own
         # SO-101 default, so every pre-existing caller is unaffected. See
         # core/robot_profiles.py for where a non-default list comes from.
@@ -56,6 +74,18 @@ class TwinWorker(QThread):
         for why this, and not raw degrees, is what the twin actually wants."""
         with self._lock:
             self._fractions = dict(fractions)
+
+    def set_ghost(self, fractions: dict[str, float] | None) -> None:
+        """Pose the translucent ghost arm (same 0..1 fractions as the real
+        pose), or None to hide it."""
+        with self._lock:
+            self._ghost_fractions = dict(fractions) if fractions else None
+
+    def set_frame_overlay(self, frame: str | None) -> None:
+        """Draw the World/Tool axis triads with `frame` emphasised, or None to
+        draw neither."""
+        with self._lock:
+            self._frame_overlay = frame
 
     def request_orbit(self, dx: float, dy: float) -> None:
         with self._lock:
@@ -87,7 +117,10 @@ class TwinWorker(QThread):
 
     def run(self) -> None:
         try:
-            twin = DigitalTwin(self.mjcf_path, joint_names=self.joint_names)
+            twin = DigitalTwin(
+                self.mjcf_path, joint_names=self.joint_names,
+                tcp_spec=self.tcp_spec, arm_joints=self.arm_joints,
+            )
         except Exception as exc:  # mujoco raises plain Exception/ValueError on bad XML
             self.load_failed.emit(str(exc))
             return
@@ -112,6 +145,8 @@ class TwinWorker(QThread):
                 self._camera_ops = []
                 reset_camera = self._reset_camera_requested
                 self._reset_camera_requested = False
+                ghost = self._ghost_fractions
+                frame_overlay = self._frame_overlay
 
             if reset_camera:
                 twin.reset_camera()
@@ -125,10 +160,15 @@ class TwinWorker(QThread):
 
             if neutral_requested:
                 twin.set_all_deg(dict.fromkeys(self.joint_names, 0.0))
-                self.neutral_pose_ready.emit(twin.render())
+                # overlays off: this image is the "park your arm like THIS"
+                # reference for calibration, and a ghost or axis arrows drawn
+                # on it would be mistaken for part of the target pose.
+                self.neutral_pose_ready.emit(twin.render(overlays=False))
                 continue  # skip this cycle's regular frame - next loop iteration resumes it
 
             twin.set_all_fractions(fractions)
+            twin.set_ghost_fractions(ghost)
+            twin.set_frame_overlay(frame_overlay)
             frame = twin.render()
             self.frame_ready.emit(frame)
             elapsed = time.perf_counter() - t0

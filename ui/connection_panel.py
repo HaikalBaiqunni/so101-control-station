@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from .setup_panel import describe_ports
+from .setup_panel import configure_port_combo, fill_port_combo
 
 
 class ConnectionPanel(QGroupBox):
@@ -24,6 +24,7 @@ class ConnectionPanel(QGroupBox):
 
         self.port_combo = QComboBox()
         self.port_combo.setEditable(True)
+        configure_port_combo(self.port_combo)
         self._refresh_ports()
 
         refresh_btn = QPushButton("Refresh")
@@ -63,8 +64,7 @@ class ConnectionPanel(QGroupBox):
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()
         self.port_combo.clear()
-        for device, label in describe_ports():
-            self.port_combo.addItem(label, device)
+        fill_port_combo(self.port_combo)
         if current:
             self.port_combo.setEditText(current)
 
