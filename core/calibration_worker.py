@@ -31,7 +31,10 @@ class CalibrationWorker(QThread):
         self.port = port
         self.joint_names = joint_names
         self._commands: queue.Queue = queue.Queue()
-        self._running = False
+        # See RobotWorker's own comment on _stop_requested (core/workers.py) -
+        # same fix, same reason: bus.connect() below can take long enough for
+        # a stop() to arrive before run() would otherwise clobber it.
+        self._stop_requested = False
         self._recording = False
         self.mins: dict[str, int] = {}
         self.maxes: dict[str, int] = {}
@@ -85,7 +88,7 @@ class CalibrationWorker(QThread):
         self._commands.put(("auto_calibrate_label", name, low_is))
 
     def stop(self) -> None:
-        self._running = False
+        self._stop_requested = True
 
     # -- worker thread body ---------------------------------------------------
     def run(self) -> None:
@@ -98,9 +101,8 @@ class CalibrationWorker(QThread):
             return
 
         self.connected.emit(True)
-        self._running = True
 
-        while self._running:
+        while not self._stop_requested:
             while True:
                 try:
                     cmd = self._commands.get_nowait()

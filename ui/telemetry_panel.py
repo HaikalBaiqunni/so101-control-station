@@ -56,7 +56,21 @@ DEG_PER_TICK = 360.0 / 4096.0  # same 12-bit encoder resolution as Present_Posit
 # Public rather than private because the CSV writer in ui/main_window.py logs
 # the converted value alongside the raw one, and a log whose numbers disagree
 # with the table they were read off would be worse than no log at all.
-def convert_telemetry(field: str, raw: int) -> tuple[float, str]:
+DM_UNITS = {"position": "deg", "velocity": "deg/s", "load": "N*m"}
+
+
+def convert_telemetry(field: str, raw: int, profile_key: str = "so101") -> tuple[float, str]:
+    if profile_key == "rebot_b601_dm":
+        # DamiaoBus.read_telemetry() (core/damiao_bus.py) already returns
+        # final physical values (degrees, deg/s, N*m off the motor's own
+        # torque estimate) - there's no Feetech-style raw-register decoding
+        # to apply here, this is a completely different motor family's
+        # protocol. It also doesn't report voltage/temperature/current at
+        # all (confirmed directly: dm_can.py has no RID or request frame for
+        # either) - those fields simply won't be present in the dict this is
+        # called with, handled upstream by update_telemetry's `raw is None`
+        # checks rather than by anything in here.
+        return float(raw), DM_UNITS.get(field, "")
     if field == "current":
         return raw * 6.5, "mA"
     if field == "voltage":
@@ -106,6 +120,7 @@ class TelemetryPanel(QGroupBox):
     def __init__(self, joint_order: tuple[str, ...] | None = None, parent=None):
         super().__init__("SERVO TELEMETRY", parent)
         self.joint_order: tuple[str, ...] = tuple(joint_order) if joint_order is not None else tuple(JOINT_ORDER)
+        self.profile_key: str = "so101"
 
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
@@ -289,12 +304,18 @@ class TelemetryPanel(QGroupBox):
         self.rebuild(self.joint_order)
 
     # ---------------------------------------------------------------- rebuild for a different robot
-    def rebuild(self, joint_order: tuple[str, ...]) -> None:
+    def rebuild(self, joint_order: tuple[str, ...], profile_key: str = "so101") -> None:
         """Replace every joint-dependent row/series/combo entry for
         `joint_order` - used when switching robot profile (see JointPanel's
         own rebuild, which this mirrors). Also called once from __init__ so
-        the constructor and a later profile switch share one code path."""
+        the constructor and a later profile switch share one code path.
+
+        `profile_key` picks which unit/scaling convention convert_telemetry()
+        applies - Feetech's raw-register decoding doesn't mean anything for a
+        completely different motor family's protocol (see that function's
+        own docstring)."""
         self.joint_order = tuple(joint_order)
+        self.profile_key = profile_key
 
         self.table.setRowCount(len(self.joint_order))
         for row, name in enumerate(self.joint_order):
@@ -393,7 +414,7 @@ class TelemetryPanel(QGroupBox):
 
     def _refresh_chart(self) -> None:
         _, field = self.watched()
-        _, unit = convert_telemetry(field, 0)
+        _, unit = convert_telemetry(field, 0, self.profile_key)
         self.chart.setTitle(f"all joints · {field} ({unit})" if unit else f"all joints · {field}")
 
         all_values = []
@@ -453,10 +474,18 @@ class TelemetryPanel(QGroupBox):
             values = telemetry.get(name)
             if not values:
                 continue
-            self.table.item(row, 1).setText(str(values.get("position", "-")))  # raw ticks, see convert_telemetry() docstring
+            # "Pos (ticks)" header is literally correct for Feetech (raw
+            # encoder ticks, see convert_telemetry()'s docstring on why it
+            # stays unconverted); for reBot B601-DM this is actually already
+            # degrees (DamiaoBus.read_telemetry() has no separate "ticks"
+            # concept) - a known cosmetic mismatch, not a wrong VALUE, not
+            # worth a per-profile column header for one number.
+            pos_raw = values.get("position", "-")
+            text = f"{pos_raw:.1f}" if isinstance(pos_raw, float) else str(pos_raw)
+            self.table.item(row, 1).setText(text)
             for col, key in enumerate(("velocity", "load", "current", "voltage", "temperature"), start=2):
                 raw = values.get(key)
-                text = "-" if raw is None else f"{convert_telemetry(key, raw)[0]:.1f}"
+                text = "-" if raw is None else f"{convert_telemetry(key, raw, self.profile_key)[0]:.1f}"
                 self.table.item(row, col).setText(text)
 
         joint, field = self.watched()
@@ -473,7 +502,7 @@ class TelemetryPanel(QGroupBox):
             raw = joint_values.get(field)
             if raw is None:
                 continue
-            value, _ = convert_telemetry(field, raw)
+            value, _ = convert_telemetry(field, raw, self.profile_key)
             self._graph_samples.setdefault(name, deque(maxlen=STATS_WINDOW)).append((sample_t, value))
         self._refresh_chart()
 
@@ -481,7 +510,7 @@ class TelemetryPanel(QGroupBox):
         raw = joint_telemetry.get(field)
         if raw is None:
             return
-        value, unit = convert_telemetry(field, raw)
+        value, unit = convert_telemetry(field, raw, self.profile_key)
         self._samples.append((sample_t, value))
 
         computed_now = None

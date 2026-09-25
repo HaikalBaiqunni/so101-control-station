@@ -46,7 +46,15 @@ class RobotWorker(QThread):
         self._goals_lock = threading.Lock()
         self._torque_commands: queue.Queue = queue.Queue()
         self._register_commands: queue.Queue = queue.Queue()
-        self._running = False
+        # A plain flag stop() sets and run()'s loop condition checks -
+        # deliberately never written back to False->True anywhere else. See
+        # stop()/run() below: connect()/load_calibration()/
+        # apply_homing_offsets() above can take long enough for a stop() to
+        # already have arrived by the time run() would otherwise reach an
+        # unconditional "start running" flag, silently clobbering it - the
+        # exact race found and fixed in TwinWorker and DmSetupWorker this
+        # session, reproduced here too on inspection.
+        self._stop_requested = False
         self.bus: ServoBus | None = None
 
     # -- thread-safe public API (call from GUI thread) ----------------------
@@ -72,7 +80,7 @@ class RobotWorker(QThread):
         self._register_commands.put((data_name, value, joint))
 
     def stop(self) -> None:
-        self._running = False
+        self._stop_requested = True
 
     # -- worker thread body ---------------------------------------------------
     def run(self) -> None:
@@ -98,10 +106,9 @@ class RobotWorker(QThread):
             self.error.emit(f"gripper config readback failed: {exc}")
 
         self.connection_changed.emit(True)
-        self._running = True
         cycle = 0
 
-        while self._running:
+        while not self._stop_requested:
             cycle += 1
             with self._goals_lock:
                 goals, self._pending_goals = self._pending_goals, {}
@@ -173,10 +180,13 @@ class CameraWorker(QThread):
         super().__init__(parent)
         self.index = index
         self.fps = fps
-        self._running = False
+        # See RobotWorker's own comment on _stop_requested - same fix, same
+        # reason (cv2.VideoCapture's open() can take long enough for stop()
+        # to arrive before run() would otherwise clobber it).
+        self._stop_requested = False
 
     def stop(self) -> None:
-        self._running = False
+        self._stop_requested = True
 
     def run(self) -> None:
         # On Windows, OpenCV's default backend (Media Foundation) can take
@@ -199,9 +209,8 @@ class CameraWorker(QThread):
             return
 
         self.started_ok.emit()
-        self._running = True
         period = 1.0 / max(self.fps, 1)
-        while self._running:
+        while not self._stop_requested:
             ok, frame_bgr = cap.read()
             if ok:
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -218,10 +227,13 @@ class GamepadWorker(QThread):
     def __init__(self, poll_hz: int = 30, parent=None):
         super().__init__(parent)
         self.poll_hz = poll_hz
-        self._running = False
+        # See RobotWorker's own comment on _stop_requested - same fix, same
+        # reason (pygame's joystick init can take long enough for stop() to
+        # arrive before run() would otherwise clobber it).
+        self._stop_requested = False
 
     def stop(self) -> None:
-        self._running = False
+        self._stop_requested = True
 
     def run(self) -> None:
         import pygame
@@ -237,9 +249,8 @@ class GamepadWorker(QThread):
         joy.init()
         prev_buttons = [0] * joy.get_numbuttons()
 
-        self._running = True
         period = 1.0 / max(self.poll_hz, 1)
-        while self._running:
+        while not self._stop_requested:
             pygame.event.pump()
             axes = {i: joy.get_axis(i) for i in range(joy.get_numaxes())}
             self.axes_updated.emit(axes)

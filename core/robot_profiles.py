@@ -6,13 +6,12 @@ what joints does its digital twin have, and where's its default MJCF?" -
 so it can be imported by ui/main_window.py without dragging in either
 hardware backend.
 
-reBot B601-DM support here is simulation/twin-only for now (see
-`hardware_available`). Its real motors are Damiao CAN devices over a custom
+reBot B601-DM real hardware control is now live (Phase 2, core/damiao_bus.py +
+core/dm_robot_worker.py). Its motors are Damiao CAN devices over a custom
 pyserial-framed protocol - a completely different transport from Feetech's
-serial register bus that `core/servo_bus.py` implements - and no per-joint
-CAN id mapping is documented anywhere in this project's resources yet (that
-has to come from Damiao's own PC tool first). Wiring real hardware control
-for it is deliberately a separate, later phase of work.
+serial register bus that `core/servo_bus.py` implements - addressed by the
+per-joint CAN id mapping the Setup tab's "1 - Setup" panel assigns and
+verifies (persisted in gui_settings.json's `dm_can_id_mapping`).
 """
 from __future__ import annotations
 
@@ -33,10 +32,12 @@ class RobotProfile:
                                     # exists, any hardware backend for this robot)
     default_mjcf_path: str    # absolute path, or "" if nothing bundled
     hardware_available: bool  # False = twin/preview only, no RobotWorker for it
-    # Only consulted when hardware_available is False - with a real bus
-    # connected, joint limits always come from ITS calibration instead (see
-    # MainWindow._load_joint_limits), so this is exactly the "no bus to ask"
-    # fallback that seeds the Joint Control sliders for a twin-only preview.
+    # For SO-101: only consulted when hardware_available is False - with a
+    # real Feetech bus connected, joint limits come from ITS calibration file
+    # instead (see MainWindow._load_joint_limits). For reBot B601-DM: this IS
+    # what a real connection uses too (Phase 2 deliberately has no separate
+    # Damiao calibration-file format yet - see core/damiao_bus.py's own
+    # docstring), so DamiaoBus.deg_limits() reads straight from here.
     # Taken from this MJCF's own compiled joint ranges (verified directly:
     # joint1 +-2.8 rad, joint2/3 -3.14..0, joint4 -1.87..1.57, joint5 +-1.57,
     # joint6 +-3.14, converted to degrees here since JointRow's slider/spin
@@ -88,14 +89,14 @@ PROFILES: dict[str, RobotProfile] = {
     ),
     "rebot_b601_dm": RobotProfile(
         key="rebot_b601_dm",
-        label="reBot B601-DM (simulation only)",
+        label="reBot B601-DM (Damiao)",
         # Matches models/rebot_b601_dm/rebot_b601_dm.xml exactly: joint1..6
         # (arm) + finger_left (the gripper's one actual actuator - its
         # "finger_right" is a mimic follower driven by an <equality> in that
         # MJCF, not something this app ever needs to command directly).
         joint_order=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "finger_left"),
         default_mjcf_path=os.path.join(_MODELS_DIR, "rebot_b601_dm", "rebot_b601_dm.xml"),
-        hardware_available=False,
+        hardware_available=True,
         arm_joints=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"),
         # This MJCF has no <site>. Its gripper fingers hang off link6 at
         # z = 0.15539 (finger_left_link's pos in the model), which is the tool

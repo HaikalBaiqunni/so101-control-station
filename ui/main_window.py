@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.calibration_worker import CalibrationWorker
+from core.dm_can import Control_Type
+from core.dm_robot_worker import DmRobotWorker
 from core.dm_setup_worker import DmSetupWorker
 from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
 from core.robot_profiles import (
@@ -274,6 +276,12 @@ class MainWindow(QMainWindow):
         self.calibration_worker: CalibrationWorker | None = None
         self.setup_worker: SetupWorker | None = None
         self.dm_setup_worker: DmSetupWorker | None = None
+        # Which physical Damiao arm the Setup tab's DmSetupPanel currently
+        # targets - "follower" (the B601-DM itself) or "leader" (a second,
+        # separately-wired Damiao arm used for teleop). Only changes which
+        # gui_settings.json key its CAN-id mapping reads/saves from - the
+        # probe/assign/verify workflow itself doesn't care.
+        self._dm_setup_role: str = "follower"
         self.camera_worker: CameraWorker | None = None
         self.gamepad_worker: GamepadWorker | None = None
         self.twin_worker: TwinWorker | None = None
@@ -417,7 +425,22 @@ class MainWindow(QMainWindow):
         self.dm_setup_panel.disconnect_requested.connect(self._on_dm_setup_disconnect)
         self.dm_setup_panel.probe_requested.connect(self._on_dm_setup_probe)
         self.dm_setup_panel.assign_requested.connect(self._on_dm_setup_assign)
+        self.dm_setup_panel.enable_requested.connect(self._on_dm_setup_enable)
+        self.dm_setup_panel.disable_requested.connect(self._on_dm_setup_disable)
+        self.dm_setup_panel.read_pid_requested.connect(self._on_dm_setup_read_pid)
+        self.dm_setup_panel.write_pid_requested.connect(self._on_dm_setup_write_pid)
+        self.dm_setup_panel.set_zero_requested.connect(self._on_dm_setup_set_zero)
+        self.dm_setup_panel.verify_all_requested.connect(self._on_dm_setup_verify_all)
+        self.dm_setup_panel.role_changed.connect(self._on_dm_setup_role_changed)
+        self.dm_setup_panel.control_mode_changed.connect(self._on_dm_setup_control_mode_changed)
+        self.dm_setup_panel.mit_gains_changed.connect(self._on_dm_setup_mit_gains_changed)
         self.dm_setup_panel.set_mapping(self._load_settings().get("dm_can_id_mapping", {}))
+        self.dm_setup_panel.set_control_mode(self._load_settings().get("dm_control_mode", "pos_vel"))
+        saved_mit_gains = self._load_settings().get("dm_mit_gains", {})
+        if saved_mit_gains:
+            self.dm_setup_panel.set_mit_gains(
+                {name: tuple(gains) for name, gains in saved_mit_gains.items()}
+            )
 
         # -- wiring: calibration -------------------------------------------------
         self.calibration_panel.connect_requested.connect(self._on_calibration_connect)
@@ -488,19 +511,22 @@ class MainWindow(QMainWindow):
         self.robot_profile = profile
         self._save_setting("robot_profile", key)
 
-        if not profile.hardware_available:
-            # Nothing should be left talking to real hardware behind a
-            # disabled Connection/Torque/Telemetry panel - disconnecting
-            # explicitly rather than just disabling the widgets keeps the
-            # app's actual state consistent with what it visually shows.
-            if self.robot_worker:
-                self._on_disconnect()
-            if self.leader_worker:
-                self._on_leader_disconnect()
-            if self.calibration_worker:
-                self._on_calibration_disconnect()
-            if self.setup_worker:
-                self._on_setup_disconnect()
+        # Any real hardware connection belonged to the PREVIOUS robot -
+        # unconditional on every profile switch now, not just when moving to
+        # a profile with no hardware backend at all. That conditional used
+        # to be correct when only SO-101 had hardware_available=True, but
+        # once reBot B601-DM does too (Phase 2), switching SO-101 -> reBot
+        # B601-DM must ALSO tear down a stale RobotWorker/CalibrationWorker -
+        # otherwise it would keep talking to the wrong bus for the wrong arm
+        # instead of being disconnected the way the panel visually shows.
+        if self.robot_worker:
+            self._on_disconnect()
+        if self.leader_worker:
+            self._on_leader_disconnect()
+        if self.calibration_worker:
+            self._on_calibration_disconnect()
+        if self.setup_worker:
+            self._on_setup_disconnect()
         if key != "rebot_b601_dm" and self.dm_setup_worker:
             # Mirrors the block above but keyed on the SPECIFIC profile
             # rather than hardware_available - DM setup is the one thing
@@ -519,7 +545,7 @@ class MainWindow(QMainWindow):
         self.current_positions = dict.fromkeys(profile.joint_order, 0.0)
         self.joint_deg_ranges = dict(profile.preview_ranges)
         self.joint_panel.rebuild(list(profile.joint_order), limits=profile.preview_ranges)
-        self.telemetry_panel.rebuild(profile.joint_order)
+        self.telemetry_panel.rebuild(profile.joint_order, profile.key)
 
         # Anything mid-jog belonged to the previous robot, and so does its
         # kinematic model. A robot with no hardware backend can only ever be
@@ -561,8 +587,7 @@ class MainWindow(QMainWindow):
 
     def _apply_robot_hardware_gate(self) -> None:
         """Grey out every panel that only makes sense with a real bus behind
-        it, for a robot this app has no hardware backend for yet (Phase 1:
-        reBot B601-DM is twin/preview-only - see core/robot_profiles.py).
+        it, for a robot this app has no hardware backend for yet.
         Joint Control, the Digital Twin and the Camera panel stay enabled:
         sliders already only reach hardware through
         `if self.robot_worker: ...` guards, so with no worker ever
@@ -570,11 +595,18 @@ class MainWindow(QMainWindow):
         the camera is robot-agnostic regardless.
 
         Setup is its own case, deliberately NOT gated by hardware_available:
-        CAN id assignment for the B601-DM's Damiao motors genuinely works
-        today (see core/dm_setup_worker.py) even though driving the arm
-        doesn't yet - so "1 - Setup" swaps to a whole different, fully
-        enabled panel for this profile instead of being greyed out with
-        everything else."""
+        CAN id assignment for the B601-DM's Damiao motors (core/dm_setup_worker.py)
+        is a distinct concern from driving the arm, so "1 - Setup" swaps to a
+        whole different, always-enabled panel for this profile rather than
+        following the same flag as Connection/Torque/etc.
+
+        Calibration is ALSO its own case, now that reBot B601-DM has real
+        hardware_available=True too (Phase 2): Feetech's multi-step homing/
+        range-sweep process (core/calibration_worker.py, role combo,
+        per-servo homing offsets) has no Damiao equivalent this phase - see
+        core/robot_profiles.py's docstring on preview_ranges - so it stays
+        disabled specifically for this robot regardless of hardware_available,
+        instead of showing a form shaped for the wrong motor family."""
         available = self.robot_profile.hardware_available
         note = "" if available else f"Not available for {self.robot_profile.label} yet."
         for panel in (
@@ -584,10 +616,20 @@ class MainWindow(QMainWindow):
             self.gamepad_panel,
             self.keyboard_jog_panel,
             self.telemetry_panel,
-            self.calibration_panel,
         ):
             panel.setEnabled(available)
             panel.setToolTip(note)
+
+        if self.robot_profile.key == "rebot_b601_dm":
+            self.calibration_panel.setEnabled(False)
+            self.calibration_panel.setToolTip(
+                "Not available for reBot B601-DM - it uses preview_ranges "
+                "(core/robot_profiles.py) directly, plus Set Zero on the "
+                "Setup tab, instead of Feetech-style multi-step calibration."
+            )
+        else:
+            self.calibration_panel.setEnabled(available)
+            self.calibration_panel.setToolTip(note)
 
         if self.robot_profile.key == "rebot_b601_dm":
             self.setup_stack.setCurrentWidget(self.dm_setup_panel)
@@ -615,6 +657,11 @@ class MainWindow(QMainWindow):
         if not port:
             QMessageBox.warning(self, "No port", "Pick a serial port first.")
             return
+
+        if self.robot_profile.key == "rebot_b601_dm":
+            self._on_dm_connect_real(port)
+            return
+
         if not calibration_path:
             QMessageBox.warning(
                 self, "No calibration",
@@ -643,6 +690,89 @@ class MainWindow(QMainWindow):
         self.robot_worker.error.connect(self._on_robot_error)
         self.robot_worker.connection_changed.connect(self._on_connection_changed)
         self.robot_worker.start()
+
+    def _on_dm_connect_real(self, port: str) -> None:
+        """reBot B601-DM's real-hardware connect path - deliberately separate
+        from the Feetech one above rather than threading DamiaoBus-specific
+        branches through it, since the two robots' safety preconditions
+        genuinely differ (a calibration FILE for one, a complete CAN id
+        mapping for the other) rather than being the same check in disguise."""
+        if self.dm_setup_worker:
+            QMessageBox.warning(
+                self, "Port already in use",
+                "The Setup tab is holding the serial port - disconnect there first.",
+            )
+            return
+        mapping = self._load_settings().get("dm_can_id_mapping", {})
+        missing = [name for name in self.robot_profile.joint_order if name not in mapping]
+        if missing:
+            QMessageBox.warning(
+                self, "Motors not fully assigned",
+                "Every joint needs its CAN id assigned and verified on the Setup "
+                f"tab before connecting here - missing: {', '.join(missing)}.",
+            )
+            return
+        id_master_by_joint = {
+            name: (mapping[name]["can_id"], mapping[name]["master_id"])
+            for name in self.robot_profile.joint_order
+        }
+
+        settings = self._load_settings()
+        control_mode = Control_Type.MIT if settings.get("dm_control_mode") == "mit" else Control_Type.POS_VEL
+        mit_gains = {
+            name: tuple(gains) for name, gains in settings.get("dm_mit_gains", {}).items()
+        }
+
+        self.session_logger.log_event(
+            f"Follower (Damiao): connecting on {port}, control mode {control_mode.name}"
+        )
+        self.robot_worker = DmRobotWorker(
+            port,
+            id_master_by_joint,
+            dict(self.robot_profile.preview_ranges),
+            control_mode=control_mode,
+            mit_gains=mit_gains,
+        )
+        self.robot_worker.positions_updated.connect(self._on_positions_updated)
+        self.robot_worker.telemetry_updated.connect(self._on_telemetry_updated)
+        self.robot_worker.error.connect(self._on_robot_error)
+        self.robot_worker.connection_changed.connect(self._on_connection_changed)
+        self.robot_worker.start()
+
+    def _on_dm_leader_connect(self, port: str) -> None:
+        """Leader-arm connect for a Damiao-based teleop arm (e.g. a 7-DOF
+        Fashion Star leader wired identically to the B601-DM follower) -
+        mirrors _on_dm_connect_real but reads the LEADER's own CAN id mapping
+        and always connects in POS_VEL: the leader is forced torque-off right
+        after connect (see _on_leader_connection_changed), so its control mode
+        never actually drives anything and doesn't need to match the
+        follower's tuned MIT gains."""
+        if self.dm_setup_worker:
+            QMessageBox.warning(
+                self, "Port already in use",
+                "The Setup tab is holding the serial port - disconnect there first.",
+            )
+            return
+        mapping = self._load_settings().get("dm_can_id_mapping_leader", {})
+        missing = [name for name in self.robot_profile.joint_order if name not in mapping]
+        if missing:
+            QMessageBox.warning(
+                self, "Leader motors not fully assigned",
+                "Every leader joint needs its CAN id assigned and verified on the "
+                f"Setup tab (role: Leader) before connecting - missing: {', '.join(missing)}.",
+            )
+            return
+        id_master_by_joint = {
+            name: (mapping[name]["can_id"], mapping[name]["master_id"])
+            for name in self.robot_profile.joint_order
+        }
+
+        self.session_logger.log_event(f"Leader (Damiao): connecting on {port}")
+        self.leader_worker = DmRobotWorker(port, id_master_by_joint, dict(self.robot_profile.preview_ranges))
+        self.leader_worker.positions_updated.connect(self._on_leader_positions)
+        self.leader_worker.error.connect(self._on_robot_error)
+        self.leader_worker.connection_changed.connect(self._on_leader_connection_changed)
+        self.leader_worker.start()
 
     def _on_disconnect(self) -> None:
         # Never QThread.wait() here: on a flaky/settling USB connection, a
@@ -678,7 +808,11 @@ class MainWindow(QMainWindow):
         if not self.robot_worker or not self.robot_worker.bus:
             return
         bus = self.robot_worker.bus
-        for name in JOINT_ORDER:
+        # This robot's OWN joints, not always SO-101's six - DamiaoBus.
+        # deg_limits() reads straight from RobotProfile.preview_ranges (see
+        # its own docstring), ServoBus.deg_limits() from a loaded calibration
+        # file; either way this loop doesn't need to know which.
+        for name in self.robot_profile.joint_order:
             lo, hi = bus.deg_limits(name)
             self.joint_panel.set_limits(name, lo, hi)
             self.joint_deg_ranges[name] = (lo, hi)
@@ -745,7 +879,15 @@ class MainWindow(QMainWindow):
         self.jog_panel.set_input_enabled(manual)
 
     def _on_leader_connect(self, port: str, calibration_path: str) -> None:
-        if not port or not calibration_path:
+        if not port:
+            QMessageBox.warning(self, "No port", "Pick a serial port first.")
+            return
+
+        if self.robot_profile.key == "rebot_b601_dm":
+            self._on_dm_leader_connect(port)
+            return
+
+        if not calibration_path:
             QMessageBox.warning(self, "Missing info", "Leader needs both a port and a calibration file.")
             return
         self.session_logger.log_event(f"Leader: connecting on {port} (calibration: {calibration_path})")
@@ -772,7 +914,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Leader connected on {self.leader_worker.port}")
             self.session_logger.log_event(f"Leader: connected on {self.leader_worker.port}")
             if self.leader_worker.bus:
-                for name in JOINT_ORDER:
+                for name in self.robot_profile.joint_order:
                     self.leader_deg_ranges[name] = self.leader_worker.bus.deg_limits(name)
                 self.leader_open_directions = self._open_directions(self.leader_worker.bus)
             self._log_gripper_relay_decision()
@@ -780,7 +922,7 @@ class MainWindow(QMainWindow):
             # if the follower isn't already providing them - follower's own
             # calibration is what actually matters once both are connected.
             if not self.robot_worker and self.leader_worker.bus:
-                for name in JOINT_ORDER:
+                for name in self.robot_profile.joint_order:
                     self.joint_deg_ranges[name] = self.leader_worker.bus.deg_limits(name)
         else:
             self.session_logger.log_event("Leader: disconnected")
@@ -1470,6 +1612,18 @@ class MainWindow(QMainWindow):
         self.dm_setup_worker.error.connect(self._on_dm_setup_error)
         self.dm_setup_worker.probe_result.connect(self.dm_setup_panel.set_probe_result)
         self.dm_setup_worker.id_assigned.connect(self._on_dm_id_assigned)
+        self.dm_setup_worker.enabled_changed.connect(self._on_dm_enabled_changed)
+        self.dm_setup_worker.pid_result.connect(self.dm_setup_panel.set_pid_result)
+        self.dm_setup_worker.pid_written.connect(
+            lambda: self.statusBar().showMessage("DM setup: PID gains saved")
+        )
+        self.dm_setup_worker.zero_set.connect(
+            lambda: self.statusBar().showMessage("DM setup: zero position saved")
+        )
+        self.dm_setup_worker.verify_result.connect(self.dm_setup_panel.set_verify_result)
+        self.dm_setup_worker.verify_done.connect(
+            lambda: self.statusBar().showMessage("DM setup: verify all done")
+        )
         self.dm_setup_worker.start()
 
     def _on_dm_setup_disconnect(self) -> None:
@@ -1492,13 +1646,74 @@ class MainWindow(QMainWindow):
         if self.dm_setup_worker:
             self.dm_setup_worker.request_assign(current_id, new_id, new_master_id)
 
+    def _dm_mapping_settings_key(self) -> str:
+        return "dm_can_id_mapping" if self._dm_setup_role == "follower" else "dm_can_id_mapping_leader"
+
+    def _on_dm_setup_role_changed(self, role: str) -> None:
+        self._dm_setup_role = role
+        key = self._dm_mapping_settings_key()
+        self.dm_setup_panel.set_mapping(self._load_settings().get(key, {}))
+        self.session_logger.log_event(f"DM setup: switched to {role} role")
+
+    def _on_dm_setup_control_mode_changed(self, mode: str) -> None:
+        self._save_setting("dm_control_mode", mode)
+        self.session_logger.log_event(f"DM setup: follower control mode set to {mode}")
+
+    def _on_dm_setup_mit_gains_changed(self, gains: dict[str, tuple[float, float]]) -> None:
+        self._save_setting("dm_mit_gains", {name: list(pair) for name, pair in gains.items()})
+
     def _on_dm_id_assigned(self, current_id: int, new_id: int, new_master_id: int) -> None:
         joint = self.dm_setup_panel.target_combo.currentText()
-        mapping = dict(self._load_settings().get("dm_can_id_mapping", {}))
+        key = self._dm_mapping_settings_key()
+        mapping = dict(self._load_settings().get(key, {}))
         mapping[joint] = {"can_id": new_id, "master_id": new_master_id}
-        self._save_setting("dm_can_id_mapping", mapping)
+        self._save_setting(key, mapping)
         self.dm_setup_panel.set_mapping(mapping)
+        # The motor now answers at new_id, not the current_id the panel
+        # probed it at - confirmed a real gap here without this: Enable/PID
+        # right after Assign (no re-probe in between) would still address
+        # the OLD id, which for every joint except the one whose old and
+        # new id happen to coincide no longer has anything answering there.
+        # set_probe_result() also resets the PID fields/write-lock, which is
+        # correct too - any values read at the OLD address aren't this
+        # motor's current ones to trust.
+        self.dm_setup_panel.set_probe_result(True, new_id)
         self.session_logger.log_event(f"DM setup: {joint} id {current_id:#04x} -> {new_id:#04x}")
+
+    def _on_dm_setup_enable(self, motor_id: int) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_enable(motor_id)
+
+    def _on_dm_setup_set_zero(self, motor_id: int) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_set_zero(motor_id)
+            self.session_logger.log_event(f"DM setup: set zero for motor {motor_id:#04x}")
+
+    def _on_dm_setup_verify_all(self, id_by_joint: dict[str, int]) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_verify_all(id_by_joint)
+            self.session_logger.log_event(f"DM setup: verifying {len(id_by_joint)} motor(s)")
+
+    def _on_dm_setup_disable(self, motor_id: int) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_disable(motor_id)
+
+    def _on_dm_enabled_changed(self, enabled: bool) -> None:
+        self.session_logger.log_event(f"DM setup: motor {'enabled' if enabled else 'disabled'}")
+
+    def _on_dm_setup_read_pid(self, motor_id: int) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_read_pid(motor_id)
+
+    def _on_dm_setup_write_pid(
+        self, motor_id: int, kp_asr: float, ki_asr: float, kp_apr: float, ki_apr: float
+    ) -> None:
+        if self.dm_setup_worker:
+            self.dm_setup_worker.request_write_pid(motor_id, kp_asr, ki_asr, kp_apr, ki_apr)
+            self.session_logger.log_event(
+                f"DM setup: wrote PID for motor {motor_id:#04x} "
+                f"(KP_ASR={kp_asr}, KI_ASR={ki_asr}, KP_APR={kp_apr}, KI_APR={ki_apr})"
+            )
 
     # ---------------------------------------------------------------- calibration tab
     def _on_calibration_connect(self, port: str) -> None:
@@ -1732,14 +1947,24 @@ class MainWindow(QMainWindow):
         self.twin_panel.update_telemetry(self._build_hud_telemetry(telemetry))
         if self._telemetry_csv_writer:
             stamp = time.time()
+            profile_key = self.robot_profile.key
             for joint, values in telemetry.items():
-                row = [
-                    f"{stamp:.3f}", joint,
-                    values["position"], f"{self._raw_to_deg(joint, values['position']):.2f}",
-                ]
+                # _raw_to_deg assumes a Feetech raw tick (bus.calibration
+                # holds the mid-point to convert around) - DamiaoBus's
+                # "position" is already degrees (see its own read_telemetry
+                # docstring), so there's no separate raw/degrees pair to log
+                # for it, just the one number in both columns.
+                position_deg = (
+                    values["position"] if profile_key != "so101"
+                    else self._raw_to_deg(joint, values["position"])
+                )
+                row = [f"{stamp:.3f}", joint, values["position"], f"{position_deg:.2f}"]
                 for field in TELEMETRY_CSV_FIELDS:
-                    raw = values[field]
-                    row += [raw, f"{convert_telemetry(field, raw)[0]:.3f}"]
+                    raw = values.get(field)
+                    if raw is None:
+                        row += ["", ""]  # not reported by this profile's bus - see convert_telemetry
+                    else:
+                        row += [raw, f"{convert_telemetry(field, raw, profile_key)[0]:.3f}"]
                 self._telemetry_csv_writer.writerow(row)
 
     def _build_hud_telemetry(self, telemetry: dict) -> dict[str, dict[str, float]]:
@@ -1750,15 +1975,25 @@ class MainWindow(QMainWindow):
         (the same already-calibrated degrees the rest of the app uses, see
         _raw_to_deg/JointPanel) rather than convert_telemetry's raw-tick
         passthrough, since "calibrated degrees" is what a human reads on a
-        HUD, not ticks."""
+        HUD, not ticks.
+
+        Only includes whichever of load/temperature/current the current
+        profile's bus actually reports (TwinPanel.update_telemetry already
+        tolerates a value being absent) - reBot B601-DM's DamiaoBus has no
+        temperature/current reading at all (confirmed directly this session:
+        no RID, no request frame for either), so inventing a 0 for those
+        would read as "measured zero", not "not available"."""
+        profile_key = self.robot_profile.key
         hud: dict[str, dict[str, float]] = {}
         for joint, values in telemetry.items():
-            hud[joint] = {
-                "position_deg": self.current_positions.get(joint, 0.0),
-                "load": convert_telemetry("load", values["load"])[0],
-                "temperature": convert_telemetry("temperature", values["temperature"])[0],
-                "current_mA": convert_telemetry("current", values["current"])[0],
-            }
+            entry = {"position_deg": self.current_positions.get(joint, 0.0)}
+            if "load" in values:
+                entry["load"] = convert_telemetry("load", values["load"], profile_key)[0]
+            if "temperature" in values:
+                entry["temperature"] = convert_telemetry("temperature", values["temperature"], profile_key)[0]
+            if "current" in values:
+                entry["current_mA"] = convert_telemetry("current", values["current"], profile_key)[0]
+            hud[joint] = entry
         return hud
 
     def _on_telemetry_log_toggled(self, enabled: bool) -> None:
@@ -1782,6 +2017,13 @@ class MainWindow(QMainWindow):
             self._telemetry_csv = None
 
     def _on_register_write_requested(self, data_name: str, value: int, joint: str) -> None:
+        if self.robot_profile.key != "so101":
+            # Torque_Limit/Dead_Zone are Feetech register addresses - DmRobotWorker
+            # has no request_register_write at all (Damiao's equivalent concepts,
+            # if any, aren't wired up this phase). Refusing here instead of
+            # letting it raise AttributeError partway through.
+            self.statusBar().showMessage(f"{data_name} isn't supported for {self.robot_profile.label}")
+            return
         if not self.robot_worker:
             QMessageBox.warning(self, "Not connected", "Connect the follower before writing servo registers.")
             return
