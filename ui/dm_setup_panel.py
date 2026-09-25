@@ -81,7 +81,10 @@ class DmSetupPanel(QWidget):
         probe_warning = QLabel(
             "Plug in exactly ONE motor for this step - Damiao motors usually "
             "ship at the same factory default id, so with several connected "
-            "a probe cannot tell them apart."
+            "a probe cannot tell them apart. NO HOT-PLUGGING: cut power "
+            "before connecting/disconnecting the XT30 2+2 interface, per "
+            "Seeed's own reBot B601-DM safety instructions - unlike "
+            "Feetech's servos, this connector is not rated for it."
         )
         probe_warning.setObjectName("sectionCaption")
         probe_warning.setWordWrap(True)
@@ -195,17 +198,19 @@ class DmSetupPanel(QWidget):
             QMessageBox.warning(self, "Not a valid id", f"{label} must be a hex number, e.g. 01.")
             return None
 
-    def _next_free_id(self) -> int:
-        used = {entry["can_id"] for entry in self._mapping.values()}
-        candidate = 1
-        while candidate in used:
-            candidate += 1
-        return candidate
-
     def _suggest_ids(self) -> None:
         joint = self.target_combo.currentText()
         existing = self._mapping.get(joint)
-        new_id = existing["can_id"] if existing else self._next_free_id()
+        if existing:
+            new_id = existing["can_id"]
+        else:
+            # Seeed's own published scheme for this exact robot (reBot
+            # B601-DM Quick Start wiki): CAN id = the motor's 1-based
+            # position in the arm (motors 1-3 are J4340P at 0x01-0x03,
+            # motors 4-7 are J4310 at 0x04-0x07) - joint_order here is
+            # already in that same physical order (joint1..joint6,
+            # finger_left), so this is a direct index lookup, not a guess.
+            new_id = self.joint_order.index(joint) + 1
         self.new_id_edit.setText(f"{new_id:02x}")
         self.new_master_edit.setText(f"{(new_id + 0x10):02x}")
 
