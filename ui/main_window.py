@@ -31,6 +31,7 @@ from core.calibration_worker import CalibrationWorker
 from core.dm_can import Control_Type
 from core.dm_robot_worker import DmRobotWorker
 from core.dm_setup_worker import DmSetupWorker
+from core.fashionstar_leader_worker import FashionStarLeaderWorker
 from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
 from core.robot_profiles import (
     DEFAULT_PROFILE_KEY,
@@ -49,7 +50,9 @@ from .calibration_panel import CalibrationPanel
 from .camera_panel import CameraPanel
 from .connection_panel import ConnectionPanel
 from .control_source_panel import ControlSourcePanel
+from .dm_gripper_calibration_dialog import DmGripperCalibrationDialog
 from .dm_setup_panel import DmSetupPanel
+from .fashionstar_calibration_dialog import FashionStarCalibrationDialog
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .jog_panel import JogPanel
 from .joint_panel import JointPanel
@@ -228,13 +231,22 @@ class MainWindow(QMainWindow):
         self.setup_stack.addWidget(self.dm_setup_panel)
         self.calibration_panel = CalibrationPanel()
 
+        # Confirmed a real gap here on real hardware: unlike the Control
+        # tab's left column (left_scroll above), this tab was never wrapped
+        # in a QScrollArea - DmSetupPanel's own content (7 CAN-id rows plus,
+        # since Phase 2.5, a 7-row MIT kp/kd grid) can exceed the window's
+        # visible height with no way to reach the rest, just silent clipping.
+        setup_scroll = QScrollArea()
+        setup_scroll.setWidget(self.setup_stack)
+        setup_scroll.setWidgetResizable(True)
+
         # Tabs are ordered and numbered by the order they must actually be
         # done in, not by how often an experienced user reaches for them:
         # a servo with no id can't be calibrated, and an uncalibrated arm
         # can't be jogged. Landing a first-time user on "Control" is what
         # made this confusing in the first place.
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.setup_stack, "1 - Setup")
+        self.tabs.addTab(setup_scroll, "1 - Setup")
         self.tabs.addTab(self.calibration_panel, "2 - Calibration")
         self.tabs.addTab(control_tab, "3 - Control")
         # Monitoring, not operating: it has its own tab so the Control tab can give
@@ -272,16 +284,16 @@ class MainWindow(QMainWindow):
             self._load_settings().get("robot_profile", DEFAULT_PROFILE_KEY)
         )
         self.robot_worker: RobotWorker | None = None
+        # Nothing tracked this before a real incident showed it was needed:
+        # ui/dm_gripper_calibration_dialog.py refuses to run while torque is
+        # on (the motor would fight the hand, measuring nothing real), and
+        # this is the only place that state exists - _on_torque is the sole
+        # writer, matching request_torque's own fire-and-forget shape.
+        self.follower_torque_enabled: bool = False
         self.leader_worker: RobotWorker | None = None
         self.calibration_worker: CalibrationWorker | None = None
         self.setup_worker: SetupWorker | None = None
         self.dm_setup_worker: DmSetupWorker | None = None
-        # Which physical Damiao arm the Setup tab's DmSetupPanel currently
-        # targets - "follower" (the B601-DM itself) or "leader" (a second,
-        # separately-wired Damiao arm used for teleop). Only changes which
-        # gui_settings.json key its CAN-id mapping reads/saves from - the
-        # probe/assign/verify workflow itself doesn't care.
-        self._dm_setup_role: str = "follower"
         self.camera_worker: CameraWorker | None = None
         self.gamepad_worker: GamepadWorker | None = None
         self.twin_worker: TwinWorker | None = None
@@ -371,6 +383,7 @@ class MainWindow(QMainWindow):
         self.connection_panel.connect_requested.connect(self._on_connect)
         self.connection_panel.disconnect_requested.connect(self._on_disconnect)
         self.connection_panel.torque_requested.connect(self._on_torque)
+        self.connection_panel.calibrate_gripper_requested.connect(self._on_dm_gripper_calibrate_requested)
         self.jog_panel.goal_changed.connect(self._on_goal_changed)
         self.jog_panel.jog_pressed.connect(self._on_jog_pressed)
         self.jog_panel.jog_released.connect(self._on_jog_released)
@@ -384,6 +397,7 @@ class MainWindow(QMainWindow):
         self.control_source_panel.relay_trim_changed.connect(self._on_relay_trim_changed)
         self.control_source_panel.leader_connect_requested.connect(self._on_leader_connect)
         self.control_source_panel.leader_disconnect_requested.connect(self._on_leader_disconnect)
+        self.control_source_panel.leader_calibrate_requested.connect(self._on_leader_calibrate_requested)
 
         # -- wiring: camera --------------------------------------------------
         self.camera_panel.start_requested.connect(self._on_camera_start)
@@ -431,7 +445,6 @@ class MainWindow(QMainWindow):
         self.dm_setup_panel.write_pid_requested.connect(self._on_dm_setup_write_pid)
         self.dm_setup_panel.set_zero_requested.connect(self._on_dm_setup_set_zero)
         self.dm_setup_panel.verify_all_requested.connect(self._on_dm_setup_verify_all)
-        self.dm_setup_panel.role_changed.connect(self._on_dm_setup_role_changed)
         self.dm_setup_panel.control_mode_changed.connect(self._on_dm_setup_control_mode_changed)
         self.dm_setup_panel.mit_gains_changed.connect(self._on_dm_setup_mit_gains_changed)
         self.dm_setup_panel.set_mapping(self._load_settings().get("dm_can_id_mapping", {}))
@@ -638,6 +651,8 @@ class MainWindow(QMainWindow):
             self.setup_panel.setEnabled(available)
             self.setup_panel.setToolTip(note)
 
+        self.connection_panel.set_gripper_calibration_visible(self.robot_profile.key == "rebot_b601_dm")
+
     # ---------------------------------------------------------------- shutdown helper
     def _retire_worker(self, worker) -> None:
         """Stop a QThread worker without blocking the GUI thread and without
@@ -722,6 +737,15 @@ class MainWindow(QMainWindow):
         mit_gains = {
             name: tuple(gains) for name, gains in settings.get("dm_mit_gains", {}).items()
         }
+        # Assumed defaults, overridden per-joint by anything actually
+        # measured via "Calibrate gripper range..." - added after a real
+        # incident where preview_ranges["finger_left"]'s ASSUMED range let
+        # write_goals_deg clamp toward a position past this unit's true
+        # mechanical stop, stalling the motor until a fuse blew.
+        ranges_deg = dict(self.robot_profile.preview_ranges)
+        ranges_deg.update(
+            {name: tuple(span) for name, span in settings.get("dm_follower_calibrated_ranges", {}).items()}
+        )
 
         self.session_logger.log_event(
             f"Follower (Damiao): connecting on {port}, control mode {control_mode.name}"
@@ -729,7 +753,7 @@ class MainWindow(QMainWindow):
         self.robot_worker = DmRobotWorker(
             port,
             id_master_by_joint,
-            dict(self.robot_profile.preview_ranges),
+            ranges_deg,
             control_mode=control_mode,
             mit_gains=mit_gains,
         )
@@ -739,40 +763,79 @@ class MainWindow(QMainWindow):
         self.robot_worker.connection_changed.connect(self._on_connection_changed)
         self.robot_worker.start()
 
-    def _on_dm_leader_connect(self, port: str) -> None:
-        """Leader-arm connect for a Damiao-based teleop arm (e.g. a 7-DOF
-        Fashion Star leader wired identically to the B601-DM follower) -
-        mirrors _on_dm_connect_real but reads the LEADER's own CAN id mapping
-        and always connects in POS_VEL: the leader is forced torque-off right
-        after connect (see _on_leader_connection_changed), so its control mode
-        never actually drives anything and doesn't need to match the
-        follower's tuned MIT gains."""
-        if self.dm_setup_worker:
-            QMessageBox.warning(
-                self, "Port already in use",
-                "The Setup tab is holding the serial port - disconnect there first.",
-            )
-            return
-        mapping = self._load_settings().get("dm_can_id_mapping_leader", {})
-        missing = [name for name in self.robot_profile.joint_order if name not in mapping]
-        if missing:
-            QMessageBox.warning(
-                self, "Leader motors not fully assigned",
-                "Every leader joint needs its CAN id assigned and verified on the "
-                f"Setup tab (role: Leader) before connecting - missing: {', '.join(missing)}.",
-            )
-            return
-        id_master_by_joint = {
-            name: (mapping[name]["can_id"], mapping[name]["master_id"])
-            for name in self.robot_profile.joint_order
-        }
+    def _on_fashionstar_leader_connect(self, port: str) -> None:
+        """Leader-arm connect for the B601-DM's real leader - Seeed's Star Arm
+        102 (FashionStar UART smart servos, core/fashionstar_bus.py) - a
+        completely different bus/protocol from the follower's Damiao CAN.
+        Confirmed directly this session (real hardware bring-up) after an
+        earlier, wrong assumption that this leader was Damiao-based too.
 
-        self.session_logger.log_event(f"Leader (Damiao): connecting on {port}")
-        self.leader_worker = DmRobotWorker(port, id_master_by_joint, dict(self.robot_profile.preview_ranges))
+        No calibration file or CAN-id mapping needed from the GUI's side: the
+        servo's own zero point lives in its flash after a one-time
+        `lerobot-calibrate`-style set_origin_point() call, which this leader
+        already has.
+
+        native_ranges_deg (per-joint measured span, FashionStar-name keyed)
+        comes from the "Calibrate leader..." dialog if it's ever been run
+        (ui/fashionstar_calibration_dialog.py) - falls back to
+        core/fashionstar_bus.py's hardcoded (confirmed-imperfect) defaults
+        for any joint not yet swept."""
+        settings = self._load_settings()
+        native_ranges = {
+            name: tuple(span)
+            for name, span in settings.get("fashionstar_leader_native_ranges", {}).items()
+        }
+        self.session_logger.log_event(f"Leader (FashionStar): connecting on {port}")
+        self.leader_worker = FashionStarLeaderWorker(
+            port, dict(self.robot_profile.preview_ranges), native_ranges
+        )
         self.leader_worker.positions_updated.connect(self._on_leader_positions)
         self.leader_worker.error.connect(self._on_robot_error)
         self.leader_worker.connection_changed.connect(self._on_leader_connection_changed)
         self.leader_worker.start()
+
+    def _on_leader_calibrate_requested(self) -> None:
+        if not isinstance(self.leader_worker, FashionStarLeaderWorker):
+            QMessageBox.information(
+                self, "Not applicable",
+                "Leader calibration is only for the reBot B601-DM's Star Arm 102 "
+                "leader - connect it first (Leader arm, FashionStar over USB).",
+            )
+            return
+        dialog = FashionStarCalibrationDialog(self.leader_worker, self)
+        dialog.exec()
+        if dialog.saved_native_ranges:
+            self._save_setting(
+                "fashionstar_leader_native_ranges",
+                {name: list(span) for name, span in dialog.saved_native_ranges.items()},
+            )
+            self.statusBar().showMessage(
+                "Leader joint ranges saved - reconnect the leader to apply them."
+            )
+            self.session_logger.log_event(
+                f"Leader (FashionStar): saved calibrated ranges for {len(dialog.saved_native_ranges)} joint(s)"
+            )
+
+    def _on_dm_gripper_calibrate_requested(self) -> None:
+        if self.robot_profile.key != "rebot_b601_dm" or self.robot_worker is None:
+            QMessageBox.information(
+                self, "Not applicable",
+                "Gripper calibration is only for the reBot B601-DM follower - "
+                "connect it first (Connection panel, Control tab).",
+            )
+            return
+        dialog = DmGripperCalibrationDialog(self.robot_worker, self.follower_torque_enabled, self)
+        dialog.exec()
+        if dialog.saved_range:
+            saved = dict(self._load_settings().get("dm_follower_calibrated_ranges", {}))
+            saved["finger_left"] = list(dialog.saved_range)
+            self._save_setting("dm_follower_calibrated_ranges", saved)
+            self.statusBar().showMessage(
+                "Gripper range saved - reconnect the follower to apply it."
+            )
+            self.session_logger.log_event(
+                f"Follower (Damiao): saved calibrated gripper range {dialog.saved_range}"
+            )
 
     def _on_disconnect(self) -> None:
         # Never QThread.wait() here: on a flaky/settling USB connection, a
@@ -835,6 +898,7 @@ class MainWindow(QMainWindow):
         if self.robot_worker:
             self.robot_worker.request_torque(enabled)
             self.session_logger.log_event(f"Follower: torque {'ENABLED' if enabled else 'disabled'}")
+        self.follower_torque_enabled = enabled
 
     def _on_positions_updated(self, positions: dict[str, float]) -> None:
         """Cheap on purpose - just a dict merge. Runs at the robot worker's
@@ -884,7 +948,7 @@ class MainWindow(QMainWindow):
             return
 
         if self.robot_profile.key == "rebot_b601_dm":
-            self._on_dm_leader_connect(port)
+            self._on_fashionstar_leader_connect(port)
             return
 
         if not calibration_path:
@@ -936,13 +1000,21 @@ class MainWindow(QMainWindow):
         physically. This handler's only job then is to relay goals, as
         cheaply as possible. If there's no follower connected yet, fall back
         to showing the leader's own pose so the twin/sliders still preview
-        something."""
+        something.
+
+        Either way, every value is routed through _leader_deg_to_follower_deg
+        first - confirmed a real gap here doing leader-only bring-up without
+        a follower connected: the preview branch used to show RAW leader
+        degrees untouched, silently skipping the gripper invert override,
+        edge-snap and relay trim entirely, so what the preview showed didn't
+        match what teleoperating would actually send once a follower joined."""
         self.session_logger.log_positions("leader", positions)  # internally throttled to 2Hz
+        converted = {name: self._leader_deg_to_follower_deg(name, degrees) for name, degrees in positions.items()}
         if self.control_source == "leader" and self.robot_worker and self._playback_index is None:
-            for name, degrees in positions.items():
-                self.robot_worker.request_goal(name, self._leader_deg_to_follower_deg(name, degrees))
+            for name, degrees in converted.items():
+                self.robot_worker.request_goal(name, degrees)
         else:
-            self.current_positions.update(positions)
+            self.current_positions.update(converted)
 
     # Fraction-remap alone still leaves the gripper joint short of true
     # full-open/full-close in practice: the leader's jaw handle (the
@@ -955,16 +1027,16 @@ class MainWindow(QMainWindow):
     # as far as it goes" reliably means fully closed on the follower even if
     # the hand doesn't hit the exact calibrated endpoint.
     #
-    # ONLY for the joints listed in EDGE_SNAP_JOINTS below - a rigid joint
-    # (shoulder/elbow/wrist) has no "mushy end" problem to correct for, and
-    # snapping it would instead be a hazard: the moment the leader arm drifts
-    # into the outer band of ITS OWN calibrated range (easy after any
-    # recalibration shifts that range even slightly), the follower would
-    # suddenly jump straight to its hard mechanical limit instead of tracking
-    # the leader smoothly - which is exactly what "tiba-tiba ga terkendali"
-    # was: this snap firing on a joint it was never meant to apply to.
+    # ONLY for the gripper joint (see _leader_deg_to_follower_deg's own
+    # check) - a rigid joint (shoulder/elbow/wrist) has no "mushy end"
+    # problem to correct for, and snapping it would instead be a hazard: the
+    # moment the leader arm drifts into the outer band of ITS OWN calibrated
+    # range (easy after any recalibration shifts that range even slightly),
+    # the follower would suddenly jump straight to its hard mechanical limit
+    # instead of tracking the leader smoothly - which is exactly what "tiba-
+    # tiba ga terkendali" was: this snap firing on a joint it was never meant
+    # to apply to.
     LEADER_EDGE_SNAP_FRACTION = 0.06
-    EDGE_SNAP_JOINTS = {"gripper"}
 
     # Last-resort manual override, normally empty. "range_min"/"range_max"
     # cannot say WHICH end is physically closed - that depends on the pose
@@ -1096,7 +1168,14 @@ class MainWindow(QMainWindow):
             flipped = name in self.INVERTED_LEADER_JOINTS
         else:
             flipped = leader_dir != follower_dir
-        if name == "gripper" and self.gripper_invert_override:
+        # "gripper" for SO-101, "finger_left" for reBot B601-DM - whichever
+        # joint the current profile treats as the one actual gripper actuator
+        # (profile_arm_joints/RobotProfile.arm_joints both exclude it, so
+        # joint_order[-1] reliably names it for either profile). Confirmed a
+        # real gap here on real B601-DM leader hardware: this used to check
+        # the literal string "gripper" only, so the invert checkbox silently
+        # never did anything for this robot at all.
+        if name == self.robot_profile.joint_order[-1] and self.gripper_invert_override:
             flipped = not flipped
         return flipped
 
@@ -1118,7 +1197,11 @@ class MainWindow(QMainWindow):
         fraction = (leader_degrees - leader_lo) / (leader_hi - leader_lo)
         if self._relay_direction_flipped(name):
             fraction = 1.0 - fraction
-        if name in self.EDGE_SNAP_JOINTS:
+        # Same joint-name generalization as _relay_direction_flipped - the
+        # gripper is whichever joint is last in the current profile's
+        # joint_order ("gripper" for SO-101, "finger_left" for B601-DM), not
+        # always the literal string "gripper".
+        if name == self.robot_profile.joint_order[-1]:
             if fraction < self.LEADER_EDGE_SNAP_FRACTION:
                 fraction = 0.0
             elif fraction > 1.0 - self.LEADER_EDGE_SNAP_FRACTION:
@@ -1480,11 +1563,23 @@ class MainWindow(QMainWindow):
         `positions` defaults to the live pose; pass any other {joint: degrees}
         (a waypoint, a jog target) to get the same mapping for it."""
         fractions = {}
+        gripper_name = self.robot_profile.joint_order[-1] if self.robot_profile.joint_order else None
         for name, degrees in (self.current_positions if positions is None else positions).items():
             lo, hi = self.joint_deg_ranges.get(name, (-180.0, 180.0))
             if hi <= lo:
                 continue
-            fractions[name] = (degrees - lo) / (hi - lo)
+            fraction = (degrees - lo) / (hi - lo)
+            # A calibration sweep only ever records numeric min/max - it has
+            # no way to know which physical extreme is open vs closed, so
+            # this fraction has a 50/50 chance of landing backwards against
+            # the twin MJCF's own convention for that joint. Confirmed wrong
+            # specifically for this profile's real gripper on real hardware
+            # (see RobotProfile.twin_gripper_fraction_inverted's own
+            # comment) - flipping it here affects only what the TWIN draws,
+            # never real hardware control.
+            if name == gripper_name and self.robot_profile.twin_gripper_fraction_inverted:
+                fraction = 1.0 - fraction
+            fractions[name] = fraction
         return fractions
 
     # ---------------------------------------------------------------- digital twin
@@ -1646,28 +1741,24 @@ class MainWindow(QMainWindow):
         if self.dm_setup_worker:
             self.dm_setup_worker.request_assign(current_id, new_id, new_master_id)
 
-    def _dm_mapping_settings_key(self) -> str:
-        return "dm_can_id_mapping" if self._dm_setup_role == "follower" else "dm_can_id_mapping_leader"
-
-    def _on_dm_setup_role_changed(self, role: str) -> None:
-        self._dm_setup_role = role
-        key = self._dm_mapping_settings_key()
-        self.dm_setup_panel.set_mapping(self._load_settings().get(key, {}))
-        self.session_logger.log_event(f"DM setup: switched to {role} role")
-
     def _on_dm_setup_control_mode_changed(self, mode: str) -> None:
         self._save_setting("dm_control_mode", mode)
         self.session_logger.log_event(f"DM setup: follower control mode set to {mode}")
 
     def _on_dm_setup_mit_gains_changed(self, gains: dict[str, tuple[float, float]]) -> None:
         self._save_setting("dm_mit_gains", {name: list(pair) for name, pair in gains.items()})
+        # Live retune, not just "takes effect on next Connect" - a connected
+        # follower already in MIT mode picks up new kp/kd on its very next
+        # motion command, no disconnect/reconnect (and no torque cycling)
+        # needed. Harmless no-op if not connected or not a Damiao worker.
+        if isinstance(self.robot_worker, DmRobotWorker):
+            self.robot_worker.request_mit_gains(gains)
 
     def _on_dm_id_assigned(self, current_id: int, new_id: int, new_master_id: int) -> None:
         joint = self.dm_setup_panel.target_combo.currentText()
-        key = self._dm_mapping_settings_key()
-        mapping = dict(self._load_settings().get(key, {}))
+        mapping = dict(self._load_settings().get("dm_can_id_mapping", {}))
         mapping[joint] = {"can_id": new_id, "master_id": new_master_id}
-        self._save_setting(key, mapping)
+        self._save_setting("dm_can_id_mapping", mapping)
         self.dm_setup_panel.set_mapping(mapping)
         # The motor now answers at new_id, not the current_id the panel
         # probed it at - confirmed a real gap here without this: Enable/PID

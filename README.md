@@ -195,42 +195,75 @@ Plus:
 
 ---
 
-## Multi-robot support: reBot B601-DM (Phase 1 — simulation)
+## Multi-robot support: reBot B601-DM (Damiao) — real hardware control
 
 A **Robot** selector sits above the tabs and switches the whole app between
 the SO-101 (Feetech) and a second arm, the **reBot B601-DM** (Damiao CAN
 motors) — same GUI, same Digital Twin, entirely different hardware
-underneath.
+underneath, and (unlike the leader/follower pairing above) genuinely
+**two different buses, protocols and vendor toolchains** end to end.
 
-![reBot B601-DM selected: MuJoCo twin loaded, joint sliders driving a pan sweep and the gripper opening and closing](docs/rebot_b601_dm_demo.gif)
+![reBot B601-DM digital twin performing a pick-and-place style reach, gripper close, carry and release, with the ghost overlay showing the segment it's easing toward and the camera slowly orbiting](docs/rebot_b601_dm_demo.gif)
 
 *Switching the Robot selector swaps the Digital Twin's MJCF, rebuilds the
-Jog panel for the new joint set, and greys out every panel that
-only makes sense with a real bus behind it — the Jog panel and the twin
-itself work immediately, no hardware required.*
+Jog panel for the new joint set, and reconfigures Setup for Damiao's own
+CAN-id workflow. This GIF drives the twin through a scripted pose sequence
+(not a recording of real hardware) to show the ghost overlay and Cartesian
+reach clearly; the same rendering path is what a live B601-DM drives through
+on real hardware.*
 
-**What works today:**
+**Follower — driving the arm:**
 
-- The **Digital Twin** loads the B601-DM's own MuJoCo model automatically
-  and follows the Jog panel live — a full kinematic preview,
-  including the gripper's two-finger mimic joint (one motor drives both
-  fingers, matching the real mechanism, reproduced here as a MuJoCo
-  `<equality>` constraint since the URDF's own `<mimic>` tag doesn't survive
-  MuJoCo's importer).
-- **1 · Setup** swaps to a dedicated **CAN id assignment** panel for the
+- **1 · Setup** has a dedicated **CAN id assignment** panel for the
   B601-DM's Damiao motors — connect one motor at a time over the same
-  USB-serial adapter Damiao's own configuration tool uses, probe it, give it
-  a unique id + master id, saved to flash. Same one-motor-at-a-time
-  reasoning as the Feetech Setup tab: every Damiao motor ships answering to
-  the same factory default id, so several on one bus can't be addressed
-  individually until each has its own.
+  USB-serial adapter Damiao's own DM_Tools uses, probe it, give it a unique
+  id + master id, saved to flash, then **Verify All** confirms every motor
+  answers correctly with the whole arm wired up at once. Every Damiao motor
+  ships answering to the same factory default id, so several on one bus
+  can't be addressed individually until each has its own — same reasoning
+  as the Feetech Setup tab, different protocol underneath.
+- **3 · Control** drives the real motors: Connect, Torque on/off (seeded
+  with the motor's own current measured position before arming, so
+  re-enabling holds still instead of lurching), Joint **and** Cartesian
+  (World/Tool) jogging — the same kinematics/jog engine the SO-101 uses,
+  working here for free because the Damiao worker exposes the identical
+  `request_goal`/`request_torque` interface.
+- **Two motion-control modes**, selectable on the Setup tab: **POS_VEL**
+  (the safe default — the motor's own onboard position/velocity loop) and
+  **MIT** (per-command stiffness/damping, `kp`/`kd`, sent fresh with every
+  target — more responsive and inherently compliant, the mode most
+  teleoperation setups actually use, at the cost of needing those gains
+  tuned live on real hardware rather than trusting a default). MIT gains
+  edited while already connected retune the arm **immediately** — no
+  disconnect/reconnect, and no torque cycling, needed per tweak.
+- **A calibration dialog for the follower's gripper specifically**
+  (`Calibrate gripper range…`, Connection panel) — sweeps the real jaw's
+  true open/closed travel by hand with torque off, replacing an assumed
+  default that (confirmed on real hardware) let a held jog command the
+  motor past its actual mechanical stop, stalling it until a fuse blew.
+  Torque-off, hand-driven, and refuses to run at all while torque is on.
 
-**What's Phase 2 (not yet implemented):** real hardware control — actually
-driving the Damiao CAN motors. Connection, Torque, Control Source,
-Telemetry and Calibration all stay disabled for this profile until that
-lands; Joint Control only ever drives the twin preview here, it never
-reaches a real bus. Phase 2 needs the per-joint CAN id mapping from the
-Setup panel above as its starting point.
+**Leader — teleoperating it:** the B601-DM's matched leader is Seeed's
+**Star Arm 102**, a *completely different* device from the follower — UART
+FashionStar smart servos (`motorbridge-smart-servo`), not Damiao CAN at all.
+Confirmed directly against real hardware this session (after an earlier,
+wrong assumption that it was Damiao-based too):
+
+- Connects over its own USB-serial port, no calibration file needed — its
+  zero point lives in the servo's own flash after a one-time
+  `set_origin_point()` (equivalent to `lerobot-calibrate`'s own step for
+  this leader).
+- **`Calibrate leader…`** sweeps every joint's real range by hand — the
+  leader's *own* vendor defaults turned out to be wrong for the real unit
+  (confirmed by direct measurement: up to ~1.75× off for `wrist_roll`),
+  since even LeRobot's own official calibration CLI never actually measures
+  this, it just copies its own unverified constants into the calibration
+  file.
+- Relayed to the follower by *fraction of each arm's own calibrated range*,
+  the same reconciliation idea the SO-101 leader/follower pairing already
+  used — plus a **gripper-direction invert checkbox** for the one thing a
+  swept range can never say on its own (which physical extreme is open vs.
+  closed).
 
 ---
 
@@ -259,9 +292,13 @@ understand:
   its **5 V power supply** (USB powers the adapter, not the servos — this is
   the single most common "my arm is dead" cause)
 - Optional: a MuJoCo MJCF model for the twin, a USB webcam, a gamepad
+- For the reBot B601-DM: a USB-to-CAN adapter for the Damiao follower motors,
+  and (for teleoperation) Seeed's Star Arm 102 leader over its own
+  USB-serial port — both need the WCH **CH340** driver on Windows if nothing
+  else has installed it already.
 
-Installs `PySide6`, `feetech-servo-sdk`, `pyserial`, `opencv-python`, `mujoco`,
-`numpy`, `pygame`. **No PyTorch, no `lerobot`.**
+Installs `PySide6`, `feetech-servo-sdk`, `pyserial`, `motorbridge-smart-servo`,
+`opencv-python`, `mujoco`, `numpy`, `pygame`. **No PyTorch, no `lerobot`.**
 
 ---
 
@@ -316,11 +353,21 @@ if that's where you're headed — it'll happily read the files saved here.
   shown.
 - **Servo id/baudrate writes are EEPROM writes.** They're bracketed and
   verified, but they are permanent until changed again.
-- **reBot B601-DM support is simulation-only (Phase 1).** The Digital Twin
-  and CAN id assignment work today; real Damiao motor control (position,
-  torque, telemetry) is Phase 2 and not implemented yet — see
-  [Multi-robot support](#multi-robot-support-rebot-b601-dm-phase-1--simulation)
+- **reBot B601-DM's MIT control mode needs per-arm gain tuning.** Its
+  default `kp`/`kd` are deliberately very gentle (won't hold a loaded joint
+  against gravity out of the box) rather than guessed aggressive — see
+  [Multi-robot support](#multi-robot-support-rebot-b601-dm-damiao--real-hardware-control)
   above.
+- **The Damiao motor library (`core/dm_can.py`) has no software
+  stall/current protection.** POS_VEL's onboard loop will keep applying
+  torque toward a commanded position even if it's mechanically unreachable
+  (confirmed directly: this is what blew a follower's fuse before the
+  gripper calibration dialog existed) — an external fuse sized to the motor
+  is the actual safety net, not this app.
+- **Joints 1–3's real motor model (Seeed's "J4340P") has no exact match**
+  in `dm_can.py`'s `DM_Motor_Type` table — `DM4340` is used as the closest
+  available proxy for MIT-mode torque/velocity scaling, flagged in code as
+  unverified against a real datasheet.
 
 ---
 

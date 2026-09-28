@@ -18,6 +18,7 @@ class ConnectionPanel(QGroupBox):
     connect_requested = Signal(str, str)     # (port, calibration_path)
     disconnect_requested = Signal()
     torque_requested = Signal(bool)          # True = enable, False = disable
+    calibrate_gripper_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__("CONNECTION", parent)
@@ -47,6 +48,16 @@ class ConnectionPanel(QGroupBox):
         self.status_label = QLabel("DISCONNECTED")
         self.status_label.setObjectName("statusDanger")
 
+        # Only meaningful for the reBot B601-DM follower (Damiao motors) -
+        # hidden by default, shown only for that profile
+        # (set_gripper_calibration_visible). Added directly after a real
+        # incident: RobotProfile.preview_ranges' assumed gripper range didn't
+        # match this unit's true mechanical travel, and held-down jogging
+        # past the real stop stalled the motor until a fuse blew.
+        self.calibrate_gripper_btn = QPushButton("Calibrate gripper range...")
+        self.calibrate_gripper_btn.setVisible(False)
+        self.calibrate_gripper_btn.clicked.connect(self.calibrate_gripper_requested)
+
         self.set_connected(False)
 
         layout = QGridLayout(self)
@@ -60,6 +71,10 @@ class ConnectionPanel(QGroupBox):
         layout.addWidget(self.status_label, 2, 2)
         layout.addWidget(self.torque_on_btn, 3, 0)
         layout.addWidget(self.torque_off_btn, 3, 1)
+        layout.addWidget(self.calibrate_gripper_btn, 4, 0, 1, 3)
+
+    def set_gripper_calibration_visible(self, visible: bool) -> None:
+        self.calibrate_gripper_btn.setVisible(visible)
 
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()

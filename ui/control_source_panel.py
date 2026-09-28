@@ -34,6 +34,7 @@ class ControlSourcePanel(QGroupBox):
     source_changed = Signal(str)  # one of SOURCES
     leader_connect_requested = Signal(str, str)   # port, calibration_path
     leader_disconnect_requested = Signal()
+    leader_calibrate_requested = Signal()
     gripper_invert_toggled = Signal(bool)
     relay_trim_changed = Signal(str, float)   # joint, degrees
 
@@ -71,6 +72,17 @@ class ControlSourcePanel(QGroupBox):
         self.leader_status = QLabel("leader disconnected")
         self.leader_status.setObjectName("statusDanger")
 
+        # Only meaningful for a FashionStar leader (reBot B601-DM's Star Arm
+        # 102) - core/fashionstar_bus.py's hardcoded default joint ranges
+        # were confirmed wrong on real hardware, so this sweeps the real
+        # per-joint span instead of trusting them. Enabled only while the
+        # leader is actually connected (set_leader_connected) since it taps
+        # that connection's own live position stream rather than opening a
+        # second one.
+        self.leader_calibrate_btn = QPushButton("Calibrate leader...")
+        self.leader_calibrate_btn.setEnabled(False)
+        self.leader_calibrate_btn.clicked.connect(self.leader_calibrate_requested)
+
         form_layout = QGridLayout(self.leader_form)
         form_layout.setContentsMargins(20, 4, 0, 0)
         form_layout.addWidget(QLabel("Port"), 0, 0)
@@ -81,6 +93,7 @@ class ControlSourcePanel(QGroupBox):
         form_layout.addWidget(browse_btn, 1, 2)
         form_layout.addWidget(self.leader_connect_btn, 2, 0, 1, 2)
         form_layout.addWidget(self.leader_status, 2, 2)
+        form_layout.addWidget(self.leader_calibrate_btn, 3, 0, 1, 3)
         self.leader_form.setVisible(False)
 
         # Which encoder direction opens the jaw can't be told from a
@@ -220,6 +233,7 @@ class ControlSourcePanel(QGroupBox):
         self.leader_status.setText("leader connected" if connected else "leader disconnected")
         self.leader_status.setObjectName("statusGood" if connected else "statusDanger")
         self.leader_status.setStyleSheet("")
+        self.leader_calibrate_btn.setEnabled(connected)
 
     def current_source(self) -> str:
         return SOURCES[self.group.checkedId()]

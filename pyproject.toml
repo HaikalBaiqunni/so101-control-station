@@ -26,6 +26,7 @@ dependencies = [
     "PySide6>=6.6",
     "feetech-servo-sdk>=1.0.0",
     "pyserial>=3.5",
+    "motorbridge-smart-servo>=0.0.4",
     "opencv-python>=4.8",
     "mujoco>=3.0",
     "numpy>=1.24",

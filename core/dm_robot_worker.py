@@ -64,6 +64,16 @@ class DmRobotWorker(QThread):
         self.last_goals: dict[str, float] = {}
         self._goals_lock = threading.Lock()
         self._torque_commands: queue.Queue = queue.Queue()
+        # Lets the Setup tab's MIT kp/kd spinboxes retune a CONNECTED arm
+        # live - added directly after a real bring-up session where
+        # disconnect/reconnect-per-tweak (which also cycles torque off/on
+        # each time, re-requiring the arm to be physically supported) proved
+        # too slow for the gain-by-gain "raise it until it holds against
+        # gravity, back off if it oscillates" process MIT tuning actually
+        # needs. Only ever replaces self.bus.mit_gains wholesale - same
+        # queue-handoff pattern as _torque_commands, safe because only the
+        # worker thread ever reads/writes self.bus after connect().
+        self._gains_commands: queue.Queue = queue.Queue()
         self._stop_requested = False
         self.bus: DamiaoBus | None = None
 
@@ -75,6 +85,9 @@ class DmRobotWorker(QThread):
 
     def request_torque(self, enabled: bool, name: str | None = None) -> None:
         self._torque_commands.put((enabled, name))
+
+    def request_mit_gains(self, gains: dict[str, tuple[float, float]]) -> None:
+        self._gains_commands.put(dict(gains))
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -115,6 +128,30 @@ class DmRobotWorker(QThread):
                     break
                 try:
                     (self.bus.enable_torque if enabled else self.bus.disable_torque)(name)
+                except DamiaoBusError as exc:
+                    self.error.emit(str(exc))
+
+            new_gains_applied = False
+            while True:
+                try:
+                    gains = self._gains_commands.get_nowait()
+                except queue.Empty:
+                    break
+                self.bus.mit_gains = gains
+                new_gains_applied = True
+            if new_gains_applied and self.last_goals:
+                # A gains-only change (no new position) would otherwise sit
+                # unused until the next request_goal() - controlMIT is a
+                # per-command send, not a register the motor keeps applying
+                # on its own the way POS_VEL's onboard loop does, so
+                # re-issuing the CURRENTLY-HELD target is what makes a live
+                # kp/kd tweak actually reach a joint that's just sitting
+                # still holding position (confirmed missing on real
+                # hardware: raising joint4's kp live did nothing until it
+                # was jogged again). Same target, so this can't itself cause
+                # any new motion - only how hard the motor holds it.
+                try:
+                    self.bus.write_goals_deg(dict(self.last_goals))
                 except DamiaoBusError as exc:
                     self.error.emit(str(exc))
 

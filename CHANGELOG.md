@@ -35,17 +35,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5-DoF reachability, the bundled 6-DoF reBot) and the jog panel/engine driven by
   a fake clock.
 
-- **Multi-robot support: reBot B601-DM (Phase 1 — simulation).** A Robot
-  selector above the tabs switches the app between SO-101 (Feetech) and the
-  reBot B601-DM (Damiao CAN motors).
+- **Multi-robot support: reBot B601-DM (Damiao) — real hardware control.** A
+  Robot selector above the tabs switches the app between SO-101 (Feetech)
+  and the reBot B601-DM (Damiao CAN motors).
   - Digital Twin auto-loads the B601-DM's own MuJoCo model and follows the
-    Joint Control sliders, including its gripper's two-finger mimic joint.
-  - **1 · Setup** swaps to a dedicated CAN id assignment panel for Damiao
+    Jog panel (Joint and Cartesian both), including its gripper's
+    two-finger mimic joint.
+  - **1 · Setup** has a dedicated CAN id assignment panel for Damiao
     motors — connect one at a time, probe, assign a unique id + master id,
-    save to flash.
-  - Every panel that needs a real bus (Connection, Torque, Control Source,
-    Telemetry, Calibration) is greyed out for this profile — real hardware
-    control is Phase 2, not yet implemented.
+    save to flash, then **Verify All** with the whole arm wired at once.
+  - **3 · Control** drives the real Damiao motors: Connect, torque-on
+    seeded with the motor's own current position, Joint/Cartesian jogging
+    via `core/damiao_bus.py` + `core/dm_robot_worker.py` — same
+    `request_goal`/`request_torque` shape as the Feetech worker, so the
+    existing jog/kinematics code needed no changes to drive it.
+  - **Two motion-control modes**: POS_VEL (safe default, the motor's own
+    onboard loop) and MIT (per-command `kp`/`kd`, more responsive and
+    compliant, needs live tuning) — selectable on the Setup tab, and MIT
+    gains now retune a **connected** arm immediately, no reconnect needed.
+  - **Leader teleoperation via Seeed's Star Arm 102** — a UART FashionStar
+    smart-servo device (`core/fashionstar_bus.py`,
+    `core/fashionstar_leader_worker.py`), a completely different
+    bus/protocol from the Damiao follower. Relayed by fraction of each
+    arm's own calibrated range, same reconciliation as the SO-101
+    leader/follower pairing, plus a gripper-direction invert checkbox.
+  - **Two sweep-based calibration dialogs** (`core/sweep_recorder.py`):
+    `Calibrate leader…` measures the Star Arm 102's real per-joint range
+    (its vendor defaults turned out to be wrong on real hardware, by up to
+    ~1.75× for `wrist_roll`), and `Calibrate gripper range…` measures the
+    follower's real jaw travel by hand with torque off — added directly
+    after an assumed default let a held jog stall the gripper motor past
+    its real mechanical stop and blow a fuse.
   - `core/robot_profiles.py` (new) is the single source of truth for a
     profile's joint order, bundled twin path and hardware availability;
     `DigitalTwin`/`TwinWorker` take joint names as a parameter instead of a
@@ -87,6 +107,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A joint whose real-world range is in metres rather than degrees (the
   B601-DM gripper) collapsed the Joint Control slider to zero usable ticks
   (`int(0.05 * SLIDER_SCALE) == 0`), making it undraggable.
+- The same `stop()`-during-`connect()` race already fixed once for
+  `TwinWorker` was still present in `RobotWorker`, `CalibrationWorker`,
+  `CameraWorker` and `GamepadWorker` — fixed identically across all four.
+- **B601-DM follower gripper (`finger_left`) read as permanently frozen at
+  0** once real hardware testing began: `RobotProfile.preview_ranges`' gripper
+  convention (0..100, "percent open") shares no numeric overlap with the
+  Damiao library's raw motor-degree readings, so every value clamped
+  silently out of range. `core/damiao_bus.py`/`core/fashionstar_bus.py` now
+  fraction-remap from the native reading onto whatever range was declared,
+  the same contract `deg_limits()` already implied.
+- **The Setup tab had no scrollbar.** `DmSetupPanel`'s own content (CAN-id
+  rows plus, since MIT mode landed, a 7-row kp/kd grid) could exceed the
+  window's visible height with no way to reach the rest.
+- **The digital twin's gripper direction could render backwards** even when
+  real hardware control was correct — a calibration sweep only ever records
+  numeric min/max, with no way to know which physical extreme is open vs.
+  closed, so the fraction fed to the twin's MJCF had a 50/50 chance of
+  disagreeing with that model's own convention. `RobotProfile.
+  twin_gripper_fraction_inverted` flips only what the twin renders, never
+  anything sent to real hardware.
+- The Setup tab's gripper-direction invert checkbox checked the literal
+  string `"gripper"`, so it silently did nothing for the B601-DM's actual
+  gripper joint (`finger_left`) — generalized to whichever joint is last in
+  the active profile's `joint_order`.
+- The leader-teleop preview (shown when no follower is connected yet) used
+  to display raw, unconverted leader degrees, skipping the gripper-invert
+  override and relay trim entirely — it now runs through the same
+  leader→follower conversion the live relay uses, so preview always matches
+  what teleoperating would actually send.
 
 ## [0.2.0] - 2026-08-12
 

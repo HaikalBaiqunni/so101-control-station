@@ -63,6 +63,22 @@ class RobotProfile:
     tcp_site: str = ""
     tcp_body: str = ""
     tcp_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # A calibration sweep (ui/dm_gripper_calibration_dialog.py,
+    # ui/fashionstar_calibration_dialog.py) only ever records numeric
+    # min/max - it has no way to know which physical extreme is "open" vs
+    # "closed" (the same ambiguity core/calibration_worker.py's own comment
+    # flags for SO-101's gripper: "which tick is the CLOSED end is the one
+    # thing a swept range can never say"). MainWindow._positions_to_fractions
+    # maps that numeric min->fraction 0.0 onto the twin MJCF's own joint
+    # range, which is a 50/50 coincidence unless it happens to agree with
+    # the model's own convention - confirmed wrong for this profile's real
+    # hardware on real B601-DM gripper testing (the real follower's motion
+    # direction was already correct - independently confirmed and
+    # controlled via the leader relay's own gripper_invert_override - only
+    # the TWIN's rendering was backwards). True flips ONLY the twin's
+    # fraction for this profile's own gripper joint
+    # (joint_order[-1]) - it has no effect on real hardware control.
+    twin_gripper_fraction_inverted: bool = False
 
     def __post_init__(self):
         if self.preview_ranges is None:
@@ -103,6 +119,7 @@ PROFILES: dict[str, RobotProfile] = {
         # centre for a two-finger gripper.
         tcp_body="link6",
         tcp_offset=(0.0, 0.0, 0.15539),
+        twin_gripper_fraction_inverted=True,
         preview_ranges={
             "joint1": (-160.4, 160.4),
             "joint2": (-179.9, 0.0),

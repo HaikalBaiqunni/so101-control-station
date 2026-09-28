@@ -46,7 +46,6 @@ class DmSetupPanel(QWidget):
     write_pid_requested = Signal(int, float, float, float, float)  # motor_id, kp_asr, ki_asr, kp_apr, ki_apr
     set_zero_requested = Signal(int)                  # motor_id
     verify_all_requested = Signal(dict)                # {joint: can_id}
-    role_changed = Signal(str)                        # "follower" | "leader"
     control_mode_changed = Signal(str)                # "pos_vel" | "mit"
     mit_gains_changed = Signal(dict)                   # {joint: (kp, kd)}
 
@@ -55,25 +54,6 @@ class DmSetupPanel(QWidget):
         self.joint_order = joint_order
         self._probed_id: int | None = None  # last id that successfully answered a probe
         self._mapping: dict[str, dict[str, int]] = {}  # joint -> {"can_id", "master_id"}
-
-        # -- 0: role -------------------------------------------------------------
-        # Which PHYSICAL arm this whole panel currently talks about - the
-        # follower (B601-DM) or a second, separately-wired Damiao arm used as
-        # a teleop leader. Same probe/assign/verify workflow either way, just
-        # a different settings key on the MainWindow side (see role_changed) -
-        # disabled while connected since switching roles mid-session would
-        # otherwise silently relabel whichever physical port is plugged in
-        # right now.
-        role_box = QGroupBox("0 - WHICH ARM")
-        self.role_combo = QComboBox()
-        self.role_combo.addItem("Follower (B601-DM arm)", "follower")
-        self.role_combo.addItem("Leader (teleop arm)", "leader")
-        self.role_combo.currentIndexChanged.connect(
-            lambda _i: self.role_changed.emit(self.role_combo.currentData())
-        )
-        role_layout = QHBoxLayout(role_box)
-        role_layout.addWidget(QLabel("Setting up:"))
-        role_layout.addWidget(self.role_combo, 1)
 
         # -- 1: connect --------------------------------------------------------
         conn_box = QGroupBox("1 - CONNECT TO THE USB-SERIAL ADAPTER")
@@ -235,14 +215,16 @@ class DmSetupPanel(QWidget):
         state_layout.addLayout(pid_grid)
         state_layout.addLayout(pid_btn_row)
 
-        # -- 5: motion control mode (follower only) --------------------------------
-        # Which control mode the Control tab's Connect uses for the FOLLOWER
-        # arm - unrelated to the role selector above (the leader is always
-        # torque-disabled right after connect, so its control mode has no
-        # behavioral effect and always connects in POS_VEL). Takes effect on
-        # the next Connect, not live - switching modes needs a fresh
-        # switchControlMode() call, which only happens during connect().
-        motion_box = QGroupBox("5 - MOTION CONTROL MODE (used by the Control tab's Connect - follower only)")
+        # -- 5: motion control mode ------------------------------------------------
+        # Which control mode the Control tab's Connect uses for this arm.
+        # Takes effect on the next Connect, not live - switching modes needs a
+        # fresh switchControlMode() call, which only happens during connect().
+        # This panel is Damiao CAN-id setup, which only ever applies to the
+        # follower - the B601-DM's real leader (Seeed's Star Arm 102) is a
+        # separate FashionStar UART device with no CAN ids or control mode at
+        # all (core/fashionstar_bus.py), so there is no "which arm" question
+        # here any more.
+        motion_box = QGroupBox("5 - MOTION CONTROL MODE (used by the Control tab's Connect)")
         motion_warning = QLabel(
             "POS_VEL (default) relies on the motor's own onboard position/"
             "velocity loop - the safe, already-tested mode. MIT sends a fresh "
@@ -331,7 +313,6 @@ class DmSetupPanel(QWidget):
 
         # -- layout --------------------------------------------------------------
         left_column = QVBoxLayout()
-        left_column.addWidget(role_box)
         left_column.addWidget(conn_box)
         left_column.addWidget(probe_box)
         left_column.addWidget(assign_box)
@@ -529,16 +510,6 @@ class DmSetupPanel(QWidget):
             kp_spin.blockSignals(False)
             kd_spin.blockSignals(False)
 
-    def role(self) -> str:
-        return self.role_combo.currentData()
-
-    def set_role(self, role: str) -> None:
-        index = self.role_combo.findData(role)
-        if index >= 0:
-            self.role_combo.blockSignals(True)
-            self.role_combo.setCurrentIndex(index)
-            self.role_combo.blockSignals(False)
-
     # -- called by MainWindow in response to worker signals --------------------
     def set_connected(self, connected: bool) -> None:
         self._connected = connected
@@ -546,7 +517,6 @@ class DmSetupPanel(QWidget):
         self.status_label.setText("CONNECTED" if connected else "DISCONNECTED")
         self.status_label.setObjectName("statusGood" if connected else "statusDanger")
         self.status_label.setStyleSheet("")
-        self.role_combo.setEnabled(not connected)
         self.probe_btn.setEnabled(connected)
         self.verify_all_btn.setEnabled(connected and bool(self._mapping))
         if not connected:

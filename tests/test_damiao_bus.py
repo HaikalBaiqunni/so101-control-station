@@ -5,6 +5,8 @@ only that DamiaoBus calls the right MotorControl method with the right
 arguments for the mode it was configured with."""
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from core import damiao_bus as db
@@ -144,3 +146,28 @@ def test_motor_object_is_real_dm_can_motor_not_a_stub():
     bus = db.DamiaoBus("COM_FAKE", IDS, RANGES)
     bus.connect()
     assert isinstance(bus._motors["joint1"], Motor)
+
+
+def test_write_goals_deg_clamps_to_a_calibrated_range_narrower_than_the_default():
+    # Regression test for a real incident this session: preview_ranges'
+    # ASSUMED gripper range let write_goals_deg clamp toward a position past
+    # this unit's true mechanical stop, stalling the motor until a fuse
+    # blew. ui/dm_gripper_calibration_dialog.py exists to replace that
+    # assumed range with a measured one - confirm the override actually
+    # narrows what gets clamped to, not just what deg_limits() reports.
+    wide_ranges = {"joint1": (-160.0, 160.0), "joint4": (-90.0, 90.0)}
+    narrow_ranges = {"joint1": (-100.0, 100.0), "joint4": (-90.0, 90.0)}
+    bus_wide = db.DamiaoBus("COM_FAKE", IDS, wide_ranges)
+    bus_narrow = db.DamiaoBus("COM_FAKE", IDS, narrow_ranges)
+    bus_wide.connect()
+    bus_narrow.connect()
+
+    bus_wide.write_goals_deg({"joint1": 150.0})
+    bus_narrow.write_goals_deg({"joint1": 150.0})
+
+    wide_p_desired = bus_wide._mc.calls[-1][2]
+    narrow_p_desired = bus_narrow._mc.calls[-1][2]
+    assert wide_p_desired == pytest.approx(math.radians(150.0))
+    # Would have been clamped to the wrong (too-wide) default before a real
+    # measured range existed - now clamps to the calibrated stop instead.
+    assert narrow_p_desired == pytest.approx(math.radians(100.0))
