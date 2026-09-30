@@ -175,6 +175,10 @@ class JogPanel(QGroupBox):
         self.speed_slider.setRange(1, 100)
         self.speed_slider.setValue(DEFAULT_SPEED_PERCENT)
         self.speed_slider.setFocusPolicy(Qt.NoFocus)
+        self.speed_slider.setToolTip(
+            "Speed for jogging AND, on the reBot B601-DM, the velocity cap the follower uses to\n"
+            "chase any target - so it also slows teleop and waypoint playback."
+        )
         self.speed_label = QLabel()
         self.speed_label.setMinimumWidth(44)
         self.speed_slider.valueChanged.connect(self._on_speed_changed)

@@ -23,7 +23,7 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .damiao_bus import DamiaoBus, DamiaoBusError
+from .damiao_bus import DamiaoBus, DamiaoBusError, speed_percent_to_vel_limit
 from .dm_can import Control_Type
 
 POLL_INTERVAL_S = 1 / 20  # see module docstring below for why this isn't 1/60 like RobotWorker
@@ -74,6 +74,8 @@ class DmRobotWorker(QThread):
         # queue-handoff pattern as _torque_commands, safe because only the
         # worker thread ever reads/writes self.bus after connect().
         self._gains_commands: queue.Queue = queue.Queue()
+        self._speed_percent = 30.0
+        self._speed_dirty = True   # applied on the worker thread, before the next command
         self._stop_requested = False
         self.bus: DamiaoBus | None = None
 
@@ -85,6 +87,12 @@ class DmRobotWorker(QThread):
 
     def request_torque(self, enabled: bool, name: str | None = None) -> None:
         self._torque_commands.put((enabled, name))
+
+    def request_speed_percent(self, percent: float) -> None:
+        """Speed slider -> POS_VEL velocity cap (ignored in MIT, which has none).
+        Only stores the value; the worker thread applies it, like every other command."""
+        self._speed_percent = float(percent)
+        self._speed_dirty = True
 
     def request_mit_gains(self, gains: dict[str, tuple[float, float]]) -> None:
         self._gains_commands.put(dict(gains))
@@ -113,6 +121,9 @@ class DmRobotWorker(QThread):
 
         while not self._stop_requested:
             cycle += 1
+            if self._speed_dirty:
+                self._speed_dirty = False
+                self.bus.vel_limit_rad_s = speed_percent_to_vel_limit(self._speed_percent)
             with self._goals_lock:
                 goals, self._pending_goals = self._pending_goals, {}
             if goals:

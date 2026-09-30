@@ -325,3 +325,155 @@ def test_tolerance_is_persisted(teleop):
     import json
     with open("gui_settings.json", encoding="utf-8") as f:
         assert json.load(f)["teleop_align_tolerance_deg"] == 6.0
+
+
+# ---------------------------------------------------------------- tune: presets, tracking, nudge, speed
+def _steady(goal, measured, t0=0.0, n=20, dt=1 / 30):
+    return [(t0 + i * dt, goal, measured) for i in range(n)]
+
+
+def test_tracking_metrics_step_response():
+    from ui.tracking_chart import tracking_metrics
+    dt = 1 / 30
+    samples = _steady(0.0, 0.0, n=10)
+    t = samples[-1][0] + dt
+    # goal steps +10; the joint overshoots to 11 then settles at 10
+    path = [0.0, 2.0, 6.0, 9.0, 11.0, 10.5, 10.1, 10.0, 10.0, 10.0, 10.0, 10.0]
+    for i, m in enumerate(path):
+        samples.append((t + i * dt, 10.0, m))
+    m = tracking_metrics(samples)
+    assert m["step_deg"] == 10.0
+    assert abs(m["overshoot_pct"] - 10.0) < 1e-6
+    assert m["peak_error"] == 10.0
+    assert m["settle_s"] is not None and 0.0 < m["settle_s"] < 0.5
+
+
+def test_tracking_metrics_without_a_step_or_data():
+    from ui.tracking_chart import tracking_metrics
+    assert tracking_metrics([])["peak_error"] is None
+    m = tracking_metrics(_steady(5.0, 4.0))
+    assert m["peak_error"] == 1.0 and m["step_deg"] is None and m["settle_s"] is None
+
+
+def test_tracking_metrics_not_settled_yet():
+    from ui.tracking_chart import tracking_metrics
+    samples = _steady(0.0, 0.0, n=5)
+    samples += [(1.0 + i / 30, 20.0, 1.0 * i) for i in range(6)]   # still climbing
+    assert tracking_metrics(samples)["settle_s"] is None
+
+
+def test_gain_presets_save_load_delete_and_persist(win):
+    panel = win.dm_tune_panel
+    kp, kd = panel.mit_gain_spins["joint4"]
+    kp.setValue(24.0)
+    assert panel.save_preset("hold v2")
+    assert "hold v2" in panel.preset_names()
+    kp.setValue(5.0)
+    seen = []
+    panel.mit_gains_changed.connect(seen.append)
+    assert panel.load_preset("hold v2")
+    assert panel.mit_gains()["joint4"][0] == 24.0
+    assert seen and seen[-1]["joint4"][0] == 24.0   # loading pushes the gains out (live retune)
+    import json
+    with open("gui_settings.json", encoding="utf-8") as f:
+        assert "hold v2" in json.load(f)["dm_mit_gain_presets"]
+    assert panel.delete_preset("hold v2")
+    assert "hold v2" not in panel.preset_names()
+    assert not panel.save_preset("")   # empty / built-in names are refused
+    assert not panel.save_preset(panel.preset_names()[0])
+
+
+def test_damaged_presets_are_ignored(win):
+    win.dm_tune_panel.set_presets({"ok": {"joint1": [1, 2]}, "bad": "nope", "worse": {"joint1": [1]}})
+    assert "ok" in win.dm_tune_panel.preset_names()
+    assert "bad" not in win.dm_tune_panel.preset_names()
+
+
+def test_builtin_preset_loads_gentle_defaults(win):
+    from ui.dm_tune_panel import BUILTIN_PRESET
+    win.dm_tune_panel.mit_gain_spins["joint2"][0].setValue(99.0)
+    win.dm_tune_panel.load_preset(BUILTIN_PRESET)
+    assert win.dm_tune_panel.mit_gains()["joint2"] == (8.0, 0.5)
+
+
+def test_speed_slider_maps_to_a_capped_velocity():
+    from core.damiao_bus import (
+        MAX_JOG_VEL_RAD_S,
+        MAX_SPEED_VEL_RAD_S,
+        MIN_SPEED_VEL_RAD_S,
+        speed_percent_to_vel_limit,
+    )
+    assert speed_percent_to_vel_limit(30) == pytest.approx(MAX_JOG_VEL_RAD_S)   # default unchanged
+    assert speed_percent_to_vel_limit(100) == MAX_SPEED_VEL_RAD_S                # never faster than the ceiling
+    assert speed_percent_to_vel_limit(1) == MIN_SPEED_VEL_RAD_S                  # never zero
+    assert speed_percent_to_vel_limit(15) < speed_percent_to_vel_limit(45)
+
+
+def test_speed_slider_reaches_a_damiao_worker(win):
+    from core.dm_robot_worker import DmRobotWorker
+    worker = DmRobotWorker.__new__(DmRobotWorker)   # no thread / bus: only the setter is under test
+    worker._speed_percent = 30.0
+    worker._speed_dirty = False
+    win.robot_worker = worker
+    win.jog_panel.speed_slider.setValue(60)
+    assert worker._speed_percent == 60.0 and worker._speed_dirty
+    win.robot_worker = None   # the fixture closes the window without retiring a fake thread
+
+
+def test_nudge_is_refused_unless_it_is_safe(win):
+    from core.dm_robot_worker import DmRobotWorker
+    worker = DmRobotWorker.__new__(DmRobotWorker)
+    worker.last_goals = {"joint4": 10.0}
+    goals = []
+    worker.request_goal = lambda name, deg: goals.append((name, deg))
+    win.robot_worker = worker
+    win.joint_deg_ranges = {"joint4": (-50.0, 50.0)}
+    win.current_positions["joint4"] = 10.0
+
+    win._follower_connected = True
+    win.follower_torque_enabled = False
+    win._on_nudge_requested("joint4", 5.0)          # torque off
+    assert goals == []
+
+    win.follower_torque_enabled = True
+    win.teleop_engaged = True
+    win._on_nudge_requested("joint4", 5.0)          # teleop engaged
+    assert goals == []
+    win.teleop_engaged = False
+
+    win._on_nudge_requested("joint4", 5.0)          # allowed
+    assert goals == [("joint4", 15.0)]
+    win._on_nudge_requested("joint4", 500.0)        # clamped to the calibrated range
+    assert goals[-1] == ("joint4", 50.0)
+    win.robot_worker = None
+
+
+def test_nudge_buttons_follow_the_gate(win):
+    from core.dm_robot_worker import DmRobotWorker
+    worker = DmRobotWorker.__new__(DmRobotWorker)
+    worker.last_goals = {}
+    win.robot_worker = worker
+    win._follower_connected = True
+    win.follower_torque_enabled = False
+    win._update_teleop_ui()
+    assert not win.dm_tune_panel.nudge_plus_btn.isEnabled()
+    win.follower_torque_enabled = True
+    win._update_teleop_ui()
+    assert win.dm_tune_panel.nudge_plus_btn.isEnabled()
+    win.robot_worker = None
+
+
+def test_tracking_samples_flow_only_while_the_tune_drawer_is_open(win):
+    from core.dm_robot_worker import DmRobotWorker
+    worker = DmRobotWorker.__new__(DmRobotWorker)
+    worker.last_goals = {"joint1": 5.0}
+    win.robot_worker = worker
+    win._follower_connected = True
+    win.current_positions["joint1"] = 4.0
+    win._update_teleop_ui()
+    assert win.dm_tune_panel.tracking_chart.samples() == []
+    win.show()
+    win.top_bar.nav_buttons["tune"].click()
+    win._update_teleop_ui()
+    assert len(win.dm_tune_panel.tracking_chart.samples()) == 1
+    win.robot_worker = None

@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     launch the gripper / leader sweeps), Inputs, Data and logs.
   - Tune drawer: motion mode and MIT kp/kd moved out of the id workflow.
   - Softer palette, rounded cards and pill buttons; minimum window 1100x700.
+  - The top bar floats over the page as rounded pills; toggle switches in the View card;
+    outlined pill buttons with solid accent only on the primary action; cards can be
+    dragged (position saved, *Reset layout* in View); the camera card is resizable.
+  - **Engage teleop**: choosing *Leader arm* no longer moves the follower. Tracking starts
+    only after an explicit Engage, allowed when both arms are live, follower torque is on
+    and every arm joint is within a tolerance (default 10 deg, saved). The leader pose is
+    shown as the ghost while standing by; teleop drops on Stop, torque off, source change
+    and either arm disconnecting.
+  - **Tune drawer** (B601-DM): named MIT gain presets, a commanded-vs-measured tracking chart
+    with peak error / settle / overshoot, and +/-5 deg nudge (torque on, Manual only).
+  - **Speed slider** now also caps the Damiao POS_VEL velocity (30 % = the old 0.3 rad/s,
+    ceiling 0.8 rad/s), so it slows teleop and waypoint playback too.
 
 ### Added
 

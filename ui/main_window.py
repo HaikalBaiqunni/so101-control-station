@@ -191,7 +191,7 @@ class MainWindow(QMainWindow):
         self.drawer.addWidget(self.teaching_panel)
         self.drawer.addWidget(self.telemetry_panel)
         self.drawer.addWidget(self.dm_tune_panel)
-        self.drawer.setMinimumWidth(400)
+        self.drawer.setMinimumWidth(440)
         self.drawer.setContentsMargins(0, TopBar.BAR_H, 0, 0)
         self.drawer.hide()
 
@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
         self.stage_splitter.addWidget(self.drawer)
         self.stage_splitter.setStretchFactor(0, 1)
         self.stage_splitter.setStretchFactor(1, 0)
-        self.stage_splitter.setSizes([1100, 420])
+        self.stage_splitter.setSizes([1100, 440])
 
         # ================================================================ SETUP HUB
         self.setup_panel = SetupPanel()
@@ -446,6 +446,10 @@ class MainWindow(QMainWindow):
         self.dm_setup_panel.verify_all_requested.connect(self._on_dm_setup_verify_all)
         self.dm_tune_panel.control_mode_changed.connect(self._on_dm_setup_control_mode_changed)
         self.dm_tune_panel.mit_gains_changed.connect(self._on_dm_setup_mit_gains_changed)
+        self.dm_tune_panel.presets_changed.connect(lambda presets: self._save_setting("dm_mit_gain_presets", presets))
+        self.dm_tune_panel.nudge_requested.connect(self._on_nudge_requested)
+        self.dm_tune_panel.set_presets(self._load_settings().get("dm_mit_gain_presets", {}))
+        self.jog_panel.speed_slider.valueChanged.connect(self._push_speed)
         self.dm_calibration_page.gripper_calibrate_requested.connect(self._on_dm_gripper_calibrate_requested)
         self.dm_calibration_page.leader_calibrate_requested.connect(self._on_leader_calibrate_requested)
         self.dm_calibration_page.open_ids_requested.connect(self._show_motors_and_ids)
@@ -707,6 +711,7 @@ class MainWindow(QMainWindow):
         self.robot_worker.telemetry_updated.connect(self._on_telemetry_updated)
         self.robot_worker.error.connect(self._on_robot_error)
         self.robot_worker.connection_changed.connect(self._on_connection_changed)
+        self._push_speed()
         self.robot_worker.start()
 
     def _on_dm_connect_real(self, port: str) -> None:
@@ -1030,7 +1035,50 @@ class MainWindow(QMainWindow):
                            f"{worst:.0f} deg apart (limit {tol:.0f}). The ghost shows the leader pose."), errors
         return True, f"Aligned (worst joint {worst:.1f} deg). Safe to engage.", errors
 
+    def _push_speed(self, _value: int = 0) -> None:
+        """The Jog panel's Speed slider is THE speed setting: besides scaling jog
+        motion it caps how fast a Damiao follower chases any target (POS_VEL), so
+        it also slows teleop and waypoint playback. Feetech follower: unchanged."""
+        worker = self.robot_worker
+        if worker is not None and hasattr(worker, "request_speed_percent"):
+            worker.request_speed_percent(self.jog_panel.speed_slider.value())
+
+    def _nudge_allowed(self) -> tuple[bool, str]:
+        if not isinstance(self.robot_worker, DmRobotWorker) or not self._follower_connected:
+            return False, "connect the follower first."
+        if not self.follower_torque_enabled:
+            return False, "turn torque ON first."
+        if self.teleop_engaged or self.control_source != "manual":
+            return False, "switch Control source to Manual."
+        if self._playback_index is not None:
+            return False, "a waypoint sequence is playing."
+        return True, ""
+
+    def _on_nudge_requested(self, joint: str, delta: float) -> None:
+        allowed, reason = self._nudge_allowed()
+        if not allowed:
+            self.statusBar().showMessage(f"Nudge refused: {reason}")
+            return
+        base = self.robot_worker.last_goals.get(joint, self.current_positions.get(joint))
+        if base is None:
+            return
+        target = base + delta
+        lo_hi = self.joint_deg_ranges.get(joint)
+        if lo_hi:
+            target = max(lo_hi[0], min(lo_hi[1], target))
+        self.robot_worker.request_goal(joint, target)
+        self.session_logger.log_event(f"Nudge: {joint} {delta:+.1f} deg -> goal {target:.1f}")
+
     def _update_teleop_ui(self) -> None:
+        allowed, reason = self._nudge_allowed()
+        self.dm_tune_panel.set_nudge_state(allowed, reason)
+        if isinstance(self.robot_worker, DmRobotWorker) and not self.drawer.isHidden() \
+                and self.drawer.currentWidget() is self.dm_tune_panel:
+            joint = self.dm_tune_panel.tracking_joint()
+            goal = self.robot_worker.last_goals.get(joint)
+            measured = self.current_positions.get(joint)
+            if goal is not None and measured is not None:
+                self.dm_tune_panel.add_tracking_sample(goal, measured)
         can, text, errors = self._teleop_alignment()
         if self.teleop_engaged:
             text = "Teleop engaged: the follower is tracking the leader."

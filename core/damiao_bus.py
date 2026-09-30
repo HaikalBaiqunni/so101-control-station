@@ -39,7 +39,18 @@ BAUD = 921600  # matches dm_setup_worker.py and Damiao's own DM_Tools
 # conservative default has actually been run against the real arm). Worth
 # revisiting together once basic position control is confirmed safe, not a
 # number to guess bigger in isolation.
-MAX_JOG_VEL_RAD_S = 0.3
+MAX_JOG_VEL_RAD_S = 0.3   # POS_VEL velocity cap at the default 30 % Speed setting
+
+# The Speed slider scales that cap linearly (30 % -> MAX_JOG_VEL_RAD_S) but never
+# past this ceiling or below this floor, so a slider dragged to the end cannot ask
+# the motors for a fast whip, and the lowest setting still moves.
+MAX_SPEED_VEL_RAD_S = 0.8
+MIN_SPEED_VEL_RAD_S = 0.05
+
+
+def speed_percent_to_vel_limit(percent: float) -> float:
+    """Speed slider (1-100 %) -> POS_VEL velocity limit in rad/s."""
+    return max(MIN_SPEED_VEL_RAD_S, min(MAX_SPEED_VEL_RAD_S, MAX_JOG_VEL_RAD_S * float(percent) / 30.0))
 
 # Very gentle starting point for MIT mode's per-command kp/kd (stiffness/
 # damping the MIT frame itself carries - NOT the motor's own persisted
@@ -88,6 +99,8 @@ class DamiaoBus:
         self.ranges_deg = dict(ranges_deg)
         self.control_mode = control_mode
         self.mit_gains = dict(mit_gains) if mit_gains else {}
+        # Read on every command, written from the worker thread only.
+        self.vel_limit_rad_s = MAX_JOG_VEL_RAD_S
         self._ser: serial.Serial | None = None
         self._mc: MotorControl | None = None
         self._motors: dict[str, Motor] = {}
@@ -200,7 +213,7 @@ class DamiaoBus:
                 kp, kd = self.mit_gains.get(name, (DEFAULT_MIT_KP, DEFAULT_MIT_KD))
                 self._mc.controlMIT(motor, kp, kd, q_rad, 0.0, 0.0)
             else:
-                self._mc.control_Pos_Vel(motor, q_rad, MAX_JOG_VEL_RAD_S)
+                self._mc.control_Pos_Vel(motor, q_rad, self.vel_limit_rad_s)
 
     def read_all_positions_deg(self) -> dict[str, float]:
         positions = {}
