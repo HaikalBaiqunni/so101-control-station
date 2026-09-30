@@ -72,6 +72,7 @@ class ConnectionPanel(QGroupBox):
         layout.addWidget(self.torque_on_btn, 3, 0)
         layout.addWidget(self.torque_off_btn, 3, 1)
         layout.addWidget(self.calibrate_gripper_btn, 4, 0, 1, 3)
+        layout.setRowStretch(5, 1)   # spare height goes below the rows, not between them
 
     def set_gripper_calibration_visible(self, visible: bool) -> None:
         self.calibrate_gripper_btn.setVisible(visible)

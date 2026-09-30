@@ -213,3 +213,115 @@ def test_nav_buttons_and_mode_tiles_have_icons(win):
     for tile in (win.control_source_panel.manual_radio, win.control_source_panel.leader_radio):
         assert not tile.icon().isNull()
     assert win.control_source_panel.manual_radio.isChecked()
+
+
+class TeleopFake(FakeWorker):
+    def __init__(self):
+        super().__init__()
+        self.goals: list[tuple[str, float]] = []
+
+    def request_goal(self, name, degrees):
+        self.goals.append((name, degrees))
+
+
+@pytest.fixture
+def teleop(win):
+    """Both arms 'connected', torque on, leader source selected, arms 0 deg apart."""
+    win.robot_worker = TeleopFake()
+    win._follower_connected = True
+    win._leader_connected = True
+    win.follower_torque_enabled = True
+    win.control_source_panel.leader_radio.setChecked(True)
+    win._on_control_source_changed("leader")
+    joints = win.robot_profile.joint_order
+    win.current_positions.update(dict.fromkeys(joints, 0.0))
+    win._leader_converted.update(dict.fromkeys(joints, 0.0))
+    return win
+
+
+def test_selecting_the_leader_does_not_drive_the_follower(teleop):
+    teleop._on_leader_positions(dict.fromkeys(teleop.robot_profile.joint_order, 5.0))
+    assert teleop.robot_worker.goals == []
+    assert not teleop.teleop_engaged
+
+
+def test_engage_is_refused_until_aligned_then_relays(teleop):
+    joints = teleop.robot_profile.joint_order
+    teleop._leader_converted[joints[1]] = 40.0   # 40 deg apart, tolerance is 10
+    can, text, _ = teleop._teleop_alignment()
+    assert not can and joints[1] in text
+    teleop._on_engage_toggled(True)
+    assert not teleop.teleop_engaged
+
+    teleop._leader_converted[joints[1]] = 4.0
+    teleop._on_engage_toggled(True)
+    assert teleop.teleop_engaged
+    teleop._on_leader_positions(dict.fromkeys(joints, 3.0))
+    assert teleop.robot_worker.goals   # now it relays
+
+
+def test_gripper_is_not_part_of_the_alignment_check(teleop):
+    joints = teleop.robot_profile.joint_order
+    teleop._leader_converted[joints[-1]] = 90.0
+    assert teleop._teleop_alignment()[0]
+
+
+@pytest.mark.parametrize("how", ["stop", "torque_off", "source", "leader_lost", "follower_lost"])
+def test_engaged_teleop_drops_on_every_safety_event(teleop, how):
+    teleop._on_engage_toggled(True)
+    assert teleop.teleop_engaged
+    if how == "stop":
+        teleop._on_emergency_stop()
+    elif how == "torque_off":
+        teleop._on_torque(False)
+    elif how == "source":
+        teleop.control_source_panel.force_manual()
+    elif how == "leader_lost":
+        teleop._on_leader_connection_changed(False)
+    else:
+        teleop._on_connection_changed(False)
+    assert not teleop.teleop_engaged
+    n = len(teleop.robot_worker.goals) if teleop.robot_worker else 0
+    teleop._on_leader_positions(dict.fromkeys(teleop.robot_profile.joint_order, 1.0))
+    assert (len(teleop.robot_worker.goals) if teleop.robot_worker else 0) == n
+
+
+def test_reasons_when_engage_is_not_possible(teleop):
+    teleop.follower_torque_enabled = False
+    assert "torque" in teleop._teleop_alignment()[1].lower()
+    teleop._follower_connected = False
+    assert "follower" in teleop._teleop_alignment()[1].lower()
+    teleop._leader_connected = False
+    assert "leader" in teleop._teleop_alignment()[1].lower()
+
+
+def test_engage_button_reflects_the_gate(teleop):
+    panel = teleop.control_source_panel
+    teleop._update_teleop_ui()
+    assert panel.engage_btn.isEnabled() and panel.engage_btn.text() == "Engage teleop"
+    teleop._leader_converted[teleop.robot_profile.joint_order[0]] = 50.0
+    teleop._update_teleop_ui()
+    assert not panel.engage_btn.isEnabled()
+    teleop._leader_converted[teleop.robot_profile.joint_order[0]] = 0.0
+    teleop._update_teleop_ui()   # the refresh timer does this in the app
+    panel.engage_btn.click()   # a real click, through the signal
+    assert teleop.teleop_engaged and panel.engage_btn.text() == "Disengage"
+    panel.engage_btn.click()
+    assert not teleop.teleop_engaged
+
+
+def test_leader_pose_is_the_ghost_while_standing_by(teleop):
+    joints = teleop.robot_profile.joint_order
+    teleop.twin_panel.ghost_check.setChecked(True)
+    teleop._leader_converted[joints[0]] = 30.0
+    teleop.joint_deg_ranges = dict.fromkeys(joints, (-90.0, 90.0))
+    assert teleop._compute_ghost() is not None
+    teleop._leader_converted[joints[0]] = 0.0
+    assert teleop._compute_ghost() is None   # identical to the arm: no ghost
+
+
+def test_tolerance_is_persisted(teleop):
+    teleop.control_source_panel.tolerance_spin.setValue(6)
+    import json
+    with open("gui_settings.json", encoding="utf-8") as f:
+        assert json.load(f)["teleop_align_tolerance_deg"] == 6.0

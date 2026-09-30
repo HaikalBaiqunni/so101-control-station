@@ -379,6 +379,17 @@ class TestFashionStarLeaderTeleop:
         window._on_leader_positions(dict.fromkeys(JOINT_ORDER, 20.0))
         pump(qapp, 5)
 
+        # Selecting Leader arm alone must NOT drive the follower...
+        assert window.robot_worker.last_goals == {}
+
+        # ...only an explicit Engage does, and only once the arms are aligned.
+        window.follower_torque_enabled = True
+        window.current_positions.update(window._leader_converted)
+        window._on_engage_toggled(True)
+        assert window.teleop_engaged
+        window._on_leader_positions(dict.fromkeys(JOINT_ORDER, 20.0))
+        pump(qapp, 5)
+
         for name in JOINT_ORDER:
             assert name in window.robot_worker.last_goals
 

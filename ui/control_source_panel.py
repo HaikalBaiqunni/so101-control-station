@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -28,6 +29,38 @@ from .style import COLORS
 SOURCES = ["manual", "gamepad", "leader", "keyboard"]
 
 
+class AlignmentBar(QWidget):
+    """One segment per arm joint: green when the leader is within tolerance of
+    the follower, red when not, grey while unknown. Purely a display."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(8)
+        self._errors: list[float | None] = []
+        self._tolerance = 10.0
+
+    def set_errors(self, errors: list[float | None], tolerance: float) -> None:
+        self._errors = list(errors)
+        self._tolerance = tolerance
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        if not self._errors:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        gap = 4
+        width = (self.width() - gap * (len(self._errors) - 1)) / len(self._errors)
+        for i, err in enumerate(self._errors):
+            if err is None:
+                color = COLORS["border"]
+            else:
+                color = COLORS["good"] if err <= self._tolerance else COLORS["danger"]
+            painter.setBrush(QColor(color))
+            painter.drawRoundedRect(i * (width + gap), 0, width, self.height(), 4, 4)
+
+
 class ControlSourcePanel(QGroupBox):
     """Arbitrates who is allowed to command the connected (follower) arm right
     now - only one source drives it at a time, to avoid fighting inputs."""
@@ -38,6 +71,8 @@ class ControlSourcePanel(QGroupBox):
     leader_calibrate_requested = Signal()
     gripper_invert_toggled = Signal(bool)
     relay_trim_changed = Signal(str, float)   # joint, degrees
+    engage_toggled = Signal(bool)             # True = engage teleop, False = disengage
+    tolerance_changed = Signal(float)         # degrees
 
     def __init__(self, parent=None):
         super().__init__("CONTROL SOURCE", parent)
@@ -115,6 +150,42 @@ class ControlSourcePanel(QGroupBox):
         # rest, so homing it untouched records "open" as closed). One switch,
         # flipped once after seeing which way it actually went, is both
         # simpler and harder to get wrong - and it survives recalibration.
+        # Selecting "Leader arm" alone does NOT make the follower track the leader:
+        # that needs an explicit Engage, and Engage is refused until the two arms
+        # are close (otherwise enabling it snaps the follower to wherever the
+        # leader happens to be). MainWindow owns the rules; this is the view.
+        self.engage_form = QWidget()
+        self.engage_btn = QPushButton("Engage teleop")
+        self.engage_btn.setObjectName("engageButton")
+        self.engage_btn.setProperty("engaged", False)
+        self.engage_btn.setEnabled(False)
+        self.engage_btn.clicked.connect(lambda: self.engage_toggled.emit(not self._engaged))
+        self._engaged = False
+        self.tolerance_spin = QDoubleSpinBox()
+        self.tolerance_spin.setRange(2.0, 45.0)
+        self.tolerance_spin.setDecimals(0)
+        self.tolerance_spin.setSuffix(" deg")
+        self.tolerance_spin.setValue(10.0)
+        self.tolerance_spin.setToolTip(
+            "How close every arm joint of the leader must be to the follower before\n"
+            "Engage is allowed. The gripper is not part of the check."
+        )
+        self.tolerance_spin.valueChanged.connect(self.tolerance_changed)
+        self.align_label = QLabel("")
+        self.align_label.setObjectName("sectionCaption")
+        self.align_label.setWordWrap(True)
+        self.align_bar = AlignmentBar()
+        engage_top = QHBoxLayout()
+        engage_top.addWidget(self.engage_btn, 1)
+        engage_top.addWidget(QLabel("Tolerance"))
+        engage_top.addWidget(self.tolerance_spin)
+        engage_layout = QVBoxLayout(self.engage_form)
+        engage_layout.setContentsMargins(0, 4, 0, 0)
+        engage_layout.addLayout(engage_top)
+        engage_layout.addWidget(self.align_bar)
+        engage_layout.addWidget(self.align_label)
+        self.engage_form.setVisible(False)
+
         self.gripper_invert_check = QCheckBox("Gripper moves the wrong way (invert)")
         self.gripper_invert_check.setToolTip(
             "Tick this if squeezing the leader OPENS the follower's gripper.\n"
@@ -147,6 +218,7 @@ class ControlSourcePanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addLayout(tiles)
         layout.addWidget(self.leader_form)
+        layout.addWidget(self.engage_form)
         layout.addLayout(invert_row)
         layout.addStretch(1)
 
@@ -225,6 +297,7 @@ class ControlSourcePanel(QGroupBox):
     def _on_source_clicked(self, source_id: int) -> None:
         source = SOURCES[source_id]
         self.leader_form.setVisible(source == "leader")
+        self.engage_form.setVisible(source == "leader")
         self.source_changed.emit(source)
 
     def force_manual(self) -> None:
@@ -251,6 +324,24 @@ class ControlSourcePanel(QGroupBox):
         self.leader_status.setObjectName("statusGood" if connected else "statusDanger")
         self.leader_status.setStyleSheet("")
         self.leader_calibrate_btn.setEnabled(connected)
+
+    def set_tolerance(self, degrees: float) -> None:
+        """Reflect the persisted value without re-emitting it back out."""
+        self.tolerance_spin.blockSignals(True)
+        self.tolerance_spin.setValue(degrees)
+        self.tolerance_spin.blockSignals(False)
+
+    def set_teleop_state(self, engaged: bool, can_engage: bool, text: str,
+                         errors: list[float | None], tolerance: float) -> None:
+        self._engaged = engaged
+        self.engage_btn.setText("Disengage" if engaged else "Engage teleop")
+        self.engage_btn.setEnabled(engaged or can_engage)
+        if self.engage_btn.property("engaged") != engaged:
+            self.engage_btn.setProperty("engaged", engaged)
+            self.engage_btn.style().unpolish(self.engage_btn)   # dynamic property: re-evaluate the QSS
+            self.engage_btn.style().polish(self.engage_btn)
+        self.align_label.setText(text)
+        self.align_bar.set_errors(errors, tolerance)
 
     def current_source(self) -> str:
         return SOURCES[self.group.checkedId()]

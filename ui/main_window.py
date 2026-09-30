@@ -281,6 +281,11 @@ class MainWindow(QMainWindow):
         # this is the only place that state exists - _on_torque is the sole
         # writer, matching request_torque's own fire-and-forget shape.
         self.follower_torque_enabled: bool = False
+        # Leader -> follower tracking only runs while this is True (see
+        # _on_engage_toggled); merely selecting the Leader arm source never starts it.
+        self.teleop_engaged: bool = False
+        self._leader_converted: dict[str, float] = {}   # latest leader pose in FOLLOWER degrees
+        self.teleop_tolerance_deg: float = float(self._load_settings().get("teleop_align_tolerance_deg", 10.0))
         self._follower_connected = False
         self._leader_connected = False
         self.leader_worker: RobotWorker | None = None
@@ -385,6 +390,9 @@ class MainWindow(QMainWindow):
 
         # -- wiring: control source / teleoperation -------------------------
         self.control_source_panel.source_changed.connect(self._on_control_source_changed)
+        self.control_source_panel.engage_toggled.connect(self._on_engage_toggled)
+        self.control_source_panel.tolerance_changed.connect(self._on_teleop_tolerance_changed)
+        self.control_source_panel.set_tolerance(self.teleop_tolerance_deg)
         self.control_source_panel.set_gripper_invert(self.gripper_invert_override)
         self.control_source_panel.gripper_invert_toggled.connect(self._on_gripper_invert_toggled)
         self.control_source_panel.set_relay_trim(self.relay_trim_deg)
@@ -858,6 +866,7 @@ class MainWindow(QMainWindow):
         self.connection_panel.set_connected(False)
         self._follower_connected = False
         self.follower_torque_enabled = False
+        self._disengage_teleop("follower disconnected")
         self._update_status_chips()
 
     def _on_connection_changed(self, connected: bool) -> None:
@@ -865,6 +874,7 @@ class MainWindow(QMainWindow):
         self._follower_connected = connected
         if not connected:
             self.follower_torque_enabled = False
+            self._disengage_teleop("follower disconnected")
         self._update_status_chips()
         if connected:
             self.statusBar().showMessage(f"Connected to {self.robot_worker.port}")
@@ -906,6 +916,8 @@ class MainWindow(QMainWindow):
             self.robot_worker.request_torque(enabled)
             self.session_logger.log_event(f"Follower: torque {'ENABLED' if enabled else 'disabled'}")
         self.follower_torque_enabled = enabled
+        if not enabled:
+            self._disengage_teleop("follower torque off")
         self._update_status_chips()
 
     def _on_positions_updated(self, positions: dict[str, float]) -> None:
@@ -981,12 +993,81 @@ class MainWindow(QMainWindow):
         if self.robot_worker:
             self.robot_worker.request_torque(False)
         self.follower_torque_enabled = False
+        self._disengage_teleop("Stop pressed")
         self.control_source_panel.force_manual()
         self._jog_release_all()
         self._on_stop_sequence()
         self.statusBar().showMessage("STOP: follower torque off, control set to Manual")
         self.session_logger.log_event("STOP pressed: follower torque disabled, control source -> manual")
         self._update_status_chips()
+
+    # ---------------------------------------------------------------- teleop engage gate
+    def _teleop_alignment(self) -> tuple[bool, str, list[float | None]]:
+        """(can_engage, explanation, per-arm-joint error in degrees or None).
+
+        Engaging makes the follower chase the leader at once, so it is only
+        allowed when both arms are live, the follower has torque (else Engage
+        would say nothing about the arm it is about to move), and every ARM
+        joint is already within the tolerance. The gripper is excluded: it is
+        allowed to differ, and a gripper closing is not the hazard here."""
+        joints = list(self.robot_profile.joint_order[:-1])
+        errors: list[float | None] = []
+        for name in joints:
+            if name in self._leader_converted and name in self.current_positions:
+                errors.append(abs(self._leader_converted[name] - self.current_positions[name]))
+            else:
+                errors.append(None)
+        tol = self.teleop_tolerance_deg
+        if not self._leader_connected:
+            return False, "Connect the leader arm first.", errors
+        if not self._follower_connected:
+            return False, "Connect the follower first.", errors
+        if not self.follower_torque_enabled:
+            return False, "Turn follower torque ON first.", errors
+        if any(e is None for e in errors):
+            return False, "Waiting for position data from both arms.", errors
+        worst_index = max(range(len(errors)), key=lambda i: errors[i])
+        worst = errors[worst_index]
+        if worst > tol:
+            return False, (f"Move the leader closer to the follower: {joints[worst_index]} is "
+                           f"{worst:.0f} deg apart (limit {tol:.0f}). The ghost shows the leader pose."), errors
+        return True, f"Aligned (worst joint {worst:.1f} deg). Safe to engage.", errors
+
+    def _update_teleop_ui(self) -> None:
+        can, text, errors = self._teleop_alignment()
+        if self.teleop_engaged:
+            text = "Teleop engaged: the follower is tracking the leader."
+        self.control_source_panel.set_teleop_state(self.teleop_engaged, can, text, errors, self.teleop_tolerance_deg)
+
+    def _on_engage_toggled(self, want: bool) -> None:
+        if not want:
+            self._disengage_teleop("button")
+            return
+        can, text, _errors = self._teleop_alignment()
+        if not can or self.control_source != "leader":
+            self.statusBar().showMessage(f"Cannot engage teleop: {text}")
+            return
+        self.teleop_engaged = True
+        self.statusBar().showMessage("Teleop engaged")
+        self.session_logger.log_event(
+            f"Teleop: ENGAGED (arms aligned within {self.teleop_tolerance_deg:.0f} deg)"
+        )
+        self._update_teleop_ui()
+        self._update_status_chips()
+
+    def _disengage_teleop(self, reason: str) -> None:
+        if not self.teleop_engaged:
+            return
+        self.teleop_engaged = False
+        self.session_logger.log_event(f"Teleop: disengaged ({reason})")
+        self.statusBar().showMessage(f"Teleop disengaged: {reason}")
+        self._update_teleop_ui()
+        self._update_status_chips()
+
+    def _on_teleop_tolerance_changed(self, degrees: float) -> None:
+        self.teleop_tolerance_deg = degrees
+        self._save_setting("teleop_align_tolerance_deg", degrees)
+        self._update_teleop_ui()
 
     def _update_status_chips(self) -> None:
         bar = self.top_bar
@@ -996,12 +1077,18 @@ class MainWindow(QMainWindow):
                      "good" if self._leader_connected else "off")
         torque = self._follower_connected and self.follower_torque_enabled
         bar.set_chip("torque", "Torque ON" if torque else "Torque off", "warn" if torque else "off")
-        bar.set_chip("source", self.control_source.capitalize(),
-                     "off" if self.control_source == "manual" else "good")
+        if self.control_source == "leader":
+            bar.set_chip("source", "Teleop engaged" if self.teleop_engaged else "Leader (standby)",
+                         "good" if self.teleop_engaged else "warn")
+        else:
+            bar.set_chip("source", self.control_source.capitalize(),
+                         "off" if self.control_source == "manual" else "good")
 
     # ---------------------------------------------------------------- control source / teleoperation
     def _on_control_source_changed(self, source: str) -> None:
         self.control_source = source
+        if source != "leader":
+            self._disengage_teleop(f"control source -> {source}")
         self._apply_control_source_lock()
         self._update_status_chips()
         if source != "keyboard":
@@ -1046,11 +1133,16 @@ class MainWindow(QMainWindow):
         self.leader_deg_ranges.clear()
         self.control_source_panel.set_leader_connected(False)
         self._leader_connected = False
+        self._leader_converted.clear()
+        self._disengage_teleop("leader disconnected")
         self._update_status_chips()
 
     def _on_leader_connection_changed(self, connected: bool) -> None:
         self.control_source_panel.set_leader_connected(connected)
         self._leader_connected = connected
+        if not connected:
+            self._leader_converted.clear()
+            self._disengage_teleop("leader disconnected")
         self._update_status_chips()
         if connected and self.leader_worker:
             # the leader is meant to be moved by hand - always free-spinning
@@ -1090,10 +1182,13 @@ class MainWindow(QMainWindow):
         match what teleoperating would actually send once a follower joined."""
         self.session_logger.log_positions("leader", positions)  # internally throttled to 2Hz
         converted = {name: self._leader_deg_to_follower_deg(name, degrees) for name, degrees in positions.items()}
-        if self.control_source == "leader" and self.robot_worker and self._playback_index is None:
+        self._leader_converted.update(converted)
+        if self.teleop_engaged and self.control_source == "leader" and self.robot_worker and self._playback_index is None:
             for name, degrees in converted.items():
                 self.robot_worker.request_goal(name, degrees)
-        else:
+        elif self.robot_worker is None:
+            # leader-only bring-up: show the leader's pose. With a follower connected the
+            # follower's own feedback is the truth, and the leader is only shown as a ghost.
             self.current_positions.update(converted)
 
     # Fraction-remap alone still leaves the gripper joint short of true
@@ -1601,6 +1696,9 @@ class MainWindow(QMainWindow):
         if not self.twin_panel.ghost_enabled():
             return None
         candidates: list[dict[str, float]] = []
+        if (self.control_source == "leader" and not self.teleop_engaged
+                and self._leader_connected and self._leader_converted):
+            candidates.append(dict(self._leader_converted))   # where the follower WOULD go on Engage
         if self._playback_index is not None and self._playback_target_positions:
             candidates.append(self._playback_target_positions)
         if self._jog_target and self.robot_worker and (
@@ -1629,6 +1727,7 @@ class MainWindow(QMainWindow):
         thread from ever falling behind."""
         self.joint_panel.update_feedback(self.current_positions)
         self._update_cartesian_readout()
+        self._update_teleop_ui()
         if self.twin_worker:
             self.twin_worker.set_fractions(self._positions_to_fractions())
             self.twin_worker.set_ghost(self._compute_ghost())

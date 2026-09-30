@@ -262,6 +262,8 @@ QPushButton#modeTile:checked {{
     color: {COLORS['text']};
 }}
 QPushButton#modeTile:disabled {{ color: {COLORS['border']}; background-color: {COLORS['panel']}; }}
+QPushButton#engageButton {{ padding: 9px 22px; font-size: 14px; }}
+QPushButton#engageButton[engaged="true"] {{ background-color: {COLORS['danger']}; color: #2a0a0a; }}
 QLabel#cardHandle {{ color: {COLORS['border']}; font-size: 8px; letter-spacing: 2px; }}
 QLabel#cardHandle:hover {{ color: {COLORS['text_muted']}; }}
 QLabel#cardGrip {{ color: {COLORS['text_muted']}; font-size: 12px; }}
