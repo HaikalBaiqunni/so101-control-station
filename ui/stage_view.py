@@ -354,6 +354,13 @@ class StageView(QWidget):
             for part in self.cards[key].parts:
                 part.setVisible(True)
         self._auto.clear()
+        # Anything that is about to be open must be measured open: a card that was just
+        # expanded still has its parts hidden from the folded state, and measuring it like
+        # that gave a 24 px sliver (the empty bar seen after minimise -> expand).
+        for key, card in self.cards.items():
+            if key not in self._collapsed:
+                for part in card.parts:
+                    part.setVisible(True)
 
         keys = [k for k in PRIORITY if k != "camera" or not self.camera_card.isHidden()]
         sizes = {k: self._expanded_size_of(k, w, h, chrome, jog_w, dock_w) for k in keys}

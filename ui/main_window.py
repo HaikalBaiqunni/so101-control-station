@@ -43,6 +43,7 @@ from core.setup_worker import SetupWorker
 from core.twin_worker import TwinWorker
 from core.workers import CameraWorker, GamepadWorker, RobotWorker
 
+from .about_dialog import AboutDialog
 from .calibration_panel import CalibrationPanel
 from .camera_panel import CameraPanel
 from .command_palette import CommandPalette, PaletteAction
@@ -256,6 +257,7 @@ class MainWindow(QMainWindow):
         self.top_bar.nav_toggled.connect(self._on_nav_toggled)
         self.top_bar.stop_requested.connect(self._on_emergency_stop)
         self.top_bar.palette_requested.connect(self._open_palette)
+        self.top_bar.about_requested.connect(self._show_about)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_palette)
         QShortcut(QKeySequence("Ctrl+Shift+Space"), self, activated=self._on_emergency_stop)
 
@@ -1035,6 +1037,7 @@ class MainWindow(QMainWindow):
             PaletteAction("Toggle camera card", "view", self.twin_panel.camera_check.toggle),
             PaletteAction("Reset 3D view", "camera angle", self.twin_panel.reset_view_requested.emit),
             PaletteAction("Reset card layout", "positions and minimised cards", self.stage.reset_layout),
+            PaletteAction("About", "creator, version, tech stack", self._show_about, "credits license"),
         ]
         if is_dm:
             actions += [
@@ -1044,6 +1047,9 @@ class MainWindow(QMainWindow):
                               self._on_leader_calibrate_requested, "sweep"),
             ]
         return actions
+
+    def _show_about(self) -> None:
+        AboutDialog(self).exec()
 
     def _open_palette(self) -> None:
         palette = CommandPalette(self)

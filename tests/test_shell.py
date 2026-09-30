@@ -533,10 +533,15 @@ def test_cards_minimise_to_a_tab_and_expand_again(win):
 def test_the_view_card_minimises_too(win):
     win.resize(1440, 900)
     win.show()
+    full_height = win.stage.cards["view"].height()
+    assert full_height > 200
     win.twin_panel.view_min_btn.click()
     assert win.stage.is_collapsed("view") and win.stage.cards["view"].width() < 200
     win.stage.tabs["view"].click()
     assert win.stage.cards["view"].width() == 300
+    # right away, without waiting for another layout event: not a collapsed-height sliver
+    assert win.stage.cards["view"].height() == full_height
+    assert all(part.isVisible() for part in win.stage.cards["view"].parts)
 
 
 def test_minimised_state_is_saved_and_restored(win):
@@ -647,3 +652,30 @@ def test_tcp_summary_shows_only_in_joint_mode(win):
     assert win.jog_panel.tcp_label.isVisible()
     win.jog_panel.set_tcp_summary("")
     assert not win.jog_panel.tcp_label.isVisible()
+
+
+# ---------------------------------------------------------------- about
+def test_about_names_the_creator_and_the_stack():
+    from ui.about_dialog import about_text
+    text = about_text()
+    assert "Haikal Baiqunni" in text
+    for item in ("PySide6", "MuJoCo", "NumPy", "OpenCV", "Feetech", "motorbridge", "B601-DM", "SO-101"):
+        assert item in text
+
+
+def test_about_version_matches_pyproject():
+    import re
+    from pathlib import Path
+
+    from ui.about_dialog import APP_VERSION
+    pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert re.search(rf'^version\s*=\s*"{re.escape(APP_VERSION)}"', pyproject, re.M)
+
+
+def test_about_opens_from_the_top_bar_and_the_palette(win, monkeypatch):
+    from ui.about_dialog import AboutDialog
+    opened = []
+    monkeypatch.setattr(AboutDialog, "exec", lambda self: opened.append(self.windowTitle()) or 0)
+    win.top_bar.about_btn.click()
+    assert len(opened) == 1 and "About" in opened[0]
+    assert any(a.title == "About" for a in win._palette_actions())

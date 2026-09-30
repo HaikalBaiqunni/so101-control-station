@@ -23,6 +23,7 @@ class TopBar(QWidget):
     nav_toggled = Signal(str, bool)   # "waypoints" | "telemetry" | "tune" | "setup", checked
     stop_requested = Signal()
     palette_requested = Signal()
+    about_requested = Signal()
 
     NAV = (("waypoints", "Waypoints"), ("telemetry", "Telemetry"), ("tune", "Tune"), ("setup", "Setup"))
     BAR_H = BAR_H
@@ -78,6 +79,14 @@ class TopBar(QWidget):
             button.toggled.connect(lambda checked, k=key: self.nav_toggled.emit(k, checked))
             self.nav_buttons[key] = button
             right.addWidget(button)
+        self.about_btn = QPushButton("")
+        self.about_btn.setObjectName("segButton")
+        self.about_btn.setFocusPolicy(Qt.NoFocus)
+        self.about_btn.setIcon(icon("info", COLORS["text_muted"]))
+        self.about_btn.setIconSize(QSize(18, 18))
+        self.about_btn.setToolTip("About this app")
+        self.about_btn.clicked.connect(self.about_requested)
+        right.addWidget(self.about_btn)
         layout.addWidget(self.right_pill)
 
         self.stop_btn = QPushButton("Stop")
