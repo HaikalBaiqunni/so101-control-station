@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -57,9 +56,11 @@ from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .jog_panel import JogPanel
 from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
+from .setup_hub import SetupHub
 from .setup_panel import SetupPanel
 from .teaching_panel import TeachingPanel
 from .telemetry_panel import TelemetryPanel, convert_telemetry
+from .top_bar import TopBar
 from .twin_panel import TwinPanel
 
 GAMEPAD_TICK_MS = 33          # ~30 Hz jog integration
@@ -159,7 +160,7 @@ class MainWindow(QMainWindow):
         self.resize(1560, 880)
         self.setFocusPolicy(Qt.StrongFocus)  # so keyPressEvent fires without a child widget stealing focus first
 
-        # ================================================================ CONTROL TAB
+        # ================================================================ PANELS
         self.connection_panel = ConnectionPanel()
         self.control_source_panel = ControlSourcePanel()
         self.joint_panel = JointPanel()
@@ -171,32 +172,10 @@ class MainWindow(QMainWindow):
         self.camera_panel = CameraPanel()
         self.telemetry_panel = TelemetryPanel()
 
-        left = QVBoxLayout()
-        left.addWidget(self.connection_panel)
-        left.addWidget(self.control_source_panel)
-        left.addWidget(self.jog_panel)
-        left.addWidget(self.teaching_panel)
-        left.addWidget(self.gamepad_panel)
-        left.addWidget(self.keyboard_jog_panel)
-        left.addStretch(1)
-        left_widget = QWidget()
-        left_widget.setLayout(left)
-
-        # a narrow, fixed-ish control column + digital twin/camera side by
-        # side (not stacked) - comparing "is the twin doing what the camera
-        # shows" is much easier glancing left-right than scrolling up-down.
-        # QSplitter (not a plain grid) so the user can also just drag to
-        # resize instead of living with whatever ratio I hardcode.
-        left_scroll = QScrollArea()
-        left_scroll.setWidget(left_widget)
-        left_scroll.setWidgetResizable(True)
-        # Wide enough that no panel in the column forces a horizontal scrollbar - the
-        # widest (Control Source) needs ~390px plus the vertical scrollbar. Below that the
-        # column scrolls sideways and the right-hand buttons (the Jog panel's +) vanish.
-        left_scroll.setMinimumWidth(426)
-
-        # twin + camera side by side. Telemetry used to sit underneath them; it now
-        # has its own tab (4 - Telemetry), so this pair gets the whole column.
+        # ================================================================ STAGE PAGE
+        # Twin (+ camera) fills the centre; the operating dock (connect, control
+        # source, jog) sits under it; Waypoints / Telemetry open in a drawer on
+        # the right only when asked for.
         view_row = QSplitter(Qt.Horizontal)
         view_row.addWidget(self.twin_panel)
         view_row.addWidget(self.camera_panel)
@@ -204,73 +183,88 @@ class MainWindow(QMainWindow):
         view_row.setStretchFactor(1, 1)   # camera: secondary, for comparison
         view_row.setSizes([760, 420])
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_scroll)
-        splitter.addWidget(view_row)
-        splitter.setStretchFactor(0, 0)   # controls: stay narrow
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([430, 1130])
+        dock_layout = QHBoxLayout()
+        dock_layout.addWidget(self.connection_panel)
+        dock_layout.addWidget(self.control_source_panel)
+        dock_layout.addWidget(self.jog_panel)
+        dock_widget = QWidget()
+        dock_widget.setLayout(dock_layout)
+        dock_scroll = QScrollArea()
+        dock_scroll.setWidget(dock_widget)
+        dock_scroll.setWidgetResizable(True)
+        dock_scroll.setMinimumHeight(260)
 
-        control_tab = QWidget()
-        control_layout = QVBoxLayout(control_tab)
-        control_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.addWidget(splitter)
+        center = QSplitter(Qt.Vertical)
+        center.addWidget(view_row)
+        center.addWidget(dock_scroll)
+        center.setStretchFactor(0, 1)
+        center.setStretchFactor(1, 0)
+        center.setSizes([420, 430])
 
-        # ================================================================ SETUP + CALIBRATION TABS
+        self.drawer = QStackedWidget()
+        self.drawer.addWidget(self.teaching_panel)
+        self.drawer.addWidget(self.telemetry_panel)
+        self.drawer.setMinimumWidth(400)
+        self.drawer.hide()
+
+        self.stage_splitter = QSplitter(Qt.Horizontal)
+        self.stage_splitter.addWidget(center)
+        self.stage_splitter.addWidget(self.drawer)
+        self.stage_splitter.setStretchFactor(0, 1)
+        self.stage_splitter.setStretchFactor(1, 0)
+        self.stage_splitter.setSizes([1100, 420])
+
+        # ================================================================ SETUP HUB
         self.setup_panel = SetupPanel()
         # A per-robot id-assignment scheme (SO-101's Feetech servos and the
         # B601-DM's Damiao motors are utterly different buses/protocols - see
-        # core/dm_setup_worker.py) means "1 - Setup" swaps its WHOLE content
-        # by profile rather than being one panel with some rows hidden - a
-        # stacked widget is what lets both live fully-built, independently
-        # wired to their own worker, with only one ever visible/enabled at a
-        # time (see _on_robot_profile_changed).
+        # core/dm_setup_worker.py) means the "Motors and ids" section swaps its
+        # WHOLE content by profile rather than being one panel with some rows
+        # hidden - a stacked widget is what lets both live fully-built,
+        # independently wired to their own worker, with only one ever
+        # visible/enabled at a time (see _on_robot_profile_changed).
         self.dm_setup_panel = DmSetupPanel(joint_order=PROFILES["rebot_b601_dm"].joint_order)
         self.setup_stack = QStackedWidget()
         self.setup_stack.addWidget(self.setup_panel)
         self.setup_stack.addWidget(self.dm_setup_panel)
         self.calibration_panel = CalibrationPanel()
 
-        # Confirmed a real gap here on real hardware: unlike the Control
-        # tab's left column (left_scroll above), this tab was never wrapped
-        # in a QScrollArea - DmSetupPanel's own content (7 CAN-id rows plus,
-        # since Phase 2.5, a 7-row MIT kp/kd grid) can exceed the window's
-        # visible height with no way to reach the rest, just silent clipping.
-        setup_scroll = QScrollArea()
-        setup_scroll.setWidget(self.setup_stack)
-        setup_scroll.setWidgetResizable(True)
+        inputs_widget = QWidget()
+        inputs_layout = QVBoxLayout(inputs_widget)
+        inputs_layout.addWidget(self.gamepad_panel)
+        inputs_layout.addWidget(self.keyboard_jog_panel)
+        inputs_layout.addStretch(1)
 
-        # Tabs are ordered and numbered by the order they must actually be
-        # done in, not by how often an experienced user reaches for them:
-        # a servo with no id can't be calibrated, and an uncalibrated arm
-        # can't be jogged. Landing a first-time user on "Control" is what
-        # made this confusing in the first place.
-        self.tabs = QTabWidget()
-        self.tabs.addTab(setup_scroll, "1 - Setup")
-        self.tabs.addTab(self.calibration_panel, "2 - Calibration")
-        self.tabs.addTab(control_tab, "3 - Control")
-        # Monitoring, not operating: it has its own tab so the Control tab can give
-        # the twin and camera the whole window.
-        self.tabs.addTab(self.telemetry_panel, "4 - Telemetry")
+        # Every section scrolls (SetupHub wraps it): DmSetupPanel alone can
+        # exceed the window height, which once meant silent clipping.
+        self.setup_hub = SetupHub()
+        self.setup_hub.add_section("Motors and ids", self.setup_stack)
+        self.setup_hub.add_section("Calibration", self.calibration_panel)
+        self.setup_hub.add_section("Inputs", inputs_widget)
+        self.setup_hub.back_requested.connect(lambda: self.top_bar.nav_buttons["setup"].setChecked(False))
 
-        # Robot selection sits ABOVE the tabs, not inside the Control tab -
-        # which robot is being driven decides whether Setup/Calibration make
-        # sense to use AT ALL (see _apply_robot_hardware_gate), not just what
-        # the Control tab shows.
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.stage_splitter)   # PAGE_STAGE
+        self.pages.addWidget(self.setup_hub)        # PAGE_SETUP
+
+        # Robot selection lives in the always-visible top bar - which robot is
+        # being driven decides whether Setup/Calibration make sense to use AT
+        # ALL (see _apply_robot_hardware_gate), not just what the stage shows.
         self.robot_combo = QComboBox()
         for profile in PROFILES.values():
             self.robot_combo.addItem(profile.label, profile.key)
         self.robot_combo.currentIndexChanged.connect(self._on_robot_profile_changed)
 
-        robot_row = QHBoxLayout()
-        robot_row.addWidget(QLabel("Robot"))
-        robot_row.addWidget(self.robot_combo, 1)
+        self.top_bar = TopBar(self.robot_combo)
+        self.top_bar.nav_toggled.connect(self._on_nav_toggled)
+        self.top_bar.stop_requested.connect(self._on_emergency_stop)
 
         central = QWidget()
         central_layout = QVBoxLayout(central)
-        central_layout.setContentsMargins(6, 6, 6, 0)
-        central_layout.addLayout(robot_row)
-        central_layout.addWidget(self.tabs)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.top_bar)
+        central_layout.addWidget(self.pages, 1)
         self.setCentralWidget(central)
 
         self.setStatusBar(QStatusBar())
@@ -290,6 +284,8 @@ class MainWindow(QMainWindow):
         # this is the only place that state exists - _on_torque is the sole
         # writer, matching request_torque's own fire-and-forget shape.
         self.follower_torque_enabled: bool = False
+        self._follower_connected = False
+        self._leader_connected = False
         self.leader_worker: RobotWorker | None = None
         self.calibration_worker: CalibrationWorker | None = None
         self.setup_worker: SetupWorker | None = None
@@ -329,6 +325,7 @@ class MainWindow(QMainWindow):
             if name in JOINT_ORDER
         }
         self.control_source: str = "manual"
+        self._update_status_chips()
         self._last_gamepad_axes: dict[int, float] = {}
         self._last_tick = time.monotonic()
         self._held_keys: set = set()
@@ -856,9 +853,16 @@ class MainWindow(QMainWindow):
         # failed reconnect would keep using the old one indefinitely.
         self.joint_deg_ranges.clear()
         self.connection_panel.set_connected(False)
+        self._follower_connected = False
+        self.follower_torque_enabled = False
+        self._update_status_chips()
 
     def _on_connection_changed(self, connected: bool) -> None:
         self.connection_panel.set_connected(connected)
+        self._follower_connected = connected
+        if not connected:
+            self.follower_torque_enabled = False
+        self._update_status_chips()
         if connected:
             self.statusBar().showMessage(f"Connected to {self.robot_worker.port}")
             self.session_logger.log_event(f"Follower: connected on {self.robot_worker.port}")
@@ -899,6 +903,7 @@ class MainWindow(QMainWindow):
             self.robot_worker.request_torque(enabled)
             self.session_logger.log_event(f"Follower: torque {'ENABLED' if enabled else 'disabled'}")
         self.follower_torque_enabled = enabled
+        self._update_status_chips()
 
     def _on_positions_updated(self, positions: dict[str, float]) -> None:
         """Cheap on purpose - just a dict merge. Runs at the robot worker's
@@ -924,10 +929,60 @@ class MainWindow(QMainWindow):
         if self.robot_worker:
             self.robot_worker.request_goal(name, degrees)
 
+    # ---------------------------------------------------------------- top bar / pages
+    PAGE_STAGE = 0
+    PAGE_SETUP = 1
+
+    def _on_nav_toggled(self, key: str, checked: bool) -> None:
+        if key == "setup":
+            self.pages.setCurrentIndex(self.PAGE_SETUP if checked else self.PAGE_STAGE)
+            if checked:
+                self.top_bar.set_nav_checked("waypoints", False)
+                self.top_bar.set_nav_checked("telemetry", False)
+                self.drawer.hide()
+            return
+        # waypoints / telemetry share one drawer on the stage
+        if checked:
+            other = "telemetry" if key == "waypoints" else "waypoints"
+            self.top_bar.set_nav_checked(other, False)
+            self.top_bar.set_nav_checked("setup", False)
+            self.pages.setCurrentIndex(self.PAGE_STAGE)
+            self.drawer.setCurrentWidget(self.teaching_panel if key == "waypoints" else self.telemetry_panel)
+            self.drawer.show()
+        else:
+            self.drawer.hide()
+
+    def _on_emergency_stop(self) -> None:
+        """Follower torque OFF and control back to Manual. Forcing Manual matters:
+        with a leader relay still active, re-enabling torque later would make the
+        arm jump straight to wherever the leader is. The leader itself is always
+        free-spinning, so it needs nothing."""
+        if self.robot_worker:
+            self.robot_worker.request_torque(False)
+        self.follower_torque_enabled = False
+        self.control_source_panel.force_manual()
+        self._jog_release_all()
+        self._on_stop_sequence()
+        self.statusBar().showMessage("STOP: follower torque off, control set to Manual")
+        self.session_logger.log_event("STOP pressed: follower torque disabled, control source -> manual")
+        self._update_status_chips()
+
+    def _update_status_chips(self) -> None:
+        bar = self.top_bar
+        bar.set_chip("follower", "Follower online" if self._follower_connected else "Follower offline",
+                     "good" if self._follower_connected else "off")
+        bar.set_chip("leader", "Leader online" if self._leader_connected else "Leader offline",
+                     "good" if self._leader_connected else "off")
+        torque = self._follower_connected and self.follower_torque_enabled
+        bar.set_chip("torque", "Torque ON" if torque else "Torque off", "warn" if torque else "off")
+        bar.set_chip("source", self.control_source.capitalize(),
+                     "off" if self.control_source == "manual" else "good")
+
     # ---------------------------------------------------------------- control source / teleoperation
     def _on_control_source_changed(self, source: str) -> None:
         self.control_source = source
         self._apply_control_source_lock()
+        self._update_status_chips()
         if source != "keyboard":
             self._held_keys.clear()
             self.keyboard_jog_panel.clear_all()
@@ -969,9 +1024,13 @@ class MainWindow(QMainWindow):
             self._retire_worker(worker)
         self.leader_deg_ranges.clear()
         self.control_source_panel.set_leader_connected(False)
+        self._leader_connected = False
+        self._update_status_chips()
 
     def _on_leader_connection_changed(self, connected: bool) -> None:
         self.control_source_panel.set_leader_connected(connected)
+        self._leader_connected = connected
+        self._update_status_chips()
         if connected and self.leader_worker:
             # the leader is meant to be moved by hand - always free-spinning
             self.leader_worker.request_torque(False)

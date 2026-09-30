@@ -225,6 +225,27 @@ QPushButton#segButton:disabled {{
     color: {COLORS['border']};
     background-color: {COLORS['panel']};
 }}
+/* Top bar status chips (ui/top_bar.py) and the Setup hub section list. */
+QWidget#topBar {{ background-color: {COLORS['panel']}; border-bottom: 1px solid {COLORS['border']}; }}
+QLabel#chip {{
+    background-color: {COLORS['bg']};
+    color: {COLORS['text_muted']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 11px;
+    padding: 3px 12px;
+    font-weight: 600;
+}}
+QLabel#chip[state="good"] {{ color: {COLORS['good']}; border-color: {COLORS['good']}; }}
+QLabel#chip[state="warn"] {{ color: {COLORS['warn']}; border-color: {COLORS['warn']}; }}
+QListWidget#sectionList {{
+    background-color: {COLORS['panel']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 14px;
+    padding: 6px;
+    outline: none;
+}}
+QListWidget#sectionList::item {{ padding: 9px 12px; border-radius: 10px; color: {COLORS['text_muted']}; }}
+QListWidget#sectionList::item:selected {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text']}; }}
 QLabel#poseReadout {{
     font-family: "Consolas", "Menlo", monospace;
     color: {COLORS['text']};

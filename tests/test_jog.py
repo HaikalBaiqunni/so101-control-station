@@ -460,7 +460,11 @@ class TestFrameOverlay:
         assert cartesian_window._frame_overlay() is None
 
 
-def test_telemetry_lives_in_its_own_tab(window):
-    titles = [window.tabs.tabText(i) for i in range(window.tabs.count())]
-    assert titles == ["1 - Setup", "2 - Calibration", "3 - Control", "4 - Telemetry"]
-    assert window.tabs.widget(3) is window.telemetry_panel
+def test_telemetry_opens_in_the_drawer(window):
+    assert window.pages.currentIndex() == window.PAGE_STAGE
+    assert window.drawer.isHidden()
+    window.top_bar.nav_buttons["telemetry"].click()
+    assert not window.drawer.isHidden()
+    assert window.drawer.currentWidget() is window.telemetry_panel
+    window.top_bar.nav_buttons["telemetry"].click()
+    assert window.drawer.isHidden()
