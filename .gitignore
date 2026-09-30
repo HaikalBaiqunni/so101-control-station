@@ -14,3 +14,4 @@ follower_*.json
 leader_*.json
 waypoints*.json
 gui_settings.json
+tools/_shots/

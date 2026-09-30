@@ -99,3 +99,10 @@ is in the status bar.
 
 Be decent to each other. Assume the person asking an obvious question is
 exactly who this project was built for.
+
+## Regenerating the manual and its screenshots
+
+`docs/MANUAL.html` (English + Japanese, screenshots embedded) is generated: the text is in
+`tools/make_manual.py` and the screenshots are taken from the real GUI, offscreen, by
+`tools/manual_shots.py`. After changing the UI, run `python tools/make_manual.py` (a few minutes;
+`--cached` reuses the last capture from `tools/_shots/` for text-only edits). No hardware is needed.
