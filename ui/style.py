@@ -1,16 +1,17 @@
 """Shared look-and-feel: dark industrial-HMI theme, used across all panels."""
 
 COLORS = {
-    "bg": "#1e2126",
-    "panel": "#262b33",
-    "border": "#3a4048",
-    "text": "#e6e8eb",
-    "text_muted": "#9aa2ad",
-    "accent": "#3b82c4",
-    "accent_hover": "#4a94d8",
-    "good": "#4caf82",
-    "warn": "#d9a441",
-    "danger": "#d9534f",
+    "bg": "#12161b",
+    "panel": "#171b21",
+    "panel_alt": "#1d222a",
+    "border": "#2a303a",
+    "text": "#e8eaed",
+    "text_muted": "#8b93a1",
+    "accent": "#5b9dff",
+    "accent_hover": "#7bb0ff",
+    "good": "#3ecf8e",
+    "warn": "#f5b544",
+    "danger": "#ff6b6b",
 }
 
 # Categorical palette for "one line per joint on the same chart" (see
@@ -32,16 +33,16 @@ STYLE_SHEET = f"""
 QWidget {{
     background-color: {COLORS['bg']};
     color: {COLORS['text']};
-    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-family: "Segoe UI Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
 }}
 
 QGroupBox {{
     background-color: {COLORS['panel']};
     border: 1px solid {COLORS['border']};
-    border-radius: 4px;
+    border-radius: 14px;
     margin-top: 14px;
-    padding: 10px;
+    padding: 12px;
     font-weight: 600;
 }}
 QGroupBox::title {{
@@ -52,24 +53,49 @@ QGroupBox::title {{
     letter-spacing: 0.5px;
 }}
 
+/* Dark text on the (light) accent fill: white on #5b9dff is only ~2.9:1. */
 QPushButton {{
     background-color: {COLORS['accent']};
-    color: white;
+    color: #06121f;
     border: none;
-    border-radius: 3px;
-    padding: 6px 14px;
+    border-radius: 15px;
+    padding: 6px 16px;
     font-weight: 600;
 }}
 QPushButton:hover {{ background-color: {COLORS['accent_hover']}; }}
-QPushButton:disabled {{ background-color: {COLORS['border']}; color: {COLORS['text_muted']}; }}
-QPushButton#dangerButton {{ background-color: {COLORS['danger']}; }}
-QPushButton#dangerButton:hover {{ background-color: #e2685f; }}
+QPushButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
+QPushButton#dangerButton {{ background-color: {COLORS['danger']}; color: #2a0a0a; }}
+QPushButton#dangerButton:hover {{ background-color: #ff8585; }}
 
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{
     background-color: {COLORS['bg']};
     border: 1px solid {COLORS['border']};
-    border-radius: 3px;
-    padding: 4px 6px;
+    border-radius: 8px;
+    padding: 5px 8px;
+}}
+QComboBox:hover, QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover {{
+    border-color: {COLORS['text_muted']};
+}}
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+    border-color: {COLORS['accent']};
+}}
+
+/* Inner Table/Graph tabs (Telemetry) and any future QTabWidget: pill tabs
+   instead of the generic square ones. */
+QTabWidget::pane {{ border: none; }}
+QTabBar::tab {{
+    background: transparent;
+    color: {COLORS['text_muted']};
+    padding: 6px 16px;
+    border-radius: 15px;
+    margin-right: 4px;
+    font-weight: 600;
+}}
+QTabBar::tab:hover {{ color: {COLORS['text']}; }}
+QTabBar::tab:selected {{
+    background: {COLORS['panel_alt']};
+    color: {COLORS['text']};
+    border: 1px solid {COLORS['border']};
 }}
 
 QSlider::groove:horizontal {{
@@ -103,7 +129,7 @@ QStatusBar {{ background-color: {COLORS['panel']}; border-top: 1px solid {COLORS
    is more below, drag this" obvious instead of assumed-broken. */
 QScrollBar:vertical {{
     background: {COLORS['bg']};
-    width: 14px;
+    width: 10px;
     margin: 0;
 }}
 QScrollBar::handle:vertical {{
@@ -118,7 +144,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none
 
 QScrollBar:horizontal {{
     background: {COLORS['bg']};
-    height: 14px;
+    height: 10px;
     margin: 0;
 }}
 QScrollBar::handle:horizontal {{
@@ -152,14 +178,14 @@ QLabel#keycapJoint {{
 }}
 QFrame#keycap[active="true"] QLabel#keycapLetter,
 QFrame#keycap[active="true"] QLabel#keycapJoint {{
-    color: white;
+    color: #06121f;
 }}
 /* Jog panel: press-and-hold buttons and the Joint/World/Tool selector. */
 QPushButton#jogButton {{
     background-color: {COLORS['bg']};
     color: {COLORS['text']};
     border: 1px solid {COLORS['border']};
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 0;
     font-size: 17px;
     font-weight: 700;
@@ -168,7 +194,7 @@ QPushButton#jogButton:hover {{ border-color: {COLORS['accent_hover']}; }}
 QPushButton#jogButton:pressed {{
     background-color: {COLORS['accent']};
     border-color: {COLORS['accent_hover']};
-    color: white;
+    color: #06121f;
 }}
 QPushButton#jogButton:disabled {{
     background-color: {COLORS['panel']};
@@ -184,15 +210,16 @@ QPushButton#segButton {{
     background-color: {COLORS['bg']};
     color: {COLORS['text_muted']};
     border: 1px solid {COLORS['border']};
-    border-radius: 0;
-    padding: 6px 14px;
+    border-radius: 13px;
+    padding: 6px 16px;
+    margin-right: 3px;
     font-weight: 600;
 }}
 QPushButton#segButton:hover {{ color: {COLORS['text']}; }}
 QPushButton#segButton:checked {{
     background-color: {COLORS['accent']};
     border-color: {COLORS['accent_hover']};
-    color: white;
+    color: #06121f;
 }}
 QPushButton#segButton:disabled {{
     color: {COLORS['border']};
@@ -203,7 +230,7 @@ QLabel#poseReadout {{
     color: {COLORS['text']};
     background-color: {COLORS['bg']};
     border: 1px solid {COLORS['border']};
-    border-radius: 3px;
-    padding: 4px 8px;
+    border-radius: 8px;
+    padding: 4px 10px;
 }}
 """

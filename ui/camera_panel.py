@@ -46,7 +46,7 @@ class CameraPanel(QGroupBox):
         # the splitter gave it, feed running or not.
         self.view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.view.setAlignment(Qt.AlignCenter)
-        self.view.setStyleSheet("background-color: #101215; border: 1px solid #3a4048;")
+        self.view.setStyleSheet("background-color: #0d1014; border: 1px solid #2a303a; border-radius: 10px;")
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Device"))
