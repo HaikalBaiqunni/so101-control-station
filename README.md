@@ -7,7 +7,9 @@
 A standalone Python GUI that takes a Feetech STS3215-based **SO-101 /
 SO-ARM100** arm from *"I just opened the box"* to *"it's moving"* — motor id
 assignment, calibration, jogging, teleoperation and waypoint teaching, with a
-live MuJoCo digital twin and servo telemetry.
+live MuJoCo digital twin and servo telemetry. The same app also drives a second
+robot, the **reBot B601-DM** (Damiao CAN motors) with its Seeed Star Arm 102
+leader (see [Multi-robot support](#multi-robot-support-rebot-b601-dm-damiao--real-hardware-control)).
 
 **The problem it solves:** getting a new SO-101 running normally means several
 terminal tools, a calibration procedure driven by blocking `input()` prompts,
@@ -27,12 +29,28 @@ selection, connection chips and a red **Stop** (follower torque off + back to
 Manual). Waypoints, Telemetry and (B601-DM only) Tune open as a drawer;
 **Setup** opens the hub. No hardware connected in this shot.*
 
-![Demo: driving the digital twin through a joint sweep while orbiting the camera, with the HUD and telemetry table updating live](docs/demo.gif)
+![Tour of the redesigned layout: the B601-DM stage with a live MuJoCo twin and floating cards, leader standby with the ghost and the alignment gate, the Waypoints / Telemetry / Tune drawers, cards minimising to tabs, and the Setup hub for both the B601-DM and the SO-101](docs/layout_tour.gif)
 
-*The twin, HUD, joint values and telemetry table all reflect the same
-`current_positions`/telemetry state in real time — this is a scripted pose
-sweep for the demo, not a recording of real hardware, but it exercises the
-exact same code path a live arm drives through `RobotWorker`.*
+*A scripted tour (no hardware connected; poses and the "online" chips are simulated
+to show the layout). In order: the **stage** on the reBot B601-DM; the **leader arm
+on standby**, with the ghost showing where the follower would jump and **Engage
+teleop** locked until the arms are aligned; the **Waypoints**, **Telemetry** and
+**Tune** drawers; cards **minimising to tabs**; then the **Setup hub** for the
+B601-DM (CAN ids, gripper and leader sweeps, inputs, logs) and for the SO-101
+(bus scan, guarded id assignment, five-step calibration wizard).*
+
+### What the layout gives you
+
+| | |
+|---|---|
+| **Top bar** (floats over the stage) | Robot picker, Follower / Leader / Torque / source chips, Search (Ctrl+K), Waypoints, Telemetry, Tune (B601-DM), Setup, About, and a red **Stop** (follower torque off + back to Manual; **Ctrl+Shift+Space**). |
+| **Floating cards** | View, Jog, Connection + Control source, Camera. Drag by the handle, **minimise to a tab** with the - button, resize the camera from its corner. Cards never overlap each other or the top bar; with no room left, View / Camera fold into their tab by themselves. Positions are saved; *Reset layout* restores them. |
+| **Engage teleop** | Choosing *Leader arm* only puts it on standby. The follower tracks the leader after an explicit **Engage**, allowed when both arms are live, follower torque is on and every arm joint is within a tolerance (default 10 deg). Stop, torque off, a source change or either arm disconnecting ends it. |
+| **Tune drawer** (B601-DM) | POS_VEL / MIT mode, per-joint kp/kd with named **presets**, a **tracking chart** (commanded vs measured, peak error / settle / overshoot) and **+/-5 deg nudge** (torque on, Manual only). |
+| **Speed slider** | One slider (Jog card) for jog speed and, on the B601-DM, the POS_VEL velocity cap (30 % = 0.3 rad/s, ceiling 0.8 rad/s), so teleop and waypoint playback slow down with it. |
+| **Command palette** (Ctrl+K) | Navigation, view toggles, control-source choice and the calibration dialogs. Nothing in it moves an arm. |
+| **About** | Creator, version, licence and the tech stack with installed versions. |
+
 
 **Want every screen walked through with a screenshot, in English or
 Japanese?** See the illustrated **[User Manual](https://haikalbaiqunni.github.io/so101-control-station/MANUAL.html)**
@@ -202,7 +220,7 @@ Plus:
 
 ## Multi-robot support: reBot B601-DM (Damiao) — real hardware control
 
-A **Robot** selector sits above the tabs and switches the whole app between
+The **Robot** picker in the top bar switches the whole app between
 the SO-101 (Feetech) and a second arm, the **reBot B601-DM** (Damiao CAN
 motors) — same GUI, same Digital Twin, entirely different hardware
 underneath, and (unlike the leader/follower pairing above) genuinely
@@ -213,21 +231,21 @@ underneath, and (unlike the leader/follower pairing above) genuinely
 *Switching the Robot selector swaps the Digital Twin's MJCF, rebuilds the
 Jog panel for the new joint set, and reconfigures Setup for Damiao's own
 CAN-id workflow. This GIF drives the twin through a scripted pose sequence
-(not a recording of real hardware) to show the ghost overlay and Cartesian
+(not a recording of real hardware; recorded with the earlier tabbed layout) to show the ghost overlay and Cartesian
 reach clearly; the same rendering path is what a live B601-DM drives through
 on real hardware.*
 
 **Follower — driving the arm:**
 
-- **1 · Setup** has a dedicated **CAN id assignment** panel for the
+- **Setup › Motors and ids** has a dedicated **CAN id assignment** panel for the
   B601-DM's Damiao motors — connect one motor at a time over the same
   USB-serial adapter Damiao's own DM_Tools uses, probe it, give it a unique
   id + master id, saved to flash, then **Verify All** confirms every motor
   answers correctly with the whole arm wired up at once. Every Damiao motor
   ships answering to the same factory default id, so several on one bus
   can't be addressed individually until each has its own — same reasoning
-  as the Feetech Setup tab, different protocol underneath.
-- **3 · Control** drives the real motors: Connect, Torque on/off (seeded
+  as the Feetech Setup section, different protocol underneath.
+- **The stage** drives the real motors: Connect, Torque on/off (seeded
   with the motor's own current measured position before arming, so
   re-enabling holds still instead of lurching), Joint **and** Cartesian
   (World/Tool) jogging — the same kinematics/jog engine the SO-101 uses,
@@ -277,7 +295,7 @@ wrong assumption that it was Damiao-based too):
 This app is deliberately opinionated about not moving hardware it doesn't
 understand:
 
-- The Control tab **refuses to connect without a calibration file**. There is
+- Connect **refuses without a calibration file** (SO-101). There is
   no "just let me move it" mode.
 - Every commanded position is **clamped to the calibrated range** in raw ticks
   before it reaches a servo — a GUI bug or a wild slider drag cannot exceed it.
@@ -381,6 +399,14 @@ if that's where you're headed — it'll happily read the files saved here.
 Issues and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 Especially valuable: reports from people setting this up for the first time,
 since the whole point is that the first hour shouldn't be painful.
+
+## About
+
+Created by **Haikal Baiqunni**. Built with Python, PySide6 (Qt 6), MuJoCo, NumPy,
+OpenCV, pySerial, the Feetech servo SDK, `motorbridge-smart-servo` (FashionStar
+Star Arm 102), a vendored Damiao CAN driver and pygame. The same information,
+with the versions installed on your machine, is in the app under the **About**
+button (top bar, the "i").
 
 ## License
 

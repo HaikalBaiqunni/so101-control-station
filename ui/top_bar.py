@@ -43,6 +43,7 @@ class TopBar(QWidget):
         left.setContentsMargins(14, 4, 14, 4)
         left.setSpacing(8)
         left.addWidget(QLabel("Robot"))
+        robot_combo.setMinimumWidth(210)   # keep the full robot name readable when the chips grow
         left.addWidget(robot_combo)
         self.chips: dict[str, QLabel] = {}
         for key, text in (("follower", "Follower"), ("leader", "Leader"),
