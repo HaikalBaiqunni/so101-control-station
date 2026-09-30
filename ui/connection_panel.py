@@ -112,7 +112,9 @@ class ConnectionPanel(QGroupBox):
         self.torque_off_btn.setEnabled(connected)
         self.status_label.setText("CONNECTED" if connected else "DISCONNECTED")
         self.status_label.setObjectName("statusGood" if connected else "statusDanger")
-        self.status_label.setStyleSheet("")  # force style re-poll
+        # the objectName selects the colour: Qt only re-reads it after an explicit repolish
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         # The port / calibration rows only matter until connected; hiding them
         # keeps the floating card short while the arm is in use.
         for widget in (self.port_label, self.port_combo, self.refresh_btn,

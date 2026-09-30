@@ -5,13 +5,13 @@ no prior robotics experience and no familiarity with LeRobot.
 
 Follow it in order. Each stage is a hard prerequisite for the next one:
 
-| Stage | Tab | What it produces | Skip it and… |
+| Stage | Where in the app | What it produces | Skip it and… |
 |---|---|---|---|
 | [1. Install](#1-install) | — | a working `python main.py` | nothing runs |
 | [2. Wire it up](#2-wire-the-arm) | — | power + USB to the PC | no serial port appears |
-| [3. Give each servo an ID](#3-give-each-servo-an-id) | **1 · Setup** | six servos at ids 1–6 | the bus is unusable — six servos all answer to id 1 and their replies collide |
-| [4. Calibrate](#4-calibrate) | **2 · Calibration** | a calibration `.json` | the Control tab refuses to connect |
-| [5. Move it](#5-move-the-arm) | **3 · Control** | a moving arm | — |
+| [3. Give each servo an ID](#3-give-each-servo-an-id) | **Setup › Motors and ids** | six servos at ids 1–6 | the bus is unusable — six servos all answer to id 1 and their replies collide |
+| [4. Calibrate](#4-calibrate) | **Setup › Calibration** | a calibration `.json` | Connect refuses to run |
+| [5. Move it](#5-move-the-arm) | **The stage** | a moving arm | — |
 
 If something goes wrong at any point, check
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) before assuming the hardware is
@@ -51,9 +51,12 @@ Verify it starts:
 python main.py
 ```
 
-You should get a dark window with four tabs: **1 · Setup**, **2 ·
-Calibration**, **3 · Control** and **4 · Telemetry**. Nothing will work yet —
-that's expected, no hardware is connected.
+You should get a dark window with a 3D view in the middle (the *stage*), floating
+cards on top of it, and a bar along the top with a robot picker, status chips and
+buttons for **Waypoints**, **Telemetry**, **Setup** and a red **Stop**. Nothing will
+work yet — that's expected, no hardware is connected. Everything below that says
+"Setup" is the **Setup** button in the top bar; it opens a hub with the sections
+**Motors and ids**, **Calibration**, **Inputs** and **Data and logs**.
 
 > **Linux users:** you will also need permission to open serial ports.
 > `sudo usermod -a -G dialout $USER`, then log out and back in.
@@ -90,7 +93,7 @@ its own address.
 
 This is the same job as LeRobot's `lerobot-setup-motors`, done from the GUI.
 
-Open the **1 · Setup** tab.
+Open **Setup › Motors and ids**.
 
 1. **Connect exactly one servo** to the bus (powered).
 2. Pick the port. The dropdown shows a description alongside the device name —
@@ -130,7 +133,7 @@ If a row says *"found, but at 115200 baud"*, that servo is on the wrong
 baudrate — the rest of this app talks at 1 Mbps only. With just that servo on
 the bus, pick `1 000 000 baud` and click **Set servo baudrate**.
 
-**Disconnect on this tab before moving on.** Only one tab can hold the serial
+**Disconnect here before moving on.** Only one section can hold the serial
 port at a time; the app will tell you if you forget.
 
 ---
@@ -140,14 +143,14 @@ port at a time; the app will tell you if you forget.
 **Why this exists:** the servos report position as a raw 0–4095 encoder
 count with no idea where your arm's joints physically stop. Calibration
 records two things per joint — where "middle" is, and how far it can travel —
-and writes them both into the servos and into a `.json` file. The Control tab
+and writes them both into the servos and into a `.json` file. The stage's Connect
 **refuses to connect without one**, because it will not command a joint whose
 safe range it doesn't know.
 
 See [CALIBRATION.md](CALIBRATION.md) for what the resulting numbers actually
 mean and how they interoperate with LeRobot.
 
-Open the **2 · Calibration** tab.
+Open **Setup › Calibration**.
 
 1. Pick **Role** — *Follower* for the arm you'll drive, *Leader* for a second
    arm used as a hand-held controller. This only changes the suggested save
@@ -161,7 +164,7 @@ Open the **2 · Calibration** tab.
       torque off, forces position mode.
    2. **Set middle** — first move *every* joint by hand to roughly the middle
       of its intended travel. A dialog shows the digital twin's own zero pose
-      as a visual target (load a twin on the Control tab first if you want the
+      as a visual target (load a twin on the stage first if you want the
       picture). Only click OK once the real arm is parked there. Whatever
       position the arm is in when you confirm becomes each joint's 0°.
    3. **Start recording range of motion**.
@@ -173,15 +176,15 @@ Open the **2 · Calibration** tab.
       where to save the `.json`. The default path is LeRobot's own cache
       folder, so `lerobot-teleoperate` and `lerobot-record` will find it too.
 
-**Keep that file.** You will point the Control tab at it every session.
+**Keep that file.** You will point the Connection card at it every session.
 
 ---
 
 ## 5. Move the arm
 
-Open the **3 · Control** tab.
+Go back to the stage (**Back to stage** in Setup).
 
-1. **Connection panel** (top left): pick the port, **Browse** to the
+1. **Connection card** (bottom): pick the port, **Browse** to the
    calibration `.json` you just saved, **Connect**.
 2. Click **Torque ON**. The arm will now hold position — it becomes stiff.
    Click **Torque OFF** whenever you want to move it by hand.

@@ -679,3 +679,26 @@ def test_about_opens_from_the_top_bar_and_the_palette(win, monkeypatch):
     win.top_bar.about_btn.click()
     assert len(opened) == 1 and "About" in opened[0]
     assert any(a.title == "About" for a in win._palette_actions())
+
+
+def test_connected_status_labels_turn_green(win):
+    """objectName selects the colour; without a repolish the label stayed red after connecting."""
+    from ui.style import COLORS, STYLE_SHEET
+
+    def colours_of(label):
+        image = label.grab().toImage()
+        return {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height())}
+
+    app = QApplication.instance()
+    app.setStyleSheet(STYLE_SHEET)   # the suite otherwise runs unstyled
+    try:
+        win.show()
+        panel = win.connection_panel
+        assert COLORS["danger"] in colours_of(panel.status_label)
+        panel.set_connected(True)
+        assert COLORS["good"] in colours_of(panel.status_label)
+        assert COLORS["danger"] not in colours_of(panel.status_label)
+        panel.set_connected(False)
+        assert COLORS["danger"] in colours_of(panel.status_label)
+    finally:
+        app.setStyleSheet("")

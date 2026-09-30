@@ -118,6 +118,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"CONNECTED" stayed red.** The connection status labels (follower, leader, Setup,
+  Calibration, CAN setup) pick their colour from their object name, and Qt only
+  re-reads that after a repolish, so a successful connect kept showing the red
+  "disconnected" colour. They now repolish; a pixel test covers it.
+- **View card came back as an empty bar** after minimise -> expand (it was measured while
+  its contents were still hidden).
 - **Port dropdowns forced the whole control column wider than its viewport.**
   Since the descriptive port labels (`COM5 - USB-Enhanced-SERIAL CH343 (COM5)`)
   a combo box sized itself to its longest entry, pushing the Refresh/Browse

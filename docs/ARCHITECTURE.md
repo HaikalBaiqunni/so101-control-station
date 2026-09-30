@@ -51,10 +51,10 @@ ui/
                        arbitration, the teach/playback state machine, the
                        telemetry CSV writer and the calibration guidance
                        dialog.
-  setup_panel.py       Tab 1. Also exports describe_ports() and the port-combo
+  setup_panel.py       Setup › Motors and ids (SO-101). Also exports describe_ports() and the port-combo
                        helpers used by every other port dropdown.
-  calibration_panel.py Tab 2. Sequential step gating + live min/pos/max table.
-  connection_panel.py  Tab 3: port/calibration/connect/torque.
+  calibration_panel.py Setup › Calibration (SO-101). Sequential step gating + live min/pos/max table.
+  connection_panel.py  Connection card: port/calibration/connect/torque.
   control_source_panel.py  Manual/Gamepad/Leader/Keyboard selector.
   jog_panel.py         The JAKA-style Jog panel: Joint/World/Tool selector,
                        speed and step, the Cartesian page (pose readout,
@@ -64,10 +64,22 @@ ui/
   teaching_panel.py    Waypoint list + record/reorder/play/save.
   keyboard_jog_panel.py  Key-cap layout that lights up while keys are held.
   gamepad_panel.py     Gamepad status + mapping legend.
-  telemetry_panel.py   Tab 4. Table/Graph tabs, unit conversion, CSV toggle.
+  telemetry_panel.py   Telemetry drawer. Table/Graph tabs, unit conversion, CSV toggle.
   twin_panel.py        Twin display.
   camera_panel.py      Camera display + device picker.
-  style.py             Dark industrial-HMI QSS theme.
+  style.py             Dark QSS theme (palette, pill buttons, floating-card look).
+  top_bar.py           Floating top bar (robot picker, chips, drawers, Stop) and ShellHost.
+  stage_view.py        The stage: full-bleed twin + floating cards (drag, minimise to
+                       tabs, overlap resolution, saved layout).
+  setup_hub.py         Setup hub: section list + pages (per-robot Calibration etc.).
+  dm_setup_panel.py    B601-DM CAN-id workflow. dm_calibration_page.py: its sweep cards.
+  dm_tune_panel.py     Tune drawer: mode, MIT kp/kd, presets, tracking, nudge.
+  tracking_chart.py    Commanded-vs-measured chart and step-response metrics.
+  data_logs_page.py    Setup › Data and logs.
+  command_palette.py   Ctrl+K palette (navigation/view/source/calibration only).
+  about_dialog.py      Creator, version, tech stack.
+  icons.py             Line icons drawn with QPainter (no image assets).
+  toggle_switch.py     QCheckBox drawn as a switch.
 
 tests/                 Pure-logic tests: encoding, unit conversion, waypoint
                        validation, kinematics, and the jog panel/engine (driven by a
@@ -132,7 +144,7 @@ Playback locks out all four while a sequence runs.
 
 ## Safety layers
 
-1. **The Control tab refuses to connect without a calibration file.** No "just
+1. **Connect refuses to run without a calibration file.** No "just
    let me move it" escape hatch.
 2. **`write_goals_deg()` clamps** every commanded position to the calibrated
    `range_min`/`range_max`, in raw ticks, before anything reaches a servo.

@@ -122,7 +122,7 @@ raw ticks and then clamps to `range_min`/`range_max` **before** anything is
 sent to a servo. A GUI bug, a wild slider drag or a runaway jog integrator
 cannot command a joint past its recorded limits.
 
-On top of that, the Control tab **refuses to connect without a calibration
+On top of that, Connect **refuses to run without a calibration
 file at all**. There is no "just let me move it" mode — an uncalibrated joint
 is one whose safe range is unknown, and the app declines to guess.
 
@@ -143,7 +143,7 @@ by default this app saves to the same location LeRobot's CLI reads from:
 So files are interchangeable **both ways**:
 
 - calibrate here → `lerobot-teleoperate` / `lerobot-record` will find it,
-- calibrate with `lerobot-calibrate` → point this app's Control tab at it.
+- calibrate with `lerobot-calibrate` → point this app's Connection card at it.
 
 The calibration algorithm itself (reset → half-turn homing → record range →
 `wrist_roll` full-turn → write limits) was verified against LeRobot's

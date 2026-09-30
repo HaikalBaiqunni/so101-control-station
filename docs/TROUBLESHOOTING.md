@@ -34,7 +34,7 @@ Then:
 - Check the 3-pin chain is fully seated at every joint, including the link
   back to the adapter.
 - A servo previously configured by another tool may be on a different
-  baudrate. **Scan bus (all baudrates)** on the Setup tab sweeps all eight.
+  baudrate. **Scan bus (all baudrates)** in Setup › Motors and ids sweeps all eight.
 - A servo may be at an id above 20 (outside the default sweep). Use **Deep
   scan (ids 0–253)** — slower, but exhaustive at the current baudrate.
 
@@ -42,8 +42,8 @@ Then:
 
 Something else already has the port open.
 
-- **Inside this app:** only one tab can hold the port at a time. Disconnect on
-  Setup/Calibration/Control before connecting on another. The app blocks this
+- **Inside this app:** only one section can hold the port at a time. Disconnect in
+  Setup › Motors and ids / Calibration or on the stage before connecting in another. The app blocks this
   with a message rather than failing cryptically.
 - **Outside this app:** close any other serial terminal, the Feetech vendor
   tool, an Arduino IDE serial monitor, or a `lerobot-*` CLI still running.
@@ -54,8 +54,8 @@ Something else already has the port open.
 
 A servo didn't reply in time. Usually one of:
 
-- Two servos share the same id, so their replies collide. Scan on the Setup
-  tab — if the count is lower than the number of servos physically attached,
+- Two servos share the same id, so their replies collide. Scan in Setup ›
+  Motors and ids — if the count is lower than the number of servos physically attached,
   this is it.
 - Loose 3-pin connector.
 - Marginal power — a servo browning out mid-move stops answering.
@@ -66,7 +66,7 @@ settle delay, so persistent failures point at wiring rather than timing.
 
 ---
 
-## Setup tab
+## Setup › Motors and ids
 
 ### "Assign this id" is greyed out
 
@@ -93,7 +93,7 @@ the bus, pick `1 000 000 baud` and click **Set servo baudrate**.
 
 ---
 
-## Calibration tab
+## Setup › Calibration
 
 ### The step buttons are greyed out
 
@@ -125,12 +125,12 @@ persistent position error *is* the grip force.
 
 ---
 
-## Control tab
+## The stage
 
 ### "A LeRobot calibration .json is required"
 
 Not a bug — the app refuses to move a joint whose safe range it doesn't know.
-Produce one on the **2 · Calibration** tab (or with `lerobot-calibrate`; both
+Produce one in **Setup › Calibration** (or with `lerobot-calibrate`; both
 write the same format).
 
 ### The arm lurched violently the moment I clicked Torque ON
@@ -177,7 +177,7 @@ import.
 ### The twin loads but doesn't move
 
 The twin mirrors *fractions of each joint's calibrated range*, so it needs a
-calibration loaded — connect on the Control tab first. Joint names in your
+calibration loaded — connect on the stage first. Joint names in your
 MJCF must match: `shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_flex`,
 `wrist_roll`, `gripper`. Unrecognised names are silently ignored.
 
@@ -206,7 +206,7 @@ non-Windows platform where `CAP_ANY` is used.
 Open an issue at
 <https://github.com/HaikalBaiqunni/so101-control-station/issues> with:
 
-- what you were doing and which tab you were on,
+- what you were doing and which screen you were on,
 - the exact error text (status bar or terminal),
 - your OS and `python --version`,
 - the `logs/session_*.md` file from that run.

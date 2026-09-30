@@ -328,7 +328,9 @@ class ControlSourcePanel(QGroupBox):
         self.leader_connect_btn.setText("Disconnect Leader" if connected else "Connect Leader")
         self.leader_status.setText("leader connected" if connected else "leader disconnected")
         self.leader_status.setObjectName("statusGood" if connected else "statusDanger")
-        self.leader_status.setStyleSheet("")
+        # the objectName selects the colour: Qt only re-reads it after an explicit repolish
+        self.leader_status.style().unpolish(self.leader_status)
+        self.leader_status.style().polish(self.leader_status)
         self.leader_calibrate_btn.setEnabled(connected)
         for widget in (self.leader_port_label, self.leader_port_combo, self.leader_refresh_btn,
                        self.leader_calib_label, self.leader_calib_edit, self.leader_browse_btn):

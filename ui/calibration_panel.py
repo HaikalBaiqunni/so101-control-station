@@ -331,7 +331,9 @@ class CalibrationPanel(QWidget):
         self.connect_btn.setText("Disconnect" if connected else "Connect")
         self.status_label.setText("CONNECTED" if connected else "DISCONNECTED")
         self.status_label.setObjectName("statusGood" if connected else "statusDanger")
-        self.status_label.setStyleSheet("")
+        # the objectName selects the colour: Qt only re-reads it after an explicit repolish
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self._set_step_buttons_enabled(connected)
 
     def set_gripper_capture_point(self, label: str, raw: int) -> None:

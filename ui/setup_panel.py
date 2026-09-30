@@ -295,7 +295,9 @@ class SetupPanel(QWidget):
         self.connect_btn.setText("Disconnect" if connected else "Connect")
         self.status_label.setText("CONNECTED" if connected else "DISCONNECTED")
         self.status_label.setObjectName("statusGood" if connected else "statusDanger")
-        self.status_label.setStyleSheet("")
+        # the objectName selects the colour: Qt only re-reads it after an explicit repolish
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         for widget in (self.scan_btn, self.quick_scan_btn, self.deep_scan_btn):
             widget.setEnabled(connected)
         if not connected:

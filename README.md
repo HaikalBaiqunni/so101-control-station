@@ -29,15 +29,24 @@ selection, connection chips and a red **Stop** (follower torque off + back to
 Manual). Waypoints, Telemetry and (B601-DM only) Tune open as a drawer;
 **Setup** opens the hub. No hardware connected in this shot.*
 
-![Tour of the redesigned layout: the B601-DM stage with a live MuJoCo twin and floating cards, leader standby with the ghost and the alignment gate, the Waypoints / Telemetry / Tune drawers, cards minimising to tabs, and the Setup hub for both the B601-DM and the SO-101](docs/layout_tour.gif)
+### Tour: SO-101
 
-*A scripted tour (no hardware connected; poses and the "online" chips are simulated
-to show the layout). In order: the **stage** on the reBot B601-DM; the **leader arm
-on standby**, with the ghost showing where the follower would jump and **Engage
-teleop** locked until the arms are aligned; the **Waypoints**, **Telemetry** and
-**Tune** drawers; cards **minimising to tabs**; then the **Setup hub** for the
-B601-DM (CAN ids, gripper and leader sweeps, inputs, logs) and for the SO-101
-(bus scan, guarded id assignment, five-step calibration wizard).*
+![Tour of the layout on the SO-101: the stage with a live MuJoCo twin moving, the leader arm on standby with the ghost and the alignment gate, the Waypoints and Telemetry drawers, cards minimising to tabs, and the Setup hub with the bus scan and the five-step calibration wizard](docs/layout_tour_so101.gif)
+
+*A scripted tour (no hardware connected; the poses and the "online" chips are
+simulated to show the layout). The **stage** with the twin following joint motion;
+the **leader arm on standby**, with the ghost showing where the follower would
+jump and **Engage teleop** locked until the arms are aligned; the **Waypoints** and
+**Telemetry** drawers; cards **minimising to tabs**; then the **Setup hub**: bus
+scan, guarded id assignment and the five-step calibration wizard.*
+
+### Tour: reBot B601-DM
+
+![Tour of the layout on the reBot B601-DM: the stage, the leader standby ghost and alignment gate, the Waypoints, Telemetry and Tune drawers, cards minimising to tabs, and the Setup hub with CAN ids and the gripper and leader sweeps](docs/layout_tour_b601_dm.gif)
+
+*Same layout, second robot: it adds the **Tune** drawer (MIT gains, presets,
+tracking chart, nudge) and its own Setup hub: CAN-id assignment, and the
+follower-gripper and Star Arm 102 leader sweeps under Calibration.*
 
 ### What the layout gives you
 
