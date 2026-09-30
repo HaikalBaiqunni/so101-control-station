@@ -38,7 +38,7 @@ class CameraPanel(QGroupBox):
         self.status_label.setObjectName("sectionCaption")
 
         self.view = QLabel("no camera feed")
-        self.view.setMinimumSize(320, 240)
+        self.view.setMinimumSize(280, 200)
         # Same hint-follows-pixmap ratchet TwinPanel.view had: show_frame()
         # scales each frame to the label's current size, which then becomes
         # the label's sizeHint, which the splitter grants, which makes the

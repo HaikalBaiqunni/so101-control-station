@@ -92,3 +92,23 @@ def test_drawer_holds_one_panel_at_a_time(win):
 def test_setup_hub_sections(win):
     assert win.setup_hub.section_titles()[:3] == ["Motors and ids", "Calibration", "Inputs"]
     assert win.setup_hub.stack.count() == len(win.setup_hub.section_titles())
+
+
+def test_camera_card_follows_the_view_toggle(win):
+    win.show()
+    assert win.stage.camera_card.isHidden()
+    win.twin_panel.camera_check.setChecked(True)
+    assert not win.stage.camera_card.isHidden()
+    win.twin_panel.camera_check.setChecked(False)
+    assert win.stage.camera_card.isHidden()
+
+
+@pytest.mark.parametrize("size", [(1100, 700), (1440, 900)])
+def test_stage_cards_stay_inside_the_stage(win, size):
+    win.resize(*size)
+    win.show()
+    win.stage._layout_cards()
+    rect = win.stage.rect()
+    for card in (win.stage.jog_card, win.stage.dock_card, win.twin_panel.view_card):
+        geo = card.geometry()
+        assert rect.contains(geo), (card, geo, rect)

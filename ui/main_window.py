@@ -14,11 +14,9 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
-    QScrollArea,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -58,6 +56,7 @@ from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
 from .setup_hub import SetupHub
 from .setup_panel import SetupPanel
+from .stage_view import StageView
 from .teaching_panel import TeachingPanel
 from .telemetry_panel import TelemetryPanel, convert_telemetry
 from .top_bar import TopBar
@@ -158,6 +157,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("SO-101 Control Station")
         self.resize(1560, 880)
+        self.setMinimumSize(1100, 700)
         self.setFocusPolicy(Qt.StrongFocus)  # so keyPressEvent fires without a child widget stealing focus first
 
         # ================================================================ PANELS
@@ -173,33 +173,13 @@ class MainWindow(QMainWindow):
         self.telemetry_panel = TelemetryPanel()
 
         # ================================================================ STAGE PAGE
-        # Twin (+ camera) fills the centre; the operating dock (connect, control
-        # source, jog) sits under it; Waypoints / Telemetry open in a drawer on
-        # the right only when asked for.
-        view_row = QSplitter(Qt.Horizontal)
-        view_row.addWidget(self.twin_panel)
-        view_row.addWidget(self.camera_panel)
-        view_row.setStretchFactor(0, 2)   # digital twin: the star of the show
-        view_row.setStretchFactor(1, 1)   # camera: secondary, for comparison
-        view_row.setSizes([760, 420])
-
-        dock_layout = QHBoxLayout()
-        dock_layout.addWidget(self.connection_panel)
-        dock_layout.addWidget(self.control_source_panel)
-        dock_layout.addWidget(self.jog_panel)
-        dock_widget = QWidget()
-        dock_widget.setLayout(dock_layout)
-        dock_scroll = QScrollArea()
-        dock_scroll.setWidget(dock_widget)
-        dock_scroll.setWidgetResizable(True)
-        dock_scroll.setMinimumHeight(260)
-
-        center = QSplitter(Qt.Vertical)
-        center.addWidget(view_row)
-        center.addWidget(dock_scroll)
-        center.setStretchFactor(0, 1)
-        center.setStretchFactor(1, 0)
-        center.setSizes([420, 430])
+        # The twin fills the stage with floating cards over it (View, Jog, the
+        # connect / control-source dock, optional camera); Waypoints / Telemetry
+        # open in a drawer on the right only when asked for.
+        self.stage = StageView(
+            self.twin_panel, self.camera_panel, self.jog_panel,
+            [self.connection_panel, self.control_source_panel],
+        )
 
         self.drawer = QStackedWidget()
         self.drawer.addWidget(self.teaching_panel)
@@ -208,7 +188,7 @@ class MainWindow(QMainWindow):
         self.drawer.hide()
 
         self.stage_splitter = QSplitter(Qt.Horizontal)
-        self.stage_splitter.addWidget(center)
+        self.stage_splitter.addWidget(self.stage)
         self.stage_splitter.addWidget(self.drawer)
         self.stage_splitter.setStretchFactor(0, 1)
         self.stage_splitter.setStretchFactor(1, 0)

@@ -41,11 +41,15 @@ class ControlSourcePanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("CONTROL SOURCE", parent)
 
-        self.manual_radio = QRadioButton("Manual (jog panel)")
+        self.manual_radio = QRadioButton("Manual")
         self.gamepad_radio = QRadioButton("Gamepad")
-        self.leader_radio = QRadioButton("Leader arm (teleoperate)")
-        self.keyboard_radio = QRadioButton("Keyboard jog")
+        self.leader_radio = QRadioButton("Leader arm")
+        self.keyboard_radio = QRadioButton("Keyboard")
         self.manual_radio.setChecked(True)
+        self.manual_radio.setToolTip("Drive the arm from the Jog panel")
+        self.leader_radio.setToolTip("Teleoperate: the leader arm drives the follower")
+        for tile in (self.manual_radio, self.gamepad_radio, self.leader_radio, self.keyboard_radio):
+            tile.setObjectName("modeTile")
 
         self.group = QButtonGroup(self)
         for i, rb in enumerate([self.manual_radio, self.gamepad_radio, self.leader_radio, self.keyboard_radio]):
@@ -84,7 +88,7 @@ class ControlSourcePanel(QGroupBox):
         self.leader_calibrate_btn.clicked.connect(self.leader_calibrate_requested)
 
         form_layout = QGridLayout(self.leader_form)
-        form_layout.setContentsMargins(20, 4, 0, 0)
+        form_layout.setContentsMargins(0, 4, 0, 0)
         form_layout.addWidget(QLabel("Port"), 0, 0)
         form_layout.addWidget(self.leader_port_combo, 0, 1)
         form_layout.addWidget(refresh_btn, 0, 2)
@@ -125,13 +129,17 @@ class ControlSourcePanel(QGroupBox):
         invert_row.addWidget(self.gripper_invert_check, 1)
         invert_row.addWidget(self.trim_btn)
 
+        tiles = QGridLayout()
+        tiles.addWidget(self.manual_radio, 0, 0)
+        tiles.addWidget(self.leader_radio, 0, 1)
+        tiles.addWidget(self.gamepad_radio, 1, 0)
+        tiles.addWidget(self.keyboard_radio, 1, 1)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(self.manual_radio)
-        layout.addWidget(self.gamepad_radio)
-        layout.addWidget(self.leader_radio)
+        layout.addLayout(tiles)
         layout.addWidget(self.leader_form)
-        layout.addWidget(self.keyboard_radio)
         layout.addLayout(invert_row)
+        layout.addStretch(1)
 
     def set_relay_trim(self, values: dict) -> None:
         self._trim_values = dict(values)

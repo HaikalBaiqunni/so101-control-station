@@ -51,7 +51,7 @@ class TeachingPanel(QGroupBox):
         # waypoints to need it, so capping the OUTER height costs nothing
         # functionally - it only stops this one panel from claiming more
         # room than the rest of the stack when it doesn't need to.
-        self.list_widget.setMaximumHeight(140)
+        self.list_widget.setMinimumHeight(120)   # the drawer gives it the spare height
 
         self.record_btn = QPushButton("Record Waypoint")
         self.record_btn.clicked.connect(self.record_requested)
@@ -152,7 +152,7 @@ class TeachingPanel(QGroupBox):
         file_row.addWidget(self.load_btn)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self.list_widget)
+        layout.addWidget(self.list_widget, 1)   # the list takes the spare height, not the rows below
         layout.addLayout(edit_row)
         layout.addWidget(delay_label)
         layout.addLayout(delay_row)

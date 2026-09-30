@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, Q
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -86,7 +87,8 @@ class TwinPanel(QGroupBox):
     reset_view_requested = Signal()
 
     def __init__(self, parent=None):
-        super().__init__("DIGITAL TWIN (MuJoCo)", parent)
+        super().__init__("", parent)
+        self.setObjectName("stagePanel")   # frameless: the render is the whole stage
 
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("path to scene.xml / *.xml MJCF model")
@@ -96,6 +98,7 @@ class TwinPanel(QGroupBox):
         load_btn.clicked.connect(lambda: self.load_requested.emit(self.path_edit.text()))
 
         self.hud_check = QCheckBox("HUD overlay")
+        self.hud_check.setToolTip("Live load / temperature bars drawn over the render")
         self.hud_check.setChecked(True)
         self.hud_check.toggled.connect(lambda _: self._refresh_view())
 
@@ -104,7 +107,7 @@ class TwinPanel(QGroupBox):
         # appear when there is something to show (a target that differs from
         # where the arm is, a jog frame to point out), so leaving them on costs
         # nothing on a quiet screen.
-        self.ghost_check = QCheckBox("Ghost")
+        self.ghost_check = QCheckBox("Ghost target")
         self.ghost_check.setChecked(True)
         self.ghost_check.setToolTip(
             "A translucent copy of the arm at where it is HEADING: the selected or\n"
@@ -160,7 +163,7 @@ class TwinPanel(QGroupBox):
         self.set_caption("not loaded - pick a scene.xml and click Load")
 
         self.view = QLabel("twin not loaded")
-        self.view.setMinimumSize(420, 280)
+        self.view.setMinimumSize(320, 220)
         # A QLabel's sizeHint follows whatever pixmap it currently holds, and
         # show_frame() below scales every frame to the label's CURRENT size -
         # together those two form a ratchet: frame gets scaled to fit -> the
@@ -174,24 +177,47 @@ class TwinPanel(QGroupBox):
         # that resizes it.
         self.view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.view.setAlignment(Qt.AlignCenter)
-        self.view.setStyleSheet("background-color: #0d1014; border: 1px solid #2a303a; border-radius: 10px;")
+        self.view.setStyleSheet("background-color: #0d1014; border: none;")
         self.view.installEventFilter(self)
 
-        path_row = QHBoxLayout()
-        path_row.addWidget(self.path_edit)
-        path_row.addWidget(browse_btn)
-        path_row.addWidget(load_btn)
-        path_row.addWidget(self.hud_check)
-        path_row.addWidget(self.ghost_check)
-        path_row.addWidget(self.axes_check)
-        path_row.addWidget(reset_view_btn)
+        # The controls live in a floating "View" card drawn over the render
+        # (positioned by _place_view_card) instead of a toolbar above it.
+        self.camera_check = QCheckBox("Camera")
+        self.camera_check.setToolTip("Show the camera feed as a floating card")
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(self.path_edit, 1)
+        model_row.addWidget(browse_btn)
+        model_row.addWidget(load_btn)
+
+        self.view_card = QFrame(self)
+        self.view_card.setObjectName("floatCard")
+        card = QVBoxLayout(self.view_card)
+        card.setContentsMargins(14, 12, 14, 12)
+        card.setSpacing(6)
+        title = QLabel("View")
+        title.setObjectName("cardTitle")
+        card.addWidget(title)
+        for check in (self.ghost_check, self.axes_check, self.hud_check, self.camera_check):
+            card.addWidget(check)
+        card.addWidget(reset_view_btn)
+        model_caption = QLabel("Twin model")
+        model_caption.setObjectName("sectionCaption")
+        card.addWidget(model_caption)
+        card.addLayout(model_row)
+        card.addWidget(self.caption)
+        self.view_card.setFixedWidth(300)
+        self.view_card.adjustSize()
 
         layout = QVBoxLayout(self)
-        layout.addLayout(path_row)
-        layout.addWidget(self.caption)
-        # The view takes the leftover room now (with an Ignored policy it has
-        # no opinion of its own about height), so nothing competes for it.
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.view, 1)
+        self.view_card.raise_()
+
+    def _place_view_card(self) -> None:
+        self.view_card.adjustSize()
+        self.view_card.move(16, 16)
+        self.view_card.raise_()
 
     def ghost_enabled(self) -> bool:
         return self.ghost_check.isChecked()
@@ -276,6 +302,7 @@ class TwinPanel(QGroupBox):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._place_view_card()
         self._elide_caption()
         # Re-paint the cached frame at the new size immediately instead of
         # leaving a stale, wrong-sized pixmap on screen until the next frame

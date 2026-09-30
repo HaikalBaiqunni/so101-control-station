@@ -225,6 +225,45 @@ QPushButton#segButton:disabled {{
     color: {COLORS['border']};
     background-color: {COLORS['panel']};
 }}
+/* Text-only widgets must not paint the app background over a card. */
+QLabel, QCheckBox, QRadioButton {{ background: transparent; }}
+
+QCheckBox::indicator {{
+    width: 16px; height: 16px;
+    border: 1px solid {COLORS['border']};
+    border-radius: 5px;
+    background: {COLORS['bg']};
+}}
+QCheckBox::indicator:hover {{ border-color: {COLORS['text_muted']}; }}
+QCheckBox::indicator:checked {{ background: {COLORS['accent']}; border-color: {COLORS['accent']}; }}
+
+/* Stage: frameless render + floating cards drawn over it. */
+QGroupBox#stagePanel {{ border: none; border-radius: 0; margin: 0; padding: 0; background: transparent; }}
+QFrame#floatCard {{
+    background-color: rgba(23, 27, 33, 238);
+    border: 1px solid {COLORS['border']};
+    border-radius: 16px;
+}}
+QFrame#floatCard QGroupBox {{ background: transparent; border: none; padding: 4px; margin-top: 12px; }}
+QLabel#cardTitle {{ font-size: 14px; font-weight: 600; }}
+QScrollArea#cardScroll, QScrollArea#cardScroll > QWidget > QWidget {{ background: transparent; border: none; }}
+QRadioButton#modeTile {{
+    background-color: {COLORS['panel_alt']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 12px;
+    padding: 12px 14px;
+    color: {COLORS['text_muted']};
+    font-weight: 600;
+}}
+QRadioButton#modeTile:hover {{ color: {COLORS['text']}; }}
+QRadioButton#modeTile:checked {{
+    background-color: #1c2a40;
+    border-color: {COLORS['accent']};
+    color: {COLORS['text']};
+}}
+QRadioButton#modeTile::indicator {{ width: 0; height: 0; }}
+QRadioButton#modeTile:disabled {{ color: {COLORS['border']}; }}
+
 /* Top bar status chips (ui/top_bar.py) and the Setup hub section list. */
 QWidget#topBar {{ background-color: {COLORS['panel']}; border-bottom: 1px solid {COLORS['border']}; }}
 QLabel#chip {{
