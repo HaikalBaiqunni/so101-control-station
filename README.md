@@ -13,18 +13,19 @@ live MuJoCo digital twin and servo telemetry.
 terminal tools, a calibration procedure driven by blocking `input()` prompts,
 and a full LeRobot + PyTorch install — before the arm has moved once. That is
 a lot of yak-shaving between a beginner and their first taste of physical AI.
-This app collapses it into three tabs you work through in order (plus a fourth
-for monitoring), with no `lerobot` dependency at all.
+This app collapses it into one stage plus a Setup hub, with no `lerobot`
+dependency at all.
 
-![Control tab with the MuJoCo digital twin loaded, HUD overlay on, servo telemetry live](docs/screenshot_control.png)
+![Stage: the MuJoCo digital twin fills the window with floating View, Jog and connection cards](docs/screenshot_control.png)
 
-*Control tab, read left to right: narrow control column (connection, control
-source, jog panel, teaching), Digital Twin as the centrepiece — with a
-live telemetry HUD painted directly on the render and a mouse-orbitable
-camera — Camera feed beside it for comparison. No hardware connected in this
-shot; the pose and telemetry are simulated to show the layout. (This image
-predates the JAKA-style Jog panel and the separate Telemetry tab described
-below, so the left column and the bottom of the window look different now.)*
+*The stage: the Digital Twin fills the window (rendered at the window's own
+resolution, with a live telemetry HUD and a mouse-orbitable camera) and cards
+float over it: **View** (Ghost target, Axes, HUD overlay, Camera, Reset View,
+model file), **Jog**, and a dock with **Connection** and **Control source**
+(Manual / Leader arm / Gamepad / Keyboard). The top bar always shows robot
+selection, connection chips and a red **Stop** (follower torque off + back to
+Manual). Waypoints, Telemetry and (B601-DM only) Tune open as a drawer;
+**Setup** opens the hub. No hardware connected in this shot.*
 
 ![Demo: driving the digital twin through a joint sweep while orbiting the camera, with the HUD and telemetry table updating live](docs/demo.gif)
 
@@ -68,11 +69,15 @@ each stage is actually for.
 
 ---
 
-## The tabs, in the order you use them
+## Setup hub and the stage
+
+The sections below describe each tool. Where they say "tab", read: a section of
+the **Setup** hub (Motors and ids, Calibration, Inputs, Data and logs) or a
+drawer (Waypoints, Telemetry, Tune).
 
 ### 1 · Setup — give each servo an ID
 
-![Setup tab: bus scan, arm status checklist, guarded id assignment](docs/screenshot_setup.png)
+![Setup hub, Motors and ids: bus scan, arm status checklist, guarded id assignment](docs/screenshot_setup.png)
 
 Every STS3215 leaves the factory answering to **id 1**. Six of them on one bus
 are electrically fine but logically identical: a read addressed to id 1 gets
@@ -228,7 +233,7 @@ on real hardware.*
   (World/Tool) jogging — the same kinematics/jog engine the SO-101 uses,
   working here for free because the Damiao worker exposes the identical
   `request_goal`/`request_torque` interface.
-- **Two motion-control modes**, selectable on the Setup tab: **POS_VEL**
+- **Two motion-control modes**, selectable in the **Tune** drawer: **POS_VEL**
   (the safe default — the motor's own onboard position/velocity loop) and
   **MIT** (per-command stiffness/damping, `kp`/`kd`, sent fresh with every
   target — more responsive and inherently compliant, the mode most

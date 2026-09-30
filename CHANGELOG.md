@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **GUI redesign (stage-first).** The four tabs are replaced by a top bar, a
+  full-bleed stage and a Setup hub. No control behaviour changed.
+  - Top bar: robot picker, Follower / Leader / Torque / source chips, buttons for
+    Waypoints, Telemetry, Tune (B601-DM only) and Setup, and an always-visible
+    red **Stop** (follower torque off + control back to Manual, so a live
+    leader relay cannot make the arm jump when torque is re-enabled).
+  - Stage: the digital twin fills the window with floating **View**, **Jog** and
+    connection / control-source cards; the camera is a card toggled from View.
+  - Twin renders at the view's own resolution (was a fixed 480x360 upscaled with
+    black bars).
+  - Setup hub: Motors and ids, Calibration (SO-101 wizard, or B601-DM cards that
+    launch the gripper / leader sweeps), Inputs, Data and logs.
+  - Tune drawer: motion mode and MIT kp/kd moved out of the id workflow.
+  - Softer palette, rounded cards and pill buttons; minimum window 1100x700.
+
 ### Added
 
 - **JAKA-style Jog panel** replaces the per-joint sliders on the Control tab.
