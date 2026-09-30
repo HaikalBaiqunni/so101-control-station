@@ -112,3 +112,60 @@ def test_stage_cards_stay_inside_the_stage(win, size):
     for card in (win.stage.jog_card, win.stage.dock_card, win.twin_panel.view_card):
         geo = card.geometry()
         assert rect.contains(geo), (card, geo, rect)
+
+
+def _pick(win, key):
+    win.robot_combo.setCurrentIndex(win.robot_combo.findData(key))
+
+
+def test_tune_button_exists_only_for_the_damiao_arm(win):
+    win.show()
+    _pick(win, "so101")
+    assert not win.top_bar.nav_buttons["tune"].isVisible()
+    _pick(win, "rebot_b601_dm")
+    assert win.top_bar.nav_buttons["tune"].isVisible()
+    win.top_bar.nav_buttons["tune"].click()
+    assert win.drawer.currentWidget() is win.dm_tune_panel
+    _pick(win, "so101")   # switching away closes a Tune drawer that no longer applies
+    assert win.drawer.isHidden()
+
+
+def test_calibration_section_follows_the_robot(win):
+    _pick(win, "rebot_b601_dm")
+    assert win.calibration_stack.currentWidget() is win.dm_calibration_page
+    _pick(win, "so101")
+    assert win.calibration_stack.currentWidget() is win.calibration_panel
+
+
+def test_dm_calibration_cards_launch_the_existing_handlers(win, monkeypatch):
+    calls = []
+    monkeypatch.setattr(win, "_on_dm_gripper_calibrate_requested", lambda: calls.append("grip"))
+    monkeypatch.setattr(win, "_on_leader_calibrate_requested", lambda: calls.append("leader"))
+    # signals were connected to the bound originals at construction, so emit
+    # through fresh connections to the patched ones
+    page = win.dm_calibration_page
+    page.gripper_calibrate_requested.disconnect()
+    page.leader_calibrate_requested.disconnect()
+    page.gripper_calibrate_requested.connect(win._on_dm_gripper_calibrate_requested)
+    page.leader_calibrate_requested.connect(win._on_leader_calibrate_requested)
+    page.gripper_btn.click()
+    page.leader_btn.click()
+    assert calls == ["grip", "leader"]
+
+
+def test_hub_has_data_and_logs_with_the_session_log_path(win):
+    assert "Data and logs" in win.setup_hub.section_titles()
+    assert str(win.session_logger.path) == win.data_logs_page.path_label.text()
+
+
+def test_tune_panel_keeps_its_signals_and_round_trips_gains(win):
+    seen = []
+    win.dm_tune_panel.mit_gains_changed.connect(seen.append)
+    kp, kd = win.dm_tune_panel.mit_gain_spins["joint4"]
+    kp.setValue(20.0)
+    assert seen and seen[-1]["joint4"][0] == 20.0
+    win.dm_tune_panel.set_mit_gains({"joint4": (12.0, 1.0)})
+    assert win.dm_tune_panel.mit_gains()["joint4"] == (12.0, 1.0)
+    assert len(seen) == 1   # set_mit_gains must not re-emit
+    win.dm_tune_panel.set_control_mode("mit")
+    assert win.dm_tune_panel.control_mode_combo.currentData() == "mit"

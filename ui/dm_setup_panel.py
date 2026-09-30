@@ -46,8 +46,6 @@ class DmSetupPanel(QWidget):
     write_pid_requested = Signal(int, float, float, float, float)  # motor_id, kp_asr, ki_asr, kp_apr, ki_apr
     set_zero_requested = Signal(int)                  # motor_id
     verify_all_requested = Signal(dict)                # {joint: can_id}
-    control_mode_changed = Signal(str)                # "pos_vel" | "mit"
-    mit_gains_changed = Signal(dict)                   # {joint: (kp, kd)}
 
     def __init__(self, joint_order: tuple[str, ...], parent=None):
         super().__init__(parent)
@@ -215,66 +213,6 @@ class DmSetupPanel(QWidget):
         state_layout.addLayout(pid_grid)
         state_layout.addLayout(pid_btn_row)
 
-        # -- 5: motion control mode ------------------------------------------------
-        # Which control mode the Control tab's Connect uses for this arm.
-        # Takes effect on the next Connect, not live - switching modes needs a
-        # fresh switchControlMode() call, which only happens during connect().
-        # This panel is Damiao CAN-id setup, which only ever applies to the
-        # follower - the B601-DM's real leader (Seeed's Star Arm 102) is a
-        # separate FashionStar UART device with no CAN ids or control mode at
-        # all (core/fashionstar_bus.py), so there is no "which arm" question
-        # here any more.
-        motion_box = QGroupBox("5 - MOTION CONTROL MODE (used by the Control tab's Connect)")
-        motion_warning = QLabel(
-            "POS_VEL (default) relies on the motor's own onboard position/"
-            "velocity loop - the safe, already-tested mode. MIT sends a fresh "
-            "stiffness/damping (kp/kd) with every command instead - these are "
-            "NOT the KP/KI gains above (those are persisted onboard registers; "
-            "these are per-command only). Start low, tune up gradually while "
-            "watching the real arm - do not guess higher blind."
-        )
-        motion_warning.setObjectName("sectionCaption")
-        motion_warning.setWordWrap(True)
-
-        self.control_mode_combo = QComboBox()
-        self.control_mode_combo.addItem("POS_VEL (safe default)", "pos_vel")
-        self.control_mode_combo.addItem("MIT (needs live tuning)", "mit")
-        self.control_mode_combo.currentIndexChanged.connect(self._on_control_mode_changed)
-
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Control mode"))
-        mode_row.addWidget(self.control_mode_combo, 1)
-
-        self.mit_gain_spins: dict[str, tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
-        mit_grid = QGridLayout()
-        mit_grid.addWidget(QLabel("Joint"), 0, 0)
-        mit_grid.addWidget(QLabel("kp"), 0, 1)
-        mit_grid.addWidget(QLabel("kd"), 0, 2)
-        for row, name in enumerate(self.joint_order, start=1):
-            mit_grid.addWidget(QLabel(name), row, 0)
-            kp_spin = QDoubleSpinBox()
-            kp_spin.setRange(0.0, 500.0)
-            kp_spin.setDecimals(2)
-            kp_spin.setSingleStep(0.5)
-            kp_spin.setValue(8.0)
-            kp_spin.setToolTip("MIT per-command stiffness gain, 0-500. Very gentle to start: 5-10.")
-            kd_spin = QDoubleSpinBox()
-            kd_spin.setRange(0.0, 5.0)
-            kd_spin.setDecimals(2)
-            kd_spin.setSingleStep(0.05)
-            kd_spin.setValue(0.5)
-            kd_spin.setToolTip("MIT per-command damping gain, 0-5. Very gentle to start: 0.3-0.8.")
-            kp_spin.valueChanged.connect(self._on_mit_gains_edited)
-            kd_spin.valueChanged.connect(self._on_mit_gains_edited)
-            mit_grid.addWidget(kp_spin, row, 1)
-            mit_grid.addWidget(kd_spin, row, 2)
-            self.mit_gain_spins[name] = (kp_spin, kd_spin)
-
-        motion_layout = QVBoxLayout(motion_box)
-        motion_layout.addWidget(motion_warning)
-        motion_layout.addLayout(mode_row)
-        motion_layout.addLayout(mit_grid)
-
         # -- checklist ----------------------------------------------------------
         checklist_box = QGroupBox("MOTOR STATUS (all seven must be assigned before Phase 2 control)")
         self.table = QTableWidget(len(self.joint_order), 4)
@@ -317,7 +255,6 @@ class DmSetupPanel(QWidget):
         left_column.addWidget(probe_box)
         left_column.addWidget(assign_box)
         left_column.addWidget(state_box)
-        left_column.addWidget(motion_box)
         left_column.addStretch(1)
 
         root = QHBoxLayout(self)
@@ -483,32 +420,6 @@ class DmSetupPanel(QWidget):
                 self.pid_spins["KP (position)"].value(),
                 self.pid_spins["KI (position)"].value(),
             )
-
-    def _on_control_mode_changed(self, _index: int) -> None:
-        self.control_mode_changed.emit(self.control_mode_combo.currentData())
-
-    def _on_mit_gains_edited(self, _value: float) -> None:
-        self.mit_gains_changed.emit(self.mit_gains())
-
-    def mit_gains(self) -> dict[str, tuple[float, float]]:
-        return {name: (kp.value(), kd.value()) for name, (kp, kd) in self.mit_gain_spins.items()}
-
-    def set_control_mode(self, mode: str) -> None:
-        index = self.control_mode_combo.findData(mode)
-        if index >= 0:
-            self.control_mode_combo.blockSignals(True)
-            self.control_mode_combo.setCurrentIndex(index)
-            self.control_mode_combo.blockSignals(False)
-
-    def set_mit_gains(self, gains: dict[str, tuple[float, float]]) -> None:
-        for name, (kp_spin, kd_spin) in self.mit_gain_spins.items():
-            kp, kd = gains.get(name, (kp_spin.value(), kd_spin.value()))
-            kp_spin.blockSignals(True)
-            kd_spin.blockSignals(True)
-            kp_spin.setValue(kp)
-            kd_spin.setValue(kd)
-            kp_spin.blockSignals(False)
-            kd_spin.blockSignals(False)
 
     # -- called by MainWindow in response to worker signals --------------------
     def set_connected(self, connected: bool) -> None:

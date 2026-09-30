@@ -47,8 +47,11 @@ from .calibration_panel import CalibrationPanel
 from .camera_panel import CameraPanel
 from .connection_panel import ConnectionPanel
 from .control_source_panel import ControlSourcePanel
+from .data_logs_page import DataLogsPage
+from .dm_calibration_page import DmCalibrationPage
 from .dm_gripper_calibration_dialog import DmGripperCalibrationDialog
 from .dm_setup_panel import DmSetupPanel
+from .dm_tune_panel import DmTunePanel
 from .fashionstar_calibration_dialog import FashionStarCalibrationDialog
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .jog_panel import JogPanel
@@ -171,6 +174,7 @@ class MainWindow(QMainWindow):
         self.twin_panel = TwinPanel()
         self.camera_panel = CameraPanel()
         self.telemetry_panel = TelemetryPanel()
+        self.dm_tune_panel = DmTunePanel(joint_order=PROFILES['rebot_b601_dm'].joint_order)
 
         # ================================================================ STAGE PAGE
         # The twin fills the stage with floating cards over it (View, Jog, the
@@ -184,6 +188,7 @@ class MainWindow(QMainWindow):
         self.drawer = QStackedWidget()
         self.drawer.addWidget(self.teaching_panel)
         self.drawer.addWidget(self.telemetry_panel)
+        self.drawer.addWidget(self.dm_tune_panel)
         self.drawer.setMinimumWidth(400)
         self.drawer.hide()
 
@@ -208,6 +213,13 @@ class MainWindow(QMainWindow):
         self.setup_stack.addWidget(self.setup_panel)
         self.setup_stack.addWidget(self.dm_setup_panel)
         self.calibration_panel = CalibrationPanel()
+        self.dm_calibration_page = DmCalibrationPage()
+        # Calibration is per robot: Feetech's multi-step wizard vs the B601-DM's
+        # sweep tools. Both are built; the profile picks which one is shown.
+        self.calibration_stack = QStackedWidget()
+        self.calibration_stack.addWidget(self.calibration_panel)
+        self.calibration_stack.addWidget(self.dm_calibration_page)
+        self.data_logs_page = DataLogsPage("")   # real path set once the SessionLogger exists
 
         inputs_widget = QWidget()
         inputs_layout = QVBoxLayout(inputs_widget)
@@ -219,8 +231,9 @@ class MainWindow(QMainWindow):
         # exceed the window height, which once meant silent clipping.
         self.setup_hub = SetupHub()
         self.setup_hub.add_section("Motors and ids", self.setup_stack)
-        self.setup_hub.add_section("Calibration", self.calibration_panel)
+        self.setup_hub.add_section("Calibration", self.calibration_stack)
         self.setup_hub.add_section("Inputs", inputs_widget)
+        self.setup_hub.add_section("Data and logs", self.data_logs_page)
         self.setup_hub.back_requested.connect(lambda: self.top_bar.nav_buttons["setup"].setChecked(False))
 
         self.pages = QStackedWidget()
@@ -251,6 +264,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready.")
 
         self.session_logger = SessionLogger()
+        self.data_logs_page.log_path = self.session_logger.path
+        self.data_logs_page.path_label.setText(str(self.session_logger.path))
         self.statusBar().showMessage(f"Ready. Logging to {self.session_logger.path}")
 
         # -- state -------------------------------------------------------
@@ -422,13 +437,16 @@ class MainWindow(QMainWindow):
         self.dm_setup_panel.write_pid_requested.connect(self._on_dm_setup_write_pid)
         self.dm_setup_panel.set_zero_requested.connect(self._on_dm_setup_set_zero)
         self.dm_setup_panel.verify_all_requested.connect(self._on_dm_setup_verify_all)
-        self.dm_setup_panel.control_mode_changed.connect(self._on_dm_setup_control_mode_changed)
-        self.dm_setup_panel.mit_gains_changed.connect(self._on_dm_setup_mit_gains_changed)
+        self.dm_tune_panel.control_mode_changed.connect(self._on_dm_setup_control_mode_changed)
+        self.dm_tune_panel.mit_gains_changed.connect(self._on_dm_setup_mit_gains_changed)
+        self.dm_calibration_page.gripper_calibrate_requested.connect(self._on_dm_gripper_calibrate_requested)
+        self.dm_calibration_page.leader_calibrate_requested.connect(self._on_leader_calibrate_requested)
+        self.dm_calibration_page.open_ids_requested.connect(self._show_motors_and_ids)
         self.dm_setup_panel.set_mapping(self._load_settings().get("dm_can_id_mapping", {}))
-        self.dm_setup_panel.set_control_mode(self._load_settings().get("dm_control_mode", "pos_vel"))
+        self.dm_tune_panel.set_control_mode(self._load_settings().get("dm_control_mode", "pos_vel"))
         saved_mit_gains = self._load_settings().get("dm_mit_gains", {})
         if saved_mit_gains:
-            self.dm_setup_panel.set_mit_gains(
+            self.dm_tune_panel.set_mit_gains(
                 {name: tuple(gains) for name, gains in saved_mit_gains.items()}
             )
 
@@ -610,16 +628,17 @@ class MainWindow(QMainWindow):
             panel.setEnabled(available)
             panel.setToolTip(note)
 
-        if self.robot_profile.key == "rebot_b601_dm":
-            self.calibration_panel.setEnabled(False)
-            self.calibration_panel.setToolTip(
-                "Not available for reBot B601-DM - it uses preview_ranges "
-                "(core/robot_profiles.py) directly, plus Set Zero on the "
-                "Setup tab, instead of Feetech-style multi-step calibration."
-            )
-        else:
-            self.calibration_panel.setEnabled(available)
-            self.calibration_panel.setToolTip(note)
+        is_dm = self.robot_profile.key == "rebot_b601_dm"
+        # The Feetech wizard has no Damiao equivalent; the B601-DM gets its own
+        # sweep tools page (which just launches the existing dialogs) instead.
+        self.calibration_stack.setCurrentWidget(self.dm_calibration_page if is_dm else self.calibration_panel)
+        self.calibration_panel.setEnabled(available and not is_dm)
+        self.calibration_panel.setToolTip(note)
+        self._refresh_dm_calibration_summary()
+        # Tune (MIT / POS_VEL, kp/kd) only exists for the Damiao follower.
+        self.top_bar.nav_buttons["tune"].setVisible(is_dm)
+        if not is_dm and self.drawer.currentWidget() is self.dm_tune_panel:
+            self.top_bar.nav_buttons["tune"].setChecked(False)
 
         if self.robot_profile.key == "rebot_b601_dm":
             self.setup_stack.setCurrentWidget(self.dm_setup_panel)
@@ -792,6 +811,7 @@ class MainWindow(QMainWindow):
             self.session_logger.log_event(
                 f"Leader (FashionStar): saved calibrated ranges for {len(dialog.saved_native_ranges)} joint(s)"
             )
+            self._refresh_dm_calibration_summary()
 
     def _on_dm_gripper_calibrate_requested(self) -> None:
         if self.robot_profile.key != "rebot_b601_dm" or self.robot_worker is None:
@@ -813,6 +833,7 @@ class MainWindow(QMainWindow):
             self.session_logger.log_event(
                 f"Follower (Damiao): saved calibrated gripper range {dialog.saved_range}"
             )
+            self._refresh_dm_calibration_summary()
 
     def _on_disconnect(self) -> None:
         # Never QThread.wait() here: on a flaky/settling USB connection, a
@@ -912,22 +933,40 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- top bar / pages
     PAGE_STAGE = 0
     PAGE_SETUP = 1
+    DRAWER_PANELS = {"waypoints": "teaching_panel", "telemetry": "telemetry_panel", "tune": "dm_tune_panel"}
+
+    def _show_motors_and_ids(self) -> None:
+        self.setup_hub.show_section("Motors and ids")
+
+    def _refresh_dm_calibration_summary(self) -> None:
+        settings = self._load_settings()
+        grip = settings.get("dm_follower_calibrated_ranges", {}).get("finger_left")
+        self.dm_calibration_page.set_gripper_summary(
+            f"{grip[0]:.1f} to {grip[1]:.1f} deg  (span {abs(grip[1] - grip[0]):.1f})" if grip
+            else "not measured yet - using the profile's assumed range"
+        )
+        native = settings.get("fashionstar_leader_native_ranges", {})
+        self.dm_calibration_page.set_leader_summary(
+            "\n".join(f"{name}: {lo:.1f} to {hi:.1f}" for name, (lo, hi) in native.items())
+            if native else "using vendor default ranges - sweep to measure this unit"
+        )
 
     def _on_nav_toggled(self, key: str, checked: bool) -> None:
         if key == "setup":
             self.pages.setCurrentIndex(self.PAGE_SETUP if checked else self.PAGE_STAGE)
             if checked:
-                self.top_bar.set_nav_checked("waypoints", False)
-                self.top_bar.set_nav_checked("telemetry", False)
+                for other in self.DRAWER_PANELS:
+                    self.top_bar.set_nav_checked(other, False)
                 self.drawer.hide()
             return
-        # waypoints / telemetry share one drawer on the stage
+        # waypoints / telemetry / tune share one drawer on the stage
         if checked:
-            other = "telemetry" if key == "waypoints" else "waypoints"
-            self.top_bar.set_nav_checked(other, False)
+            for other in self.DRAWER_PANELS:
+                if other != key:
+                    self.top_bar.set_nav_checked(other, False)
             self.top_bar.set_nav_checked("setup", False)
             self.pages.setCurrentIndex(self.PAGE_STAGE)
-            self.drawer.setCurrentWidget(self.teaching_panel if key == "waypoints" else self.telemetry_panel)
+            self.drawer.setCurrentWidget(getattr(self, self.DRAWER_PANELS[key]))
             self.drawer.show()
         else:
             self.drawer.hide()

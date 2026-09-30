@@ -11,10 +11,10 @@ class TopBar(QWidget):
     """Pure view: it owns no robot state. MainWindow feeds it through
     set_chip() and listens to nav_toggled / stop_requested."""
 
-    nav_toggled = Signal(str, bool)   # "waypoints" | "telemetry" | "setup", checked
+    nav_toggled = Signal(str, bool)   # "waypoints" | "telemetry" | "tune" | "setup", checked
     stop_requested = Signal()
 
-    NAV = (("waypoints", "Waypoints"), ("telemetry", "Telemetry"), ("setup", "Setup"))
+    NAV = (("waypoints", "Waypoints"), ("telemetry", "Telemetry"), ("tune", "Tune"), ("setup", "Setup"))
 
     def __init__(self, robot_combo: QComboBox):
         super().__init__()
