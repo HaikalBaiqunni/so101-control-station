@@ -18,6 +18,7 @@ MARGIN = 16
 GAP = 12
 JOG_CARD_W = 360
 DOCK_SIDE_BY_SIDE_MIN_W = 800
+DOCK_MAX_W = 1000
 CAMERA_DEFAULT = QSize(420, 330)
 CAMERA_MIN = QSize(300, 230)
 HANDLE_H = 14
@@ -229,14 +230,15 @@ class StageView(QWidget):
         rects["jog"] = QRect(w - MARGIN - jog_w, MARGIN, jog_w, jog_h)
 
         # Dock: along the bottom, between the left edge and the jog column.
-        dock_w = max(360, (w - MARGIN - jog_w - GAP) - MARGIN)
+        avail_w = max(360, (w - MARGIN - jog_w - GAP) - MARGIN)
+        dock_w = min(avail_w, DOCK_MAX_W)
         # Too narrow for connection and control source side by side (e.g. with a
         # drawer open): stack them instead of clipping either.
         self._dock_row.setDirection(
             QBoxLayout.TopToBottom if dock_w < DOCK_SIDE_BY_SIDE_MIN_W else QBoxLayout.LeftToRight
         )
         dock_h = min(self._wanted_height(self.dock_card) + chrome, int(h * 0.55))
-        rects["dock"] = QRect(MARGIN, h - MARGIN - dock_h, dock_w, dock_h)
+        rects["dock"] = QRect(MARGIN + (avail_w - dock_w) // 2, h - MARGIN - dock_h, dock_w, dock_h)
 
         # Camera: left column, under the View card; sized by the user.
         cam = self._camera_size

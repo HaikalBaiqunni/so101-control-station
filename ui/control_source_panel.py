@@ -4,7 +4,6 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -25,6 +24,7 @@ from core.servo_bus import JOINT_ORDER
 from .icons import icon
 from .setup_panel import configure_port_combo, fill_port_combo
 from .style import COLORS
+from .toggle_switch import ToggleSwitch
 
 SOURCES = ["manual", "gamepad", "leader", "keyboard"]
 
@@ -106,15 +106,16 @@ class ControlSourcePanel(QGroupBox):
         self.leader_port_combo.setEditable(True)
         configure_port_combo(self.leader_port_combo)
         self._refresh_leader_ports()
-        refresh_btn = QPushButton("Refresh")
+        self.leader_refresh_btn = refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_leader_ports)
 
         self.leader_calib_edit = QLineEdit()
         self.leader_calib_edit.setPlaceholderText("leader's calibration .json")
-        browse_btn = QPushButton("Browse")
+        self.leader_browse_btn = browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self._browse_leader_calibration)
 
         self.leader_connect_btn = QPushButton("Connect Leader")
+        self.leader_connect_btn.setObjectName("primaryButton")
         self.leader_connect_btn.clicked.connect(self._on_leader_connect_clicked)
 
         self.leader_status = QLabel("leader disconnected")
@@ -133,10 +134,13 @@ class ControlSourcePanel(QGroupBox):
 
         form_layout = QGridLayout(self.leader_form)
         form_layout.setContentsMargins(0, 4, 0, 0)
-        form_layout.addWidget(QLabel("Port"), 0, 0)
+        form_layout.setVerticalSpacing(8)
+        self.leader_port_label = QLabel("Port")
+        self.leader_calib_label = QLabel("Calibration")
+        form_layout.addWidget(self.leader_port_label, 0, 0)
         form_layout.addWidget(self.leader_port_combo, 0, 1)
         form_layout.addWidget(refresh_btn, 0, 2)
-        form_layout.addWidget(QLabel("Calibration"), 1, 0)
+        form_layout.addWidget(self.leader_calib_label, 1, 0)
         form_layout.addWidget(self.leader_calib_edit, 1, 1)
         form_layout.addWidget(browse_btn, 1, 2)
         form_layout.addWidget(self.leader_connect_btn, 2, 0, 1, 2)
@@ -186,7 +190,7 @@ class ControlSourcePanel(QGroupBox):
         engage_layout.addWidget(self.align_label)
         self.engage_form.setVisible(False)
 
-        self.gripper_invert_check = QCheckBox("Gripper moves the wrong way (invert)")
+        self.gripper_invert_check = ToggleSwitch("Gripper moves the wrong way (invert)")
         self.gripper_invert_check.setToolTip(
             "Tick this if squeezing the leader OPENS the follower's gripper.\n"
             "Saved to gui_settings.json, so it persists across restarts and\n"
@@ -216,6 +220,8 @@ class ControlSourcePanel(QGroupBox):
         tiles.addWidget(self.keyboard_radio, 1, 1)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        tiles.setSpacing(8)
         layout.addLayout(tiles)
         layout.addWidget(self.leader_form)
         layout.addWidget(self.engage_form)
@@ -324,6 +330,9 @@ class ControlSourcePanel(QGroupBox):
         self.leader_status.setObjectName("statusGood" if connected else "statusDanger")
         self.leader_status.setStyleSheet("")
         self.leader_calibrate_btn.setEnabled(connected)
+        for widget in (self.leader_port_label, self.leader_port_combo, self.leader_refresh_btn,
+                       self.leader_calib_label, self.leader_calib_edit, self.leader_browse_btn):
+            widget.setVisible(not connected)
 
     def set_tolerance(self, degrees: float) -> None:
         """Reflect the persisted value without re-emitting it back out."""

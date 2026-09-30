@@ -28,15 +28,16 @@ class ConnectionPanel(QGroupBox):
         configure_port_combo(self.port_combo)
         self._refresh_ports()
 
-        refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_ports)
 
         self.calib_edit = QLineEdit()
         self.calib_edit.setPlaceholderText("path to LeRobot calibration .json")
-        browse_btn = QPushButton("Browse")
+        self.browse_btn = browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self._browse_calibration)
 
         self.connect_btn = QPushButton("Connect")
+        self.connect_btn.setObjectName("primaryButton")
         self.connect_btn.clicked.connect(self._on_connect_clicked)
 
         self.torque_on_btn = QPushButton("Torque ON")
@@ -58,13 +59,14 @@ class ConnectionPanel(QGroupBox):
         self.calibrate_gripper_btn.setVisible(False)
         self.calibrate_gripper_btn.clicked.connect(self.calibrate_gripper_requested)
 
-        self.set_connected(False)
-
         layout = QGridLayout(self)
-        layout.addWidget(QLabel("Port"), 0, 0)
+        layout.setVerticalSpacing(10)
+        self.port_label = QLabel("Port")
+        self.calib_label = QLabel("Calibration")
+        layout.addWidget(self.port_label, 0, 0)
         layout.addWidget(self.port_combo, 0, 1)
         layout.addWidget(refresh_btn, 0, 2)
-        layout.addWidget(QLabel("Calibration"), 1, 0)
+        layout.addWidget(self.calib_label, 1, 0)
         layout.addWidget(self.calib_edit, 1, 1)
         layout.addWidget(browse_btn, 1, 2)
         layout.addWidget(self.connect_btn, 2, 0, 1, 2)
@@ -72,6 +74,7 @@ class ConnectionPanel(QGroupBox):
         layout.addWidget(self.torque_on_btn, 3, 0)
         layout.addWidget(self.torque_off_btn, 3, 1)
         layout.addWidget(self.calibrate_gripper_btn, 4, 0, 1, 3)
+        self.set_connected(False)   # after the layout: it hides rows that must exist first
         layout.setRowStretch(5, 1)   # spare height goes below the rows, not between them
 
     def set_gripper_calibration_visible(self, visible: bool) -> None:
@@ -110,3 +113,8 @@ class ConnectionPanel(QGroupBox):
         self.status_label.setText("CONNECTED" if connected else "DISCONNECTED")
         self.status_label.setObjectName("statusGood" if connected else "statusDanger")
         self.status_label.setStyleSheet("")  # force style re-poll
+        # The port / calibration rows only matter until connected; hiding them
+        # keeps the floating card short while the arm is in use.
+        for widget in (self.port_label, self.port_combo, self.refresh_btn,
+                       self.calib_label, self.calib_edit, self.browse_btn):
+            widget.setVisible(not connected)

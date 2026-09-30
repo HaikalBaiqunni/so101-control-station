@@ -54,18 +54,26 @@ QGroupBox::title {{
 }}
 
 /* Dark text on the (light) accent fill: white on #5b9dff is only ~2.9:1. */
+/* Ghost by default (an outlined pill), so a screen full of buttons reads as
+   calm separate controls; solid accent is kept for the one primary action. */
 QPushButton {{
-    background-color: {COLORS['accent']};
-    color: #06121f;
-    border: none;
-    border-radius: 15px;
+    background-color: {COLORS['panel_alt']};
+    color: {COLORS['text']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 14px;
     padding: 6px 16px;
+    min-height: 28px;   /* Qt drops a radius larger than half the height: keep it a real pill */
     font-weight: 600;
 }}
-QPushButton:hover {{ background-color: {COLORS['accent_hover']}; }}
-QPushButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
-QPushButton#dangerButton {{ background-color: {COLORS['danger']}; color: #2a0a0a; }}
+QPushButton:hover {{ border-color: {COLORS['accent']}; }}
+QPushButton:pressed {{ background-color: {COLORS['border']}; }}
+QPushButton:disabled {{ background-color: {COLORS['panel']}; color: {COLORS['text_muted']}; border-color: {COLORS['border']}; }}
+QPushButton#primaryButton {{ background-color: {COLORS['accent']}; color: #06121f; border: none; border-radius: 14px; }}
+QPushButton#primaryButton:hover {{ background-color: {COLORS['accent_hover']}; }}
+QPushButton#primaryButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
+QPushButton#dangerButton {{ background-color: {COLORS['danger']}; color: #2a0a0a; border: none; border-radius: 14px; }}
 QPushButton#dangerButton:hover {{ background-color: #ff8585; }}
+QPushButton#dangerButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
 
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{
     background-color: {COLORS['bg']};
@@ -87,7 +95,7 @@ QTabBar::tab {{
     background: transparent;
     color: {COLORS['text_muted']};
     padding: 6px 16px;
-    border-radius: 15px;
+    border-radius: 14px;
     margin-right: 4px;
     font-weight: 600;
 }}
@@ -262,7 +270,9 @@ QPushButton#modeTile:checked {{
     color: {COLORS['text']};
 }}
 QPushButton#modeTile:disabled {{ color: {COLORS['border']}; background-color: {COLORS['panel']}; }}
-QPushButton#engageButton {{ padding: 9px 22px; font-size: 14px; }}
+QPushButton#engageButton {{ padding: 9px 22px; font-size: 14px; background-color: {COLORS['accent']}; color: #06121f; border: none; border-radius: 14px; }}
+QPushButton#engageButton:hover {{ background-color: {COLORS['accent_hover']}; }}
+QPushButton#engageButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
 QPushButton#engageButton[engaged="true"] {{ background-color: {COLORS['danger']}; color: #2a0a0a; }}
 QLabel#cardHandle {{ color: {COLORS['border']}; font-size: 8px; letter-spacing: 2px; }}
 QLabel#cardHandle:hover {{ color: {COLORS['text_muted']}; }}

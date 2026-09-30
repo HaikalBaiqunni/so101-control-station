@@ -4,7 +4,6 @@ import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .style import COLORS
+from .toggle_switch import ToggleSwitch
 
 # HUD tuning - kept as module constants instead of buried magic numbers so a
 # "make it bigger/denser" request later is a one-line change, not a hunt.
@@ -98,9 +98,10 @@ class TwinPanel(QGroupBox):
         browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self._browse)
         load_btn = QPushButton("Load")
+        load_btn.setObjectName("primaryButton")
         load_btn.clicked.connect(lambda: self.load_requested.emit(self.path_edit.text()))
 
-        self.hud_check = QCheckBox("HUD overlay")
+        self.hud_check = ToggleSwitch("HUD overlay")
         self.hud_check.setToolTip("Live load / temperature bars drawn over the render")
         self.hud_check.setChecked(True)
         self.hud_check.toggled.connect(lambda _: self._refresh_view())
@@ -110,14 +111,14 @@ class TwinPanel(QGroupBox):
         # appear when there is something to show (a target that differs from
         # where the arm is, a jog frame to point out), so leaving them on costs
         # nothing on a quiet screen.
-        self.ghost_check = QCheckBox("Ghost target")
+        self.ghost_check = ToggleSwitch("Ghost target")
         self.ghost_check.setChecked(True)
         self.ghost_check.setToolTip(
             "A translucent copy of the arm at where it is HEADING: the selected or\n"
             "playing waypoint, or the target a jog is driving toward while the real\n"
             "arm catches up."
         )
-        self.axes_check = QCheckBox("Axes")
+        self.axes_check = ToggleSwitch("Axes")
         self.axes_check.setChecked(True)
         self.axes_check.setToolTip(
             "Draw the World axes at the base and the Tool axes at the gripper tip.\n"
@@ -191,7 +192,7 @@ class TwinPanel(QGroupBox):
 
         # The controls live in a floating "View" card drawn over the render
         # (positioned by _place_view_card) instead of a toolbar above it.
-        self.camera_check = QCheckBox("Camera")
+        self.camera_check = ToggleSwitch("Camera")
         self.camera_check.setToolTip("Show the camera feed as a floating card")
 
         model_row = QHBoxLayout()
@@ -203,7 +204,7 @@ class TwinPanel(QGroupBox):
         self.view_card.setObjectName("floatCard")
         card = QVBoxLayout(self.view_card)
         card.setContentsMargins(14, 12, 14, 12)
-        card.setSpacing(6)
+        card.setSpacing(10)
         title = QLabel("View")
         title.setObjectName("cardTitle")
         self.view_title = title   # doubles as the card's drag handle (StageView)
