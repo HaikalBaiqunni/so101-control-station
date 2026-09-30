@@ -91,4 +91,15 @@ jobs:
           assert sections[:3] == ["Motors and ids", "Calibration", "Inputs"], sections
           assert window.top_bar.stop_btn.text() == "Stop"
           print("MainWindow constructed:", sections)
+          # The SO-101 twin is bundled, so a twin thread is running by now (it fails to
+          # render here without GL, but the thread is alive). Close the window the way a
+          # user would: closeEvent retires every worker. Exiting with one still running
+          # aborts the interpreter ("QThread: Destroyed while thread is still running").
+          window.close()
+          import time
+          deadline = time.time() + 15
+          while window._shutting_down_workers and time.time() < deadline:
+              app.processEvents()   # let the retiring threads finish before the interpreter exits
+              time.sleep(0.05)
+          assert not window._shutting_down_workers, "a worker thread did not stop"
           PY
