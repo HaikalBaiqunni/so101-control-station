@@ -247,7 +247,7 @@ QFrame#floatCard {{
 QFrame#floatCard QGroupBox {{ background: transparent; border: none; padding: 4px; margin-top: 12px; }}
 QLabel#cardTitle {{ font-size: 14px; font-weight: 600; }}
 QScrollArea#cardScroll, QScrollArea#cardScroll > QWidget > QWidget {{ background: transparent; border: none; }}
-QRadioButton#modeTile {{
+QPushButton#modeTile {{
     background-color: {COLORS['panel_alt']};
     border: 1px solid {COLORS['border']};
     border-radius: 12px;
@@ -255,14 +255,16 @@ QRadioButton#modeTile {{
     color: {COLORS['text_muted']};
     font-weight: 600;
 }}
-QRadioButton#modeTile:hover {{ color: {COLORS['text']}; }}
-QRadioButton#modeTile:checked {{
+QPushButton#modeTile:hover {{ color: {COLORS['text']}; background-color: {COLORS['panel_alt']}; }}
+QPushButton#modeTile:checked {{
     background-color: #1c2a40;
     border-color: {COLORS['accent']};
     color: {COLORS['text']};
 }}
-QRadioButton#modeTile::indicator {{ width: 0; height: 0; }}
-QRadioButton#modeTile:disabled {{ color: {COLORS['border']}; }}
+QPushButton#modeTile:disabled {{ color: {COLORS['border']}; background-color: {COLORS['panel']}; }}
+QLabel#cardHandle {{ color: {COLORS['border']}; font-size: 8px; letter-spacing: 2px; }}
+QLabel#cardHandle:hover {{ color: {COLORS['text_muted']}; }}
+QLabel#cardGrip {{ color: {COLORS['text_muted']}; font-size: 12px; }}
 
 /* Top bar status chips (ui/top_bar.py) and the Setup hub section list. */
 QWidget#topBar {{ background-color: {COLORS['panel']}; border-bottom: 1px solid {COLORS['border']}; }}

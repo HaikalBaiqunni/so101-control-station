@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -15,14 +15,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
 
 from core.servo_bus import JOINT_ORDER
 
+from .icons import icon
 from .setup_panel import configure_port_combo, fill_port_combo
+from .style import COLORS
 
 SOURCES = ["manual", "gamepad", "leader", "keyboard"]
 
@@ -41,15 +42,23 @@ class ControlSourcePanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("CONTROL SOURCE", parent)
 
-        self.manual_radio = QRadioButton("Manual")
-        self.gamepad_radio = QRadioButton("Gamepad")
-        self.leader_radio = QRadioButton("Leader arm")
-        self.keyboard_radio = QRadioButton("Keyboard")
+        self.manual_radio = QPushButton("Manual")
+        self.gamepad_radio = QPushButton("Gamepad")
+        self.leader_radio = QPushButton("Leader arm")
+        self.keyboard_radio = QPushButton("Keyboard")
         self.manual_radio.setChecked(True)
         self.manual_radio.setToolTip("Drive the arm from the Jog panel")
         self.leader_radio.setToolTip("Teleoperate: the leader arm drives the follower")
-        for tile in (self.manual_radio, self.gamepad_radio, self.leader_radio, self.keyboard_radio):
+        # Tiles are checkable buttons (not QRadioButtons) so they can carry an icon;
+        # the *_radio names stay because other code and tests use them.
+        for tile, icon_name in ((self.manual_radio, "manual"), (self.gamepad_radio, "gamepad"),
+                                (self.leader_radio, "leader"), (self.keyboard_radio, "keyboard")):
             tile.setObjectName("modeTile")
+            tile.setCheckable(True)
+            tile.setFocusPolicy(Qt.NoFocus)   # arrow/space keys belong to keyboard jog
+            tile.setIcon(icon(icon_name, COLORS["text_muted"], COLORS["accent"]))
+            tile.setIconSize(QSize(20, 20))
+        self.manual_radio.setChecked(True)   # only checkable now, so it has to be set again
 
         self.group = QButtonGroup(self)
         for i, rb in enumerate([self.manual_radio, self.gamepad_radio, self.leader_radio, self.keyboard_radio]):

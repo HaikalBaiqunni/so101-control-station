@@ -1,7 +1,7 @@
 """Setup hub: one page that holds every set-up/maintenance tool as a section."""
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidget,
@@ -12,6 +12,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .icons import icon
+from .style import COLORS
+
+SECTION_ICONS = {
+    "Motors and ids": "chip",
+    "Calibration": "target",
+    "Inputs": "gamepad",
+    "Data and logs": "doc",
+}
+
 
 class SetupHub(QWidget):
     back_requested = Signal()
@@ -21,10 +31,13 @@ class SetupHub(QWidget):
         self.back_btn = QPushButton("← Back to stage")
         self.back_btn.setObjectName("segButton")
         self.back_btn.clicked.connect(self.back_requested)
+        self.back_btn.setIcon(icon("back", COLORS["text_muted"]))
+        self.back_btn.setIconSize(QSize(16, 16))
 
         self.section_list = QListWidget()
         self.section_list.setObjectName("sectionList")
         self.section_list.setFixedWidth(230)
+        self.section_list.setIconSize(QSize(18, 18))
         self.stack = QStackedWidget()
         self.section_list.currentRowChanged.connect(self.stack.setCurrentIndex)
 
@@ -52,6 +65,10 @@ class SetupHub(QWidget):
             widget = area
         self._titles.append(title)
         self.section_list.addItem(title)
+        if title in SECTION_ICONS:
+            self.section_list.item(self.section_list.count() - 1).setIcon(
+                icon(SECTION_ICONS[title], COLORS["text_muted"], COLORS["text"])
+            )
         self.stack.addWidget(widget)
         if self.section_list.currentRow() < 0:
             self.section_list.setCurrentRow(0)

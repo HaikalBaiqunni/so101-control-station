@@ -184,6 +184,8 @@ class MainWindow(QMainWindow):
             self.twin_panel, self.camera_panel, self.jog_panel,
             [self.connection_panel, self.control_source_panel],
         )
+        self.stage.set_layout_state(self._load_settings().get("stage_layout", {}))
+        self.stage.layout_changed.connect(lambda state: self._save_setting("stage_layout", state))
 
         self.drawer = QStackedWidget()
         self.drawer.addWidget(self.teaching_panel)

@@ -86,6 +86,7 @@ class TwinPanel(QGroupBox):
     pan_requested = Signal(float, float)     # dx, dy - normalized by view height
     zoom_requested = Signal(float)           # dy - normalized, see ZOOM_WHEEL_STEP
     reset_view_requested = Signal()
+    reset_layout_requested = Signal()
     render_size_requested = Signal(int, int)   # px the twin should render at (matches the view)
 
     def __init__(self, parent=None):
@@ -205,10 +206,18 @@ class TwinPanel(QGroupBox):
         card.setSpacing(6)
         title = QLabel("View")
         title.setObjectName("cardTitle")
+        self.view_title = title   # doubles as the card's drag handle (StageView)
         card.addWidget(title)
         for check in (self.ghost_check, self.axes_check, self.hud_check, self.camera_check):
             card.addWidget(check)
-        card.addWidget(reset_view_btn)
+        reset_layout_btn = QPushButton("Reset layout")
+        reset_layout_btn.setObjectName("segButton")
+        reset_layout_btn.setToolTip("Put the floating cards back where they start")
+        reset_layout_btn.clicked.connect(self.reset_layout_requested)
+        reset_row = QHBoxLayout()
+        reset_row.addWidget(reset_view_btn, 1)
+        reset_row.addWidget(reset_layout_btn)
+        card.addLayout(reset_row)
         model_caption = QLabel("Twin model")
         model_caption.setObjectName("sectionCaption")
         card.addWidget(model_caption)
@@ -223,6 +232,8 @@ class TwinPanel(QGroupBox):
         self.view_card.raise_()
 
     def _place_view_card(self) -> None:
+        if getattr(self, "view_card_managed", False):   # StageView owns its position
+            return
         self.view_card.adjustSize()
         self.view_card.move(16, 16)
         self.view_card.raise_()

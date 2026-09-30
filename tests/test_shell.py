@@ -169,3 +169,47 @@ def test_tune_panel_keeps_its_signals_and_round_trips_gains(win):
     assert len(seen) == 1   # set_mit_gains must not re-emit
     win.dm_tune_panel.set_control_mode("mit")
     assert win.dm_tune_panel.control_mode_combo.currentData() == "mit"
+
+
+def test_cards_can_be_moved_and_stay_in_bounds(win):
+    from PySide6.QtCore import QPoint
+    win.resize(1440, 900)
+    win.show()
+    stage = win.stage
+    saved = []
+    stage.layout_changed.connect(saved.append)
+    stage._move_card("jog", QPoint(-500, 99999))   # far outside: must be clamped
+    geo = stage.cards["jog"].geometry()
+    assert stage.rect().contains(geo)
+    assert stage.layout_state()["placed"]["jog"] == [0.0, 1.0]
+    win.resize(1100, 700)   # a moved card keeps its relative place and stays inside
+    stage._layout_cards()
+    assert stage.rect().contains(stage.cards["jog"].geometry())
+
+
+def test_layout_state_round_trips_and_resets(win):
+    stage = win.stage
+    stage.set_layout_state({"placed": {"dock": [0.5, 0.25], "bogus": [1, 1]}, "camera_size": [500, 400]})
+    assert stage.layout_state()["placed"] == {"dock": [0.5, 0.25]}
+    assert stage.layout_state()["camera_size"] == [500, 400]
+    stage.set_layout_state("not a dict")   # foreign data must not crash
+    stage.reset_layout()
+    assert stage.layout_state()["placed"] == {}
+
+
+def test_camera_card_can_be_resized_within_limits(win):
+    from PySide6.QtCore import QSize
+    win.resize(1440, 900)
+    win.show()
+    win.twin_panel.camera_check.setChecked(True)
+    win.stage._resize_camera(QSize(10, 10))
+    assert win.stage._camera_size.width() >= 300 and win.stage._camera_size.height() >= 230
+
+
+def test_nav_buttons_and_mode_tiles_have_icons(win):
+    for button in win.top_bar.nav_buttons.values():
+        assert not button.icon().isNull()
+    assert not win.top_bar.stop_btn.icon().isNull()
+    for tile in (win.control_source_panel.manual_radio, win.control_source_panel.leader_radio):
+        assert not tile.icon().isNull()
+    assert win.control_source_panel.manual_radio.isChecked()

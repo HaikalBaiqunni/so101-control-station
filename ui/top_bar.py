@@ -1,8 +1,11 @@
 """Always-visible top bar: robot picker, connection chips, drawer/page buttons and Stop."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
+
+from .icons import icon
+from .style import COLORS
 
 CHIP_STATES = ("off", "good", "warn")
 
@@ -43,6 +46,8 @@ class TopBar(QWidget):
             button.setObjectName("segButton")
             button.setCheckable(True)
             button.setFocusPolicy(Qt.NoFocus)   # keep arrow/space keys for keyboard jog
+            button.setIcon(icon(key if key != "tune" else "tune", COLORS["text_muted"], "#06121f"))
+            button.setIconSize(QSize(18, 18))
             button.toggled.connect(lambda checked, k=key: self.nav_toggled.emit(k, checked))
             self.nav_buttons[key] = button
             layout.addWidget(button)
@@ -50,6 +55,8 @@ class TopBar(QWidget):
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setObjectName("dangerButton")
         self.stop_btn.setFocusPolicy(Qt.NoFocus)
+        self.stop_btn.setIcon(icon("stop", "#2a0a0a"))
+        self.stop_btn.setIconSize(QSize(18, 18))
         self.stop_btn.setToolTip("Torque OFF on the follower and switch control back to Manual")
         self.stop_btn.clicked.connect(self.stop_requested)
         layout.addWidget(self.stop_btn)
