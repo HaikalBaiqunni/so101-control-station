@@ -29,3 +29,27 @@ os.environ.setdefault("MUJOCO_GL", "disable")
 # Tests import `core.*` / `ui.*` as top-level packages, the same way main.py
 # does - so the repo root has to be importable regardless of where pytest ran.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
+import dataclasses  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_default_twin_for_so101(monkeypatch, request):
+    """The SO-101 profile now bundles a twin model and auto-loads it. Most tests build a
+    MainWindow on that profile and drive it with their own synthetic kinematic chain, so
+    keep them twin-free (the bundled model has its own test in test_shell.py)."""
+    if request.node.get_closest_marker("real_so101_profile"):
+        yield
+        return
+    from core import robot_profiles
+
+    original = robot_profiles.PROFILES["so101"]
+    monkeypatch.setitem(robot_profiles.PROFILES, "so101", dataclasses.replace(original, default_mjcf_path=""))
+    yield
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_so101_profile: keep the SO-101 profile's bundled twin path")

@@ -702,3 +702,30 @@ def test_connected_status_labels_turn_green(win):
         assert COLORS["danger"] in colours_of(panel.status_label)
     finally:
         app.setStyleSheet("")
+
+
+# ---------------------------------------------------------------- bundled SO-101 model
+def test_the_so101_profile_bundles_a_loadable_model():
+    import os
+
+    import mujoco
+
+    from core import robot_profiles
+    from core.robot_profiles import PROFILES
+
+    assert PROFILES["so101"].default_mjcf_path == ""   # the autouse fixture blanks it for the suite
+    path = os.path.join(robot_profiles._MODELS_DIR, "so101", "scene.xml")
+    assert os.path.isfile(path)
+    model = mujoco.MjModel.from_xml_path(path)       # every referenced mesh is really there
+    joint_names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i) for i in range(model.njnt)}
+    assert set(PROFILES["so101"].joint_order) <= joint_names
+    for name in ("LICENSE-Apache-2.0.txt", "NOTICE.md"):
+        assert os.path.isfile(os.path.join(os.path.dirname(path), name))
+
+
+@pytest.mark.real_so101_profile
+def test_the_real_so101_profile_points_at_the_bundle():
+    import os
+
+    from core.robot_profiles import PROFILES
+    assert PROFILES["so101"].default_mjcf_path.endswith(os.path.join("models", "so101", "scene.xml"))

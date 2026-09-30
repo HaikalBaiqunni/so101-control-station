@@ -95,7 +95,8 @@ PROFILES: dict[str, RobotProfile] = {
         # drift risk (nothing enforced the two ever agreeing). This is the
         # one place that list is spelled out now.
         joint_order=tuple(DEFAULT_JOINT_IDS.keys()),
-        default_mjcf_path="",
+        # Bundled copy of TheRobotStudio's SO-101 MJCF (Apache-2.0, see models/so101/NOTICE.md).
+        default_mjcf_path=os.path.join(_MODELS_DIR, "so101", "scene.xml"),
         hardware_available=True,
         # Five joints move the tool; the sixth servo is the gripper. So Cartesian
         # jogging on an SO-101 is inherently 5-DoF - see KinematicChain.reachability.

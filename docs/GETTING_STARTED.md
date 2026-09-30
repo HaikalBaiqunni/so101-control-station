@@ -220,10 +220,10 @@ at the position it is heading to.
 
 ### Optional: digital twin
 
-In the **Digital twin** panel, browse to an MJCF `scene.xml` and click
-**Load**. It mirrors whatever the arm is doing, live, whichever control source
-is active. Any SO-101 MuJoCo model works — the app doesn't ship one, so point
-it at whichever you already have.
+The SO-101 twin loads by itself: the app bundles TheRobotStudio's SO-101 MJCF in
+`models/so101/`. It mirrors whatever the arm is doing, live, whichever control
+source is active. To use a different model, use **Browse** in the **View** card,
+pick an MJCF `scene.xml` and click **Load**; the choice is remembered per robot.
 
 ### Optional: other control sources
 

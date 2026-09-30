@@ -323,7 +323,9 @@ understand:
 - An SO-101 / SO-ARM100 with Feetech STS3215 servos, a USB serial adapter, and
   its **5 V power supply** (USB powers the adapter, not the servos — this is
   the single most common "my arm is dead" cause)
-- Optional: a MuJoCo MJCF model for the twin, a USB webcam, a gamepad
+- Optional: a USB webcam and a gamepad. The digital twin needs nothing extra: models for
+  both robots are bundled under `models/` (the SO-101 one is TheRobotStudio's MJCF,
+  Apache-2.0, see `models/so101/NOTICE.md`); use *Browse* in the View card for another model
 - For the reBot B601-DM: a USB-to-CAN adapter for the Damiao follower motors,
   and (for teleoperation) Seeed's Star Arm 102 leader over its own
   USB-serial port — both need the WCH **CH340** driver on Windows if nothing

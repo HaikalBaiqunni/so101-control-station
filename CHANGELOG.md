@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SO-101 digital twin is bundled** (`models/so101/`, TheRobotStudio's MJCF, Apache-2.0,
+  with its licence and a NOTICE): the SO-101 twin now loads on first launch. A model you
+  picked with Browse still wins.
+
 - **JAKA-style Jog panel** replaces the per-joint sliders on the Control tab.
   - **Joint / World / Tool** modes with press-and-hold **−/+** buttons, a speed
     setting (default 30 %), and *Continuous* or fixed-**Step** moves.
