@@ -477,3 +477,94 @@ def test_tracking_samples_flow_only_while_the_tune_drawer_is_open(win):
     win._update_teleop_ui()
     assert len(win.dm_tune_panel.tracking_chart.samples()) == 1
     win.robot_worker = None
+
+
+# ---------------------------------------------------------------- cards: minimise, auto-adjust
+def _overlaps(stage):
+    keys = [k for k, c in stage.cards.items() if not c.isHidden()]
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            if stage.cards[a].geometry().intersects(stage.cards[b].geometry()):
+                return (a, b)
+    return None
+
+
+@pytest.mark.parametrize("size", [(1100, 700), (1440, 900), (1920, 1080)])
+@pytest.mark.parametrize("leader", [False, True])
+def test_cards_never_overlap_or_sit_under_the_top_bar(win, size, leader):
+    from ui.stage_view import TOP
+    win.resize(*size)
+    win.show()
+    if leader:
+        win.control_source_panel.leader_radio.click()
+    win.twin_panel.camera_check.setChecked(True)
+    win.stage._layout_cards()
+    assert _overlaps(win.stage) is None
+    for card in win.stage.cards.values():
+        if not card.isHidden():
+            assert card.geometry().top() >= TOP
+            assert win.stage.rect().contains(card.geometry())
+
+
+def test_a_saved_position_under_the_bar_or_on_another_card_is_corrected(win):
+    from ui.stage_view import TOP
+    win.resize(1100, 700)
+    win.show()
+    win.stage.set_layout_state({"placed": {"view": [0.0, 0.0], "jog": [1.0, 0.0], "dock": [0.1, 0.9]}})
+    assert _overlaps(win.stage) is None
+    assert all(c.geometry().top() >= TOP for c in win.stage.cards.values() if not c.isHidden())
+
+
+def test_cards_minimise_to_a_tab_and_expand_again(win):
+    win.resize(1440, 900)
+    win.show()
+    stage = win.stage
+    full = stage.cards["jog"].geometry()
+    stage.cards["jog"].min_btn.click()
+    assert stage.is_collapsed("jog")
+    assert stage.tabs["jog"].isVisible()
+    assert stage.cards["jog"].width() < full.width() and stage.cards["jog"].height() < 60
+    assert stage.layout_state()["collapsed"] == ["jog"]
+    stage.tabs["jog"].click()
+    assert not stage.is_collapsed("jog")
+    assert stage.cards["jog"].geometry().width() == full.width()
+
+
+def test_the_view_card_minimises_too(win):
+    win.resize(1440, 900)
+    win.show()
+    win.twin_panel.view_min_btn.click()
+    assert win.stage.is_collapsed("view") and win.stage.cards["view"].width() < 200
+    win.stage.tabs["view"].click()
+    assert win.stage.cards["view"].width() == 300
+
+
+def test_minimised_state_is_saved_and_restored(win):
+    win.resize(1440, 900)
+    win.show()
+    win.stage.cards["dock"].min_btn.click()
+    import json
+    with open("gui_settings.json", encoding="utf-8") as f:
+        assert json.load(f)["stage_layout"]["collapsed"] == ["dock"]
+    win.stage.set_layout_state({"collapsed": ["jog", "bogus"]})
+    assert win.stage.is_collapsed("jog") and not win.stage.is_collapsed("dock")
+
+
+def test_view_folds_itself_when_there_is_no_room_and_reopens_when_there_is(win):
+    win.resize(1100, 700)
+    win.show()
+    win.control_source_panel.leader_radio.click()   # taller dock
+    win.stage._layout_cards()
+    assert "view" in win.stage._auto and win.stage.tabs["view"].isVisible()
+    assert "view" not in win.stage._collapsed        # automatic: not saved as the user's choice
+    win.resize(1920, 1200)
+    win.stage._layout_cards()
+    assert "view" not in win.stage._auto and not win.stage.tabs["view"].isVisible()
+
+
+def test_reset_layout_also_unfolds_cards(win):
+    win.resize(1440, 900)
+    win.show()
+    win.stage.set_collapsed("jog", True)
+    win.stage.reset_layout()
+    assert not win.stage.is_collapsed("jog")

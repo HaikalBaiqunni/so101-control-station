@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The top bar floats over the page as rounded pills; toggle switches in the View card;
     outlined pill buttons with solid accent only on the primary action; cards can be
     dragged (position saved, *Reset layout* in View); the camera card is resizable.
+  - Cards **minimise to a tab** (the - button) and expand when the tab is clicked, and they
+    **auto-adjust**: they never overlap each other or sit under the top bar (a card is slid to
+    the nearest free spot), and View / Camera fold into their tab by themselves when a small
+    window or an open drawer leaves no room.
   - **Engage teleop**: choosing *Leader arm* no longer moves the follower. Tracking starts
     only after an explicit Engage, allowed when both arms are live, follower torque is on
     and every arm joint is within a tolerance (default 10 deg, saved). The leader pose is

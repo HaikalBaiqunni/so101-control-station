@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from .style import COLORS
@@ -208,9 +210,26 @@ class TwinPanel(QGroupBox):
         title = QLabel("View")
         title.setObjectName("cardTitle")
         self.view_title = title   # doubles as the card's drag handle (StageView)
-        card.addWidget(title)
+        self.view_min_btn = QToolButton()
+        self.view_min_btn.setObjectName("cardMin")
+        self.view_min_btn.setText("\u2013")
+        self.view_min_btn.setToolTip("Minimise to a tab")
+        title_row = QWidget()
+        title_layout = QHBoxLayout(title_row)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.addWidget(title, 1)
+        title_layout.addWidget(self.view_min_btn)
+        card.addWidget(title_row)
+        # Everything under the title lives in one widget so StageView can fold the
+        # whole card into a tab by hiding just `title_row` and `body`.
+        body = QWidget()
+        card_body = QVBoxLayout(body)
+        card_body.setContentsMargins(0, 0, 0, 0)
+        card_body.setSpacing(10)
+        card.addWidget(body)
+        self.view_parts = [title_row, body]
         for check in (self.ghost_check, self.axes_check, self.hud_check, self.camera_check):
-            card.addWidget(check)
+            card_body.addWidget(check)
         reset_layout_btn = QPushButton("Reset layout")
         reset_layout_btn.setObjectName("segButton")
         reset_layout_btn.setToolTip("Put the floating cards back where they start")
@@ -218,12 +237,12 @@ class TwinPanel(QGroupBox):
         reset_row = QHBoxLayout()
         reset_row.addWidget(reset_view_btn, 1)
         reset_row.addWidget(reset_layout_btn)
-        card.addLayout(reset_row)
+        card_body.addLayout(reset_row)
         model_caption = QLabel("Twin model")
         model_caption.setObjectName("sectionCaption")
-        card.addWidget(model_caption)
-        card.addLayout(model_row)
-        card.addWidget(self.caption)
+        card_body.addWidget(model_caption)
+        card_body.addLayout(model_row)
+        card_body.addWidget(self.caption)
         self.view_card.setFixedWidth(300)
         self.view_card.adjustSize()
 

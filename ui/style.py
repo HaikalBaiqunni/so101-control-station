@@ -274,6 +274,21 @@ QPushButton#engageButton {{ padding: 9px 22px; font-size: 14px; background-color
 QPushButton#engageButton:hover {{ background-color: {COLORS['accent_hover']}; }}
 QPushButton#engageButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
 QPushButton#engageButton[engaged="true"] {{ background-color: {COLORS['danger']}; color: #2a0a0a; }}
+QWidget#plainBox, QWidget#dockBody {{ background: transparent; }}
+QToolButton#cardMin {{
+    background: transparent; border: none; color: {COLORS['text_muted']};
+    font-size: 16px; font-weight: 700; padding: 0 6px;
+}}
+QToolButton#cardMin:hover {{ color: {COLORS['text']}; background: {COLORS['panel_alt']}; border-radius: 8px; }}
+QFrame#floatCard[collapsed="true"] {{ background: transparent; border: none; }}
+QPushButton#cardTab {{
+    background-color: rgba(23, 27, 33, 238);
+    border: 1px solid {COLORS['border']};
+    border-radius: 14px;
+    padding: 4px 14px;
+    color: {COLORS['text']};
+}}
+QPushButton#cardTab:hover {{ border-color: {COLORS['accent']}; }}
 QLabel#cardHandle {{ color: {COLORS['border']}; font-size: 8px; letter-spacing: 2px; }}
 QLabel#cardHandle:hover {{ color: {COLORS['text_muted']}; }}
 QLabel#cardGrip {{ color: {COLORS['text_muted']}; font-size: 12px; }}
