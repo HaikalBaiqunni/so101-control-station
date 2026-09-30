@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -20,6 +20,7 @@ from .style import COLORS
 
 # HUD tuning - kept as module constants instead of buried magic numbers so a
 # "make it bigger/denser" request later is a one-line change, not a hunt.
+RENDER_MAX_PIXELS = 1_100_000
 HUD_MARGIN = 10
 HUD_ROW_H = 18
 HUD_PANEL_W = 190
@@ -85,6 +86,7 @@ class TwinPanel(QGroupBox):
     pan_requested = Signal(float, float)     # dx, dy - normalized by view height
     zoom_requested = Signal(float)           # dy - normalized, see ZOOM_WHEEL_STEP
     reset_view_requested = Signal()
+    render_size_requested = Signal(int, int)   # px the twin should render at (matches the view)
 
     def __init__(self, parent=None):
         super().__init__("", parent)
@@ -179,6 +181,12 @@ class TwinPanel(QGroupBox):
         self.view.setAlignment(Qt.AlignCenter)
         self.view.setStyleSheet("background-color: #0d1014; border: none;")
         self.view.installEventFilter(self)
+        # Debounced: dragging a splitter/window edge fires resizeEvent per pixel,
+        # and re-creating the GL renderer for each would stall the render thread.
+        self._size_timer = QTimer(self)
+        self._size_timer.setSingleShot(True)
+        self._size_timer.setInterval(150)
+        self._size_timer.timeout.connect(lambda: self.render_size_requested.emit(*self.render_size()))
 
         # The controls live in a floating "View" card drawn over the render
         # (positioned by _place_view_card) instead of a toolbar above it.
@@ -218,6 +226,13 @@ class TwinPanel(QGroupBox):
         self.view_card.adjustSize()
         self.view_card.move(16, 16)
         self.view_card.raise_()
+
+    def render_size(self) -> tuple[int, int]:
+        """The view's size in pixels, capped to ~1 MP (software-friendly at 15 fps)
+        and made even. The frame then has the view's own aspect: no letterbox bars."""
+        w, h = max(64, self.view.width()), max(64, self.view.height())
+        scale = min(1.0, (RENDER_MAX_PIXELS / (w * h)) ** 0.5, 1920 / w, 1080 / h)
+        return max(64, int(w * scale) // 2 * 2), max(64, int(h * scale) // 2 * 2)
 
     def ghost_enabled(self) -> bool:
         return self.ghost_check.isChecked()
@@ -303,6 +318,7 @@ class TwinPanel(QGroupBox):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._place_view_card()
+        self._size_timer.start()
         self._elide_caption()
         # Re-paint the cached frame at the new size immediately instead of
         # leaving a stale, wrong-sized pixmap on screen until the next frame

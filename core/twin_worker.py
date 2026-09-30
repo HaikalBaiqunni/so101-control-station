@@ -63,6 +63,7 @@ class TwinWorker(QThread):
         # ~67ms (15fps) render tick: nothing is dropped/coalesced away.
         self._camera_ops: list[tuple[str, float, float]] = []
         self._reset_camera_requested = False
+        self._size_request: tuple[int, int] | None = None
         self._lock = threading.Lock()
         # A plain flag that stop() sets and run()'s loop condition checks -
         # deliberately never written back to False->True anywhere else (see
@@ -98,6 +99,12 @@ class TwinWorker(QThread):
     def request_zoom(self, dy: float) -> None:
         with self._lock:
             self._camera_ops.append(("zoom", 0.0, dy))
+
+    def request_resize(self, width: int, height: int) -> None:
+        """Render at (width, height) from the next frame on - applied on the
+        render thread, which owns the GL context."""
+        with self._lock:
+            self._size_request = (width, height)
 
     def request_reset_camera(self) -> None:
         with self._lock:
@@ -143,11 +150,15 @@ class TwinWorker(QThread):
                 self._neutral_requested = False
                 camera_ops = self._camera_ops
                 self._camera_ops = []
+                size_request = self._size_request
+                self._size_request = None
                 reset_camera = self._reset_camera_requested
                 self._reset_camera_requested = False
                 ghost = self._ghost_fractions
                 frame_overlay = self._frame_overlay
 
+            if size_request:
+                twin.resize(*size_request)
             if reset_camera:
                 twin.reset_camera()
             for op, dx, dy in camera_ops:

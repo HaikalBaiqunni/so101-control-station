@@ -1676,6 +1676,8 @@ class MainWindow(QMainWindow):
         self.twin_panel.pan_requested.connect(self.twin_worker.request_pan)
         self.twin_panel.zoom_requested.connect(self.twin_worker.request_zoom)
         self.twin_panel.reset_view_requested.connect(self.twin_worker.request_reset_camera)
+        self.twin_panel.render_size_requested.connect(self.twin_worker.request_resize)
+        self.twin_worker.request_resize(*self.twin_panel.render_size())
         self.twin_worker.start()
         self.twin_panel.set_caption(f"loaded: {path}")
 

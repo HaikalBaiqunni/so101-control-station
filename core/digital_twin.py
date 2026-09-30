@@ -24,6 +24,10 @@ GHOST_RGBA = (0.30, 0.78, 1.0, 0.30)
 AXIS_RGB = ((0.95, 0.25, 0.25), (0.25, 0.85, 0.35), (0.30, 0.50, 1.0))
 
 
+MAX_RENDER_W = 1920
+MAX_RENDER_H = 1080
+
+
 class DigitalTwin:
     def __init__(
         self,
@@ -43,6 +47,12 @@ class DigitalTwin:
         self.data = mujoco.MjData(self.model)
         self.width = width
         self.height = height
+        # The offscreen framebuffer is capped by the model's own <visual><global
+        # offwidth/offheight> (MuJoCo default 640x480), so a Renderer bigger than
+        # that is refused. Raise the cap so resize() can follow the on-screen view
+        # instead of upscaling a small fixed frame (blurry + letterboxed).
+        self.model.vis.global_.offwidth = max(self.model.vis.global_.offwidth, MAX_RENDER_W)
+        self.model.vis.global_.offheight = max(self.model.vis.global_.offheight, MAX_RENDER_H)
         self.renderer = mujoco.Renderer(self.model, height=height, width=width)
         # A free camera MuJoCo itself owns nothing of - unlike qpos, nothing
         # about camera pose is simulation state, so it's fine to mutate this
@@ -280,6 +290,17 @@ class DigitalTwin:
             for axis in range(3):
                 rgb = AXIS_RGB[axis]
                 self._add_arrow(origin, origin + length * rot[:, axis], width, (*rgb, alpha))
+
+    def resize(self, width: int, height: int) -> None:
+        """Re-create the renderer at a new size. Must run on the thread that owns
+        the GL context (TwinWorker's), like render()."""
+        width = max(64, min(int(width), MAX_RENDER_W))
+        height = max(64, min(int(height), MAX_RENDER_H))
+        if (width, height) == (self.width, self.height):
+            return
+        self.renderer.close()
+        self.width, self.height = width, height
+        self.renderer = mujoco.Renderer(self.model, height=height, width=width)
 
     def render(self, overlays: bool = True) -> np.ndarray:
         self._apply_mimics(self.data)
