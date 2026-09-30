@@ -279,7 +279,12 @@ QLabel#cardHandle:hover {{ color: {COLORS['text_muted']}; }}
 QLabel#cardGrip {{ color: {COLORS['text_muted']}; font-size: 12px; }}
 
 /* Top bar status chips (ui/top_bar.py) and the Setup hub section list. */
-QWidget#topBar {{ background-color: {COLORS['panel']}; border-bottom: 1px solid {COLORS['border']}; }}
+QWidget#topBar {{ background: transparent; }}
+QFrame#topPill {{
+    background-color: rgba(23, 27, 33, 238);
+    border: 1px solid {COLORS['border']};
+    border-radius: 22px;
+}}
 QLabel#chip {{
     background-color: {COLORS['bg']};
     color: {COLORS['text_muted']};

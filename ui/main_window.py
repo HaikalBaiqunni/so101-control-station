@@ -62,7 +62,7 @@ from .setup_panel import SetupPanel
 from .stage_view import StageView
 from .teaching_panel import TeachingPanel
 from .telemetry_panel import TelemetryPanel, convert_telemetry
-from .top_bar import TopBar
+from .top_bar import ShellHost, TopBar
 from .twin_panel import TwinPanel
 
 GAMEPAD_TICK_MS = 33          # ~30 Hz jog integration
@@ -192,6 +192,7 @@ class MainWindow(QMainWindow):
         self.drawer.addWidget(self.telemetry_panel)
         self.drawer.addWidget(self.dm_tune_panel)
         self.drawer.setMinimumWidth(400)
+        self.drawer.setContentsMargins(0, TopBar.BAR_H, 0, 0)
         self.drawer.hide()
 
         self.stage_splitter = QSplitter(Qt.Horizontal)
@@ -254,13 +255,9 @@ class MainWindow(QMainWindow):
         self.top_bar.nav_toggled.connect(self._on_nav_toggled)
         self.top_bar.stop_requested.connect(self._on_emergency_stop)
 
-        central = QWidget()
-        central_layout = QVBoxLayout(central)
-        central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.setSpacing(0)
-        central_layout.addWidget(self.top_bar)
-        central_layout.addWidget(self.pages, 1)
-        self.setCentralWidget(central)
+        # The bar floats over the pages (mockup B1) instead of taking a row above
+        # them; every page reserves TopBar.BAR_H at its top so nothing hides under it.
+        self.setCentralWidget(ShellHost(self.pages, self.top_bar))
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready.")

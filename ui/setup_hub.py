@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from .icons import icon
 from .style import COLORS
+from .top_bar import BAR_H
 
 SECTION_ICONS = {
     "Motors and ids": "chip",
@@ -28,7 +29,7 @@ class SetupHub(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.back_btn = QPushButton("← Back to stage")
+        self.back_btn = QPushButton("Back to stage")
         self.back_btn.setObjectName("segButton")
         self.back_btn.clicked.connect(self.back_requested)
         self.back_btn.setIcon(icon("back", COLORS["text_muted"]))
@@ -46,7 +47,7 @@ class SetupHub(QWidget):
         body.addWidget(self.stack, 1)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, BAR_H, 12, 8)   # clear of the floating top bar
         head = QHBoxLayout()
         head.addWidget(self.back_btn)
         head.addStretch(1)

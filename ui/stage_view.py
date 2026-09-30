@@ -14,7 +14,10 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
+from .top_bar import BAR_H
+
 MARGIN = 16
+TOP = BAR_H + 4   # cards start below the floating top bar
 GAP = 12
 JOG_CARD_W = 360
 DOCK_SIDE_BY_SIDE_MIN_W = 800
@@ -222,12 +225,12 @@ class StageView(QWidget):
         # height at this exact width so the camera card never lands on top of it.
         view_h = max(view_card.height(), view_card.layout().totalHeightForWidth(view_card.width()))
         view_card.resize(view_card.width(), view_h)
-        rects: dict[str, QRect] = {"view": QRect(MARGIN, MARGIN, view_card.width(), view_h)}
+        rects: dict[str, QRect] = {"view": QRect(MARGIN, TOP, view_card.width(), view_h)}
 
         # Jog: a full-height column on the right.
         jog_w = int(min(JOG_CARD_W, max(320, w * 0.27)))
-        jog_h = min(self._wanted_height(self.jog_card) + chrome, h - 2 * MARGIN)
-        rects["jog"] = QRect(w - MARGIN - jog_w, MARGIN, jog_w, jog_h)
+        jog_h = min(self._wanted_height(self.jog_card) + chrome, h - TOP - MARGIN)
+        rects["jog"] = QRect(w - MARGIN - jog_w, TOP, jog_w, jog_h)
 
         # Dock: along the bottom, between the left edge and the jog column.
         avail_w = max(360, (w - MARGIN - jog_w - GAP) - MARGIN)
