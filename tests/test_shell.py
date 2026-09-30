@@ -568,3 +568,82 @@ def test_reset_layout_also_unfolds_cards(win):
     win.stage.set_collapsed("jog", True)
     win.stage.reset_layout()
     assert not win.stage.is_collapsed("jog")
+
+
+# ---------------------------------------------------------------- palette, joint bars, TCP line
+def test_palette_filter_needs_every_word():
+    from ui.command_palette import PaletteAction, filter_actions
+    acts = [PaletteAction("Open Tune", "drawer", lambda: None, "kp kd"),
+            PaletteAction("Toggle ghost target", "view", lambda: None)]
+    assert [a.title for a in filter_actions(acts, "tune")] == ["Open Tune"]
+    assert [a.title for a in filter_actions(acts, "kd open")] == ["Open Tune"]
+    assert filter_actions(acts, "nothing here") == []
+    assert len(filter_actions(acts, "  ")) == 2
+
+
+def test_palette_offers_nothing_that_moves_an_arm(win):
+    titles = " | ".join(a.title.lower() for a in win._palette_actions())
+    for forbidden in ("engage", "nudge", "torque on", "jog", "play"):
+        assert forbidden not in titles
+
+
+def test_palette_lists_tune_and_calibration_only_for_the_damiao_arm(win):
+    _pick(win, "so101")
+    titles = [a.title for a in win._palette_actions()]
+    assert "Open Tune" not in titles and not any("Calibrate" in t for t in titles)
+    _pick(win, "rebot_b601_dm")
+    titles = [a.title for a in win._palette_actions()]
+    assert "Open Tune" in titles and any("Calibrate leader" in t for t in titles)
+
+
+def test_palette_runs_actions_and_leader_choice_does_not_engage(win):
+    from ui.command_palette import CommandPalette
+    palette = CommandPalette(win)
+    palette.set_actions(win._palette_actions())
+    palette.search.setText("leader arm")
+    assert palette.titles() == ["Control source: Leader arm"]
+    palette.list.setCurrentRow(0)
+    palette.run_current()
+    assert win.control_source == "leader" and not win.teleop_engaged
+    palette.set_actions(win._palette_actions())
+    palette.search.setText("open telemetry")
+    palette.run_current()
+    assert not win.drawer.isHidden() and win.drawer.currentWidget() is win.telemetry_panel
+
+
+def test_the_palette_and_stop_shortcuts_exist(win):
+    from PySide6.QtGui import QShortcut
+    keys = {s.key().toString() for s in win.findChildren(QShortcut)}
+    assert {"Ctrl+K", "Ctrl+Shift+Space"} <= keys
+
+
+def test_joint_rows_draw_position_and_target_bars(win):
+    row = next(iter(win.joint_panel.rows.values()))
+    row.set_limits(-100.0, 100.0)
+    row.set_feedback_deg(0.0)
+    row.set_target_deg(50.0)
+    assert row.bar._position == 0.5 and row.bar._target == 0.75
+    row.set_target_deg(None)
+    assert row.bar._target is None
+    row.set_feedback_deg(1000.0)   # beyond the range: clamped, never drawn outside the bar
+    assert row.bar._position == 1.0
+
+
+def test_targets_reach_the_bars_from_the_worker_goals(win):
+    class Worker:
+        last_goals = {}
+    name = next(iter(win.joint_panel.rows))
+    win.joint_panel.rows[name].set_limits(-100.0, 100.0)
+    win.robot_worker = Worker()
+    Worker.last_goals = {name: 100.0}
+    win._refresh_ui()
+    assert win.joint_panel.rows[name].bar._target == 1.0
+    win.robot_worker = None
+
+
+def test_tcp_summary_shows_only_in_joint_mode(win):
+    win.jog_panel.set_tcp_summary("TCP (world)  X 1  Y 2  Z 3 mm")
+    win.show()
+    assert win.jog_panel.tcp_label.isVisible()
+    win.jog_panel.set_tcp_summary("")
+    assert not win.jog_panel.tcp_label.isVisible()

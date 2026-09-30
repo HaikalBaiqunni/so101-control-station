@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -45,6 +45,7 @@ from core.workers import CameraWorker, GamepadWorker, RobotWorker
 
 from .calibration_panel import CalibrationPanel
 from .camera_panel import CameraPanel
+from .command_palette import CommandPalette, PaletteAction
 from .connection_panel import ConnectionPanel
 from .control_source_panel import ControlSourcePanel
 from .data_logs_page import DataLogsPage
@@ -254,6 +255,9 @@ class MainWindow(QMainWindow):
         self.top_bar = TopBar(self.robot_combo)
         self.top_bar.nav_toggled.connect(self._on_nav_toggled)
         self.top_bar.stop_requested.connect(self._on_emergency_stop)
+        self.top_bar.palette_requested.connect(self._open_palette)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_palette)
+        QShortcut(QKeySequence("Ctrl+Shift+Space"), self, activated=self._on_emergency_stop)
 
         # The bar floats over the pages (mockup B1) instead of taking a row above
         # them; every page reserves TopBar.BAR_H at its top so nothing hides under it.
@@ -987,6 +991,65 @@ class MainWindow(QMainWindow):
         else:
             self.drawer.hide()
 
+    # ---------------------------------------------------------------- command palette
+    def _palette_actions(self) -> list[PaletteAction]:
+        """Only navigation, view settings, control-source choices and the existing
+        calibration dialogs - nothing here starts a motion or engages teleop."""
+        is_dm = self.robot_profile.key == "rebot_b601_dm"
+        buttons = self.top_bar.nav_buttons
+
+        def show(key: str):
+            return lambda: buttons[key].setChecked(True)
+
+        def to_stage():
+            for button in buttons.values():
+                button.setChecked(False)
+
+        def setup_section(title: str):
+            def run():
+                buttons["setup"].setChecked(True)
+                self.setup_hub.show_section(title)
+            return run
+
+        actions = [
+            PaletteAction("Back to stage", "close drawers and Setup", to_stage, "home main"),
+            PaletteAction("Open Waypoints", "drawer", show("waypoints"), "teach record playback"),
+            PaletteAction("Open Telemetry", "drawer", show("telemetry"), "graph table csv"),
+            PaletteAction("Open Setup", "hub", show("setup"), "settings"),
+        ]
+        if is_dm:
+            actions.append(PaletteAction("Open Tune", "drawer: MIT gains, presets, tracking", show("tune"), "kp kd gain pid"))
+        for title in self.setup_hub.section_titles():
+            actions.append(PaletteAction(f"Setup: {title}", "", setup_section(title)))
+        actions += [
+            PaletteAction("Stop: follower torque off, control to Manual", "Ctrl+Shift+Space",
+                          self._on_emergency_stop, "emergency halt"),
+            PaletteAction("Control source: Manual", "jog panel", self.control_source_panel.manual_radio.click),
+            PaletteAction("Control source: Leader arm", "standby - does not engage teleop",
+                          self.control_source_panel.leader_radio.click, "teleoperate"),
+            PaletteAction("Control source: Gamepad", "", self.control_source_panel.gamepad_radio.click),
+            PaletteAction("Control source: Keyboard", "", self.control_source_panel.keyboard_radio.click),
+            PaletteAction("Toggle ghost target", "view", self.twin_panel.ghost_check.toggle),
+            PaletteAction("Toggle axes", "view", self.twin_panel.axes_check.toggle),
+            PaletteAction("Toggle HUD overlay", "view", self.twin_panel.hud_check.toggle),
+            PaletteAction("Toggle camera card", "view", self.twin_panel.camera_check.toggle),
+            PaletteAction("Reset 3D view", "camera angle", self.twin_panel.reset_view_requested.emit),
+            PaletteAction("Reset card layout", "positions and minimised cards", self.stage.reset_layout),
+        ]
+        if is_dm:
+            actions += [
+                PaletteAction("Calibrate follower gripper range", "follower connected, torque off",
+                              self._on_dm_gripper_calibrate_requested, "sweep"),
+                PaletteAction("Calibrate leader (Star Arm 102)", "leader connected",
+                              self._on_leader_calibrate_requested, "sweep"),
+            ]
+        return actions
+
+    def _open_palette(self) -> None:
+        palette = CommandPalette(self)
+        palette.set_actions(self._palette_actions())
+        palette.exec()
+
     def _on_emergency_stop(self) -> None:
         """Follower torque OFF and control back to Manual. Forcing Manual matters:
         with a leader relay still active, re-enabling torque later would make the
@@ -1717,12 +1780,20 @@ class MainWindow(QMainWindow):
         that page is actually showing."""
         chain = self.kinematics
         mode = self.jog_panel.mode()
-        if chain is None or mode == "joint":
+        if chain is None:
+            self.jog_panel.set_tcp_summary("")
             return
         fractions = self._positions_to_fractions()
         chain.set_q(chain.fractions_to_q({n: fractions[n] for n in chain.joint_names if n in fractions}))
         position, rotation = chain.tcp_pose()
-        self.jog_panel.set_pose(position, rpy_deg_from_matrix(rotation))
+        rpy = rpy_deg_from_matrix(rotation)
+        if mode == "joint":
+            self.jog_panel.set_tcp_summary(
+                f"TCP (world)  X {position[0] * 1000:.0f}  Y {position[1] * 1000:.0f}  Z {position[2] * 1000:.0f} mm\n"
+                f"Rx {rpy[0]:.0f}  Ry {rpy[1]:.0f}  Rz {rpy[2]:.0f} deg"
+            )
+            return
+        self.jog_panel.set_pose(position, rpy)
         self.jog_panel.set_reach(chain.reachability(mode))
 
     # ---------------------------------------------------------------- twin overlays (ghost, axes)
@@ -1771,6 +1842,7 @@ class MainWindow(QMainWindow):
         arriving from one or two robot workers - this is what keeps the main
         thread from ever falling behind."""
         self.joint_panel.update_feedback(self.current_positions)
+        self.joint_panel.set_targets(dict(getattr(self.robot_worker, "last_goals", {}) or {}) if self.robot_worker else {})
         self._update_cartesian_readout()
         self._update_teleop_ui()
         if self.twin_worker:

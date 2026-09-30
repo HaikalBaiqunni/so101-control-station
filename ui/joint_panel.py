@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -10,6 +11,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.servo_bus import JOINT_ORDER
+
+from .style import COLORS
 
 
 class JogButton(QPushButton):
@@ -30,6 +33,37 @@ class JogButton(QPushButton):
         self.setFixedSize(36, 28)
 
 
+class RangeBar(QWidget):
+    """A thin bar under a joint row: how far through its calibrated range the joint
+    is (fill) and where it has been told to go (cyan tick). Display only."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(8)
+        self._position: float | None = None
+        self._target: float | None = None
+
+    def set_values(self, position: float | None, target: float | None) -> None:
+        if (position, target) != (self._position, self._target):
+            self._position, self._target = position, target
+            self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        h = self.height()
+        track = QRectF(0, (h - 4) / 2, self.width(), 4)
+        painter.setBrush(QColor(COLORS["border"]))
+        painter.drawRoundedRect(track, 2, 2)
+        if self._position is not None:
+            painter.setBrush(QColor(COLORS["accent"]))
+            painter.drawRoundedRect(QRectF(0, track.y(), self.width() * self._position, 4), 2, 2)
+        if self._target is not None:
+            painter.setBrush(QColor("#4cc2ff"))
+            painter.drawRect(QRectF(min(self.width() - 2, self.width() * self._target), 0, 2, h))
+
+
 class JointRow(QWidget):
     """One joint: name, a held [-] / [+] pair that jogs it, and a live degree
     readout that doubles as exact entry (type a value, press Enter)."""
@@ -42,6 +76,7 @@ class JointRow(QWidget):
         super().__init__(parent)
         self.name = name
         self._suppress_feedback = False
+        self._target_deg: float | None = None
 
         lo, hi = limits
         self.minus_btn = JogButton("−")
@@ -72,6 +107,8 @@ class JointRow(QWidget):
         layout.addWidget(self.minus_btn, 0, 1)
         layout.addWidget(self.spin, 0, 2)
         layout.addWidget(self.plus_btn, 0, 3)
+        self.bar = RangeBar()
+        layout.addWidget(self.bar, 1, 1, 1, 3)
         layout.setColumnStretch(2, 1)
 
     def _update_tooltip(self, lo: float, hi: float) -> None:
@@ -90,12 +127,27 @@ class JointRow(QWidget):
         re-emitting goal_changed (that would create a write-loop)."""
         # Never overwrite a value somebody is halfway through typing - feedback
         # arrives ~30 times a second and would erase it under their fingers.
+        self._position_deg = degrees
+        self._refresh_bar()
         line_edit = self.spin.lineEdit()
         if line_edit is not None and line_edit.hasFocus():
             return
         self._suppress_feedback = True
         self.spin.setValue(degrees)
         self._suppress_feedback = False
+
+    def _fraction(self, degrees: float | None) -> float | None:
+        if degrees is None:
+            return None
+        lo, hi = self.spin.minimum(), self.spin.maximum()
+        return None if hi <= lo else min(1.0, max(0.0, (degrees - lo) / (hi - lo)))
+
+    def _refresh_bar(self) -> None:
+        self.bar.set_values(self._fraction(getattr(self, "_position_deg", None)), self._fraction(self._target_deg))
+
+    def set_target_deg(self, degrees: float | None) -> None:
+        self._target_deg = degrees
+        self._refresh_bar()
 
     def _on_spin_edited(self, degrees: float) -> None:
         if not self._suppress_feedback:
@@ -160,6 +212,11 @@ class JointPanel(QWidget):
     def set_limits(self, name: str, lo: float, hi: float) -> None:
         if name in self.rows:
             self.rows[name].set_limits(lo, hi)
+
+    def set_targets(self, targets: dict[str, float]) -> None:
+        """Where each joint has been commanded to go (cyan tick on its bar)."""
+        for name, row in self.rows.items():
+            row.set_target_deg(targets.get(name))
 
     def update_feedback(self, positions: dict[str, float]) -> None:
         for name, deg in positions.items():

@@ -275,6 +275,11 @@ QPushButton#engageButton:hover {{ background-color: {COLORS['accent_hover']}; }}
 QPushButton#engageButton:disabled {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text_muted']}; }}
 QPushButton#engageButton[engaged="true"] {{ background-color: {COLORS['danger']}; color: #2a0a0a; }}
 QWidget#plainBox, QWidget#dockBody {{ background: transparent; }}
+QListWidget#paletteList {{
+    background: transparent; border: none; outline: none;
+}}
+QListWidget#paletteList::item {{ padding: 9px 12px; border-radius: 10px; color: {COLORS['text_muted']}; }}
+QListWidget#paletteList::item:selected {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text']}; }}
 QToolButton#cardMin {{
     background: transparent; border: none; color: {COLORS['text_muted']};
     font-size: 16px; font-weight: 700; padding: 0 6px;

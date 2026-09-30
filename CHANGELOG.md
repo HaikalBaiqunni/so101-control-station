@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     **auto-adjust**: they never overlap each other or sit under the top bar (a card is slid to
     the nearest free spot), and View / Camera fold into their tab by themselves when a small
     window or an open drawer leaves no room.
+  - **Command palette** (Ctrl+K or the search button): navigation, view toggles, control-source
+    choice and the calibration dialogs - nothing that moves an arm. **Ctrl+Shift+Space** = Stop.
+  - Every joint row has a range bar (position fill, cyan tick for the commanded target) and Joint
+    mode shows the live TCP pose.
   - **Engage teleop**: choosing *Leader arm* no longer moves the follower. Tracking starts
     only after an explicit Engage, allowed when both arms are live, follower torque is on
     and every arm joint is within a tolerance (default 10 deg, saved). The leader pose is

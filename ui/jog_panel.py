@@ -209,6 +209,11 @@ class JogPanel(QGroupBox):
         self.stack.addWidget(self.joint_page)
         self.stack.addWidget(self.cartesian_page)
 
+        self.tcp_label = QLabel("")
+        self.tcp_label.setObjectName("poseReadout")
+        self.tcp_label.setWordWrap(True)
+        self.tcp_label.hide()
+
         self.hint_label = QLabel()
         self.hint_label.setObjectName("sectionCaption")
         self.hint_label.setWordWrap(True)
@@ -222,6 +227,7 @@ class JogPanel(QGroupBox):
         layout.addLayout(speed_row)
         layout.addLayout(step_row)
         layout.addWidget(self.stack)
+        layout.addWidget(self.tcp_label)
         layout.addWidget(self.hint_label)
         layout.addWidget(self.status_label)
 
@@ -256,6 +262,7 @@ class JogPanel(QGroupBox):
             return
         self._mode = mode
         self.stack.setCurrentIndex(0 if mode == "joint" else 1)
+        self.tcp_label.setVisible(mode == "joint" and bool(self.tcp_label.text()))
         self._refresh_hint()
         self.mode_changed.emit(mode)
 
@@ -297,6 +304,12 @@ class JogPanel(QGroupBox):
     def set_input_enabled(self, enabled: bool) -> None:
         self.joint_page.set_input_enabled(enabled)
         self.cartesian_page.set_input_enabled(enabled)
+
+    def set_tcp_summary(self, text: str) -> None:
+        """Where the tool tip is, shown under the joint rows in Joint mode (the
+        World / Tool pages have their own per-axis readouts)."""
+        self.tcp_label.setText(text)
+        self.tcp_label.setVisible(self._mode == "joint" and bool(text))
 
     def set_pose(self, position_m, rpy_deg) -> None:
         self.cartesian_page.set_pose(position_m, rpy_deg)

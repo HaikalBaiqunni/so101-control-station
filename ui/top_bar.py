@@ -22,6 +22,7 @@ class TopBar(QWidget):
 
     nav_toggled = Signal(str, bool)   # "waypoints" | "telemetry" | "tune" | "setup", checked
     stop_requested = Signal()
+    palette_requested = Signal()
 
     NAV = (("waypoints", "Waypoints"), ("telemetry", "Telemetry"), ("tune", "Tune"), ("setup", "Setup"))
     BAR_H = BAR_H
@@ -58,6 +59,14 @@ class TopBar(QWidget):
         right = QHBoxLayout(self.right_pill)
         right.setContentsMargins(8, 5, 8, 5)
         right.setSpacing(4)
+        self.search_btn = QPushButton("")
+        self.search_btn.setObjectName("segButton")
+        self.search_btn.setFocusPolicy(Qt.NoFocus)
+        self.search_btn.setIcon(icon("search", COLORS["text_muted"]))
+        self.search_btn.setIconSize(QSize(18, 18))
+        self.search_btn.setToolTip("Command palette (Ctrl+K)")
+        self.search_btn.clicked.connect(self.palette_requested)
+        right.addWidget(self.search_btn)
         self.nav_buttons: dict[str, QPushButton] = {}
         for key, text in self.NAV:
             button = QPushButton(text)

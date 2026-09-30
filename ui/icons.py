@@ -68,6 +68,9 @@ def _draw(name: str, p: QPainter) -> None:
         p.drawRoundedRect(QRectF(3, 7, 18, 12), 2.5, 2.5)
         p.drawEllipse(QPointF(12, 13), 3.5, 3.5)
         _poly(p, [(8, 7), (9.5, 4.5), (14.5, 4.5), (16, 7)])
+    elif name == "search":
+        p.drawEllipse(QPointF(11, 11), 6.5, 6.5)
+        p.drawLine(QPointF(16, 16), QPointF(21, 21))
     elif name == "back":
         p.drawLine(QPointF(19, 12), QPointF(5, 12))
         _poly(p, [(11, 6), (5, 12), (11, 18)])
