@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and every arm joint is within a tolerance (default 10 deg, saved). The leader pose is
     shown as the ghost while standing by; teleop drops on Stop, torque off, source change
     and either arm disconnecting.
+  - **MIT setpoint ramp + holding preset** (B601-DM): in MIT mode the commanded setpoint now moves
+    toward the target at a bounded rate set by the Speed slider (30 % = 90 deg/s) instead of jumping
+    there, and a *Holding start* preset (kp 40 / kd 2.5 on joint2-3, lower elsewhere) is built in as a
+    first guess for joints that carry load. The default stays *Gentle start*. The motor still gets only
+    kp / kd (no gravity feed-forward), so a loaded joint sags by roughly torque / kp.
   - **Tune drawer** (B601-DM): named MIT gain presets, a commanded-vs-measured tracking chart
     with peak error / settle / overshoot, and +/-5 deg nudge (torque on, Manual only).
   - **Speed slider** now also caps the Damiao POS_VEL velocity (30 % = the old 0.3 rad/s,

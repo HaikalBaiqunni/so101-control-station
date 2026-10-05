@@ -729,3 +729,85 @@ def test_the_real_so101_profile_points_at_the_bundle():
 
     from core.robot_profiles import PROFILES
     assert PROFILES["so101"].default_mjcf_path.endswith(os.path.join("models", "so101", "scene.xml"))
+
+
+# ---------------------------------------------------------------- MIT setpoint slew and the holding preset
+def test_setpoint_slew_approaches_the_goal_at_a_bounded_rate():
+    from core.setpoint_slew import SetpointSlew
+    slew = SetpointSlew()
+    # first goal starts from where the joint really is, not from the goal
+    assert slew.step("j", 90.0, 10.0, rate_deg_s=60.0, dt=0.5) == 40.0
+    assert slew.step("j", 90.0, 10.0, rate_deg_s=60.0, dt=0.5) == 70.0
+    assert slew.step("j", 90.0, 10.0, rate_deg_s=60.0, dt=0.5) == 90.0     # never overshoots the goal
+    assert slew.at_goal("j", 90.0)
+    assert slew.step("j", 0.0, 90.0, rate_deg_s=60.0, dt=0.25) == 75.0     # works downward too
+    slew.reset("j")
+    assert not slew.at_goal("j", 0.0)
+    assert slew.step("j", 5.0, None, rate_deg_s=10.0, dt=1.0) == 5.0       # no measurement: start at the goal
+
+
+def test_slew_rate_follows_the_speed_slider():
+    from core.damiao_bus import speed_percent_to_mit_rate_deg_s as rate
+    assert rate(30) == 90.0 and rate(100) == 300.0 and rate(1) == 5.0
+    assert rate(10) < rate(50)
+
+
+class _FakeMitBus:
+    from core.dm_can import Control_Type as _CT
+    control_mode = _CT.MIT
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.mit_gains = {}
+        self.vel_limit_rad_s = 0.3
+
+    def write_goals_deg(self, goals):
+        self.calls.append(dict(goals))
+
+
+def _mit_worker(measured):
+    from core.dm_robot_worker import DmRobotWorker
+    worker = DmRobotWorker.__new__(DmRobotWorker)
+    from core.setpoint_slew import SetpointSlew
+    worker.bus = _FakeMitBus()
+    worker._slew = SetpointSlew()
+    worker._measured = dict(measured)
+    worker._speed_percent = 30.0        # 90 deg/s
+    worker.error = type("S", (), {"emit": staticmethod(lambda msg: None)})()
+    return worker
+
+
+def test_a_far_mit_target_is_streamed_as_a_ramp_not_a_jump():
+    worker = _mit_worker({"joint2": 0.0})
+    held = {"joint2": 60.0}
+    worker._stream_mit(held, held, dt=0.1)            # fresh goal: first step only (9 deg)
+    for _ in range(10):
+        worker._stream_mit({}, held, dt=0.1)
+    sent = [c["joint2"] for c in worker.bus.calls]
+    assert sent[0] == pytest.approx(9.0)
+    assert all(b - a <= 9.0 + 1e-6 for a, b in zip(sent, sent[1:], strict=False))   # never more than rate * dt
+    assert sent[-1] == pytest.approx(60.0)
+
+
+def test_an_arrived_mit_joint_is_not_resent_every_cycle():
+    worker = _mit_worker({"joint2": 59.0})
+    held = {"joint2": 60.0}
+    worker._stream_mit(held, held, dt=0.1)            # arrives immediately (1 deg away)
+    n = len(worker.bus.calls)
+    for _ in range(5):
+        worker._stream_mit({}, held, dt=0.1)
+    assert len(worker.bus.calls) == n                 # idle traffic unchanged
+    worker._stream_mit(held, held, dt=0.1)            # but an explicit new request is sent
+    assert len(worker.bus.calls) == n + 1
+
+
+def test_the_holding_preset_stays_inside_the_kp_kd_ranges(win):
+    from ui.dm_tune_panel import HOLDING_GAINS, HOLDING_PRESET
+    for kp, kd in HOLDING_GAINS.values():
+        assert 0 <= kp <= 500 and 0 <= kd <= 5
+    seen = []
+    win.dm_tune_panel.mit_gains_changed.connect(seen.append)
+    assert win.dm_tune_panel.load_preset(HOLDING_PRESET)
+    assert win.dm_tune_panel.mit_gains()["joint2"] == (40.0, 2.5)
+    assert seen                                       # pushed out for a live retune
+    assert not win.dm_tune_panel.save_preset(HOLDING_PRESET)   # built-ins cannot be overwritten

@@ -48,6 +48,17 @@ MAX_SPEED_VEL_RAD_S = 0.8
 MIN_SPEED_VEL_RAD_S = 0.05
 
 
+MIT_RATE_DEG_S_PER_PERCENT = 3.0   # MIT setpoint slew: 30 % -> 90 deg/s, 100 % -> 300 deg/s
+MIT_RATE_MIN_DEG_S = 5.0
+MIT_RATE_MAX_DEG_S = 300.0
+
+
+def speed_percent_to_mit_rate_deg_s(percent: float) -> float:
+    """Speed slider (1-100 %) -> how fast the MIT setpoint may move toward a target.
+    Far more generous than the POS_VEL cap: it only has to stop a jump, not pace teleop."""
+    return max(MIT_RATE_MIN_DEG_S, min(MIT_RATE_MAX_DEG_S, MIT_RATE_DEG_S_PER_PERCENT * float(percent)))
+
+
 def speed_percent_to_vel_limit(percent: float) -> float:
     """Speed slider (1-100 %) -> POS_VEL velocity limit in rad/s."""
     return max(MIN_SPEED_VEL_RAD_S, min(MAX_SPEED_VEL_RAD_S, MAX_JOG_VEL_RAD_S * float(percent) / 30.0))

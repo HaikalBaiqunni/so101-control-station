@@ -22,6 +22,14 @@ from PySide6.QtWidgets import (
 from .tracking_chart import TrackingChart, tracking_metrics
 
 BUILTIN_PRESET = "Gentle start (kp 8 / kd 0.5)"
+HOLDING_PRESET = "Holding start (stiffer, for load)"
+# A first guess for an arm that has to hold itself against gravity (LeRobot's B601 defaults use
+# kp 45 on the shoulder / elbow). NOT validated on this hardware: load it with the arm supported
+# and a hand near Stop, then tune per joint. kd stays inside this app's 0-5 range.
+HOLDING_GAINS = {
+    "joint1": (15.0, 1.0), "joint2": (40.0, 2.5), "joint3": (40.0, 2.5), "joint4": (25.0, 1.5),
+    "joint5": (12.0, 0.8), "joint6": (10.0, 0.6), "finger_left": (8.0, 0.5),
+}
 NUDGE_DEG = 5.0
 
 
@@ -197,13 +205,14 @@ class DmTunePanel(QWidget):
     def _refresh_preset_combo(self, select: str | None = None) -> None:
         self.preset_combo.clear()
         self.preset_combo.addItem(BUILTIN_PRESET)
+        self.preset_combo.addItem(HOLDING_PRESET)
         self.preset_combo.addItems(sorted(self._presets))
         if select and self.preset_combo.findText(select) >= 0:
             self.preset_combo.setCurrentText(select)
 
     def save_preset(self, name: str) -> bool:
         name = name.strip()
-        if not name or name == BUILTIN_PRESET:
+        if not name or name in (BUILTIN_PRESET, HOLDING_PRESET):
             return False
         self._presets[name] = {j: [kp, kd] for j, (kp, kd) in self.mit_gains().items()}
         self._refresh_preset_combo(select=name)
@@ -213,6 +222,8 @@ class DmTunePanel(QWidget):
     def load_preset(self, name: str) -> bool:
         if name == BUILTIN_PRESET:
             gains = dict.fromkeys(self.joint_order, (8.0, 0.5))
+        elif name == HOLDING_PRESET:
+            gains = {j: HOLDING_GAINS.get(j, (8.0, 0.5)) for j in self.joint_order}
         elif name in self._presets:
             gains = {j: (kp, kd) for j, (kp, kd) in self._presets[name].items()}
         else:

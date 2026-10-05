@@ -286,8 +286,8 @@
   <li data-i="ja"><strong>+</strong> / <strong>−</strong> を押している間だけ動きます。数値を入力してEnterでその位置へ移動。<strong>Step</strong>で連続移動か固定ステップかを選びます。</li>
   <li data-i="en">The thin bar under each joint shows where it is inside its calibrated range (blue fill); the cyan tick is the position it has been told to reach.</li>
   <li data-i="ja">各ジョイントの下の細いバーは、キャリブレーション範囲のどこにいるか（青い塗り）を示し、水色の目盛りは指令された目標位置です。</li>
-  <li data-i="en"><strong>Speed</strong> is one slider: it scales jog speed and, on the B601-DM, also caps how fast the follower chases any target, so teleop and waypoint playback slow down with it (30 % = 0.3 rad/s, never above 0.8 rad/s).</li>
-  <li data-i="ja"><strong>Speed</strong>は1本のスライダーです。ジョグ速度を調整し、B601-DMではフォロワーが目標を追う速度の上限にもなるため、遠隔操作やウェイポイント再生も遅くなります（30% = 0.3 rad/s、上限は0.8 rad/s）。</li>
+  <li data-i="en"><strong>Speed</strong> is one slider: it scales jog speed and, on the B601-DM, also caps how fast the follower chases any target, so teleop and waypoint playback slow down with it (30 % = 0.3 rad/s, never above 0.8 rad/s). In MIT mode it limits how fast the commanded setpoint moves toward a target (30 % = 90°/s), so a far target is approached instead of jumped to.</li>
+  <li data-i="ja"><strong>Speed</strong>は1本のスライダーです。ジョグ速度を調整し、B601-DMではフォロワーが目標を追う速度の上限にもなるため、遠隔操作やウェイポイント再生も遅くなります（30% = 0.3 rad/s、上限は0.8 rad/s）。MITモードでは、目標へ向かう指令値の移動速度を制限します（30% = 90°/s）。遠い目標へも一気に飛ばず、滑らかに近づきます。</li>
 </ul>
 </div></div>
 <div class="step"><div class="step-num">4</div><div class="step-body">
@@ -538,8 +538,8 @@
 <ul class="plain">
   <li data-i="en"><strong>Control mode</strong> — <strong>POS_VEL</strong> (default) uses the motor's own position / velocity loop. <strong>MIT</strong> sends fresh stiffness / damping (<code>kp</code>, <code>kd</code>) with every command: more responsive and compliant, but the gains must be tuned on the real arm, so start low (kp 5–10, kd 0.3–0.8). The mode applies on the next Connect; kp / kd apply <strong>live</strong>, with no reconnect and no torque cycling.</li>
   <li data-i="ja"><strong>Control mode</strong> — <strong>POS_VEL</strong>（既定）はモーター自身の位置・速度ループを使います。<strong>MIT</strong>は毎回のコマンドで剛性・減衰（<code>kp</code>、<code>kd</code>）を送ります。応答性が高く柔らかい反面、ゲインは実機で調整が必要なので低い値（kp 5〜10、kd 0.3〜0.8）から始めてください。モードは次回のConnectで反映され、kp / kdは再接続やトルクの入れ直しなしに<strong>即時</strong>反映されます。</li>
-  <li data-i="en"><strong>Gain presets</strong> — <em>Save as…</em> stores the current kp / kd under a name, <em>Load</em> fills the boxes (and a connected MIT follower applies them at once), <em>Delete</em> removes one. &quot;Gentle start&quot; is built in.</li>
-  <li data-i="ja"><strong>Gain presets</strong> — <em>Save as…</em>で現在のkp / kdを名前付きで保存、<em>Load</em>で入力欄に反映（MIT接続中のフォロワーには即時適用）、<em>Delete</em>で削除。「Gentle start」は組み込みです。</li>
+  <li data-i="en"><strong>Gain presets</strong> — <em>Save as…</em> stores the current kp / kd under a name, <em>Load</em> fills the boxes (and a connected MIT follower applies them at once), <em>Delete</em> removes one. Two are built in: &quot;Gentle start&quot; (the safe default) and &quot;Holding start (stiffer, for load)&quot; (kp 40 / kd 2.5 on joint2 and joint3). The second is a first guess for arms that must hold weight: load it with the arm supported and a hand near Stop, then tune each joint.</li>
+  <li data-i="ja"><strong>Gain presets</strong> — <em>Save as…</em>で現在のkp / kdを名前付きで保存、<em>Load</em>で入力欄に反映（MIT接続中のフォロワーには即時適用）、<em>Delete</em>で削除。組み込みは2つ：「Gentle start」（安全な既定値）と「Holding start (stiffer, for load)」（joint2・joint3は kp 40 / kd 2.5）。後者は荷重を保持するアーム向けの初期値の目安です。アームを支え、手をStopの近くに置いてから読み込み、ジョイントごとに調整してください。</li>
   <li data-i="en"><strong>Tracking</strong> — pick a joint: the chart shows the commanded target (dashed) against the measured position for the last 10 seconds, with peak error, settle time and overshoot of the latest step. It only reads data.</li>
   <li data-i="ja"><strong>Tracking</strong> — ジョイントを選ぶと、直近10秒の指令目標（破線）と実測位置がチャートに表示され、最新のステップの最大誤差・整定時間・オーバーシュートが出ます。データを読むだけです。</li>
   <li data-i="en"><strong>Nudge ±5°</strong> — moves the chosen joint 5° from its current goal, clamped to its calibrated range. It is enabled only with the follower connected, torque ON, control source Manual, teleop not engaged and no sequence playing; otherwise the panel says why it is off.</li>

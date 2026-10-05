@@ -23,8 +23,9 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .damiao_bus import DamiaoBus, DamiaoBusError, speed_percent_to_vel_limit
+from .damiao_bus import DamiaoBus, DamiaoBusError, speed_percent_to_mit_rate_deg_s, speed_percent_to_vel_limit
 from .dm_can import Control_Type
+from .setpoint_slew import SetpointSlew
 
 POLL_INTERVAL_S = 1 / 20  # see module docstring below for why this isn't 1/60 like RobotWorker
 TELEMETRY_EVERY_N_CYCLES = 4  # -> 5 Hz, plenty for a diagnostics graph
@@ -75,6 +76,9 @@ class DmRobotWorker(QThread):
         # worker thread ever reads/writes self.bus after connect().
         self._gains_commands: queue.Queue = queue.Queue()
         self._speed_percent = 30.0
+        self._slew = SetpointSlew()          # MIT only: the setpoint streamed to each motor
+        self._measured: dict[str, float] = {}
+        self._last_tick = time.monotonic()
         self._speed_dirty = True   # applied on the worker thread, before the next command
         self._stop_requested = False
         self.bus: DamiaoBus | None = None
@@ -96,6 +100,23 @@ class DmRobotWorker(QThread):
 
     def request_mit_gains(self, gains: dict[str, tuple[float, float]]) -> None:
         self._gains_commands.put(dict(gains))
+
+    def _stream_mit(self, new_goals: dict[str, float], held: dict[str, float], dt: float) -> None:
+        """MIT: move each joint's setpoint toward its goal at the Speed-slider rate and
+        send it while it is still moving (plus once for every freshly requested goal).
+        A joint that has arrived is not re-sent every cycle, so idle traffic is unchanged."""
+        rate = speed_percent_to_mit_rate_deg_s(self._speed_percent)
+        out: dict[str, float] = {}
+        for name, goal in held.items():
+            before = self._slew.setpoint.get(name)
+            new = self._slew.step(name, goal, self._measured.get(name), rate, dt)
+            if name in new_goals or before is None or new != before:
+                out[name] = new
+        if out:
+            try:
+                self.bus.write_goals_deg(out)
+            except DamiaoBusError as exc:
+                self.error.emit(str(exc))
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -124,9 +145,15 @@ class DmRobotWorker(QThread):
             if self._speed_dirty:
                 self._speed_dirty = False
                 self.bus.vel_limit_rad_s = speed_percent_to_vel_limit(self._speed_percent)
+            now = time.monotonic()
+            dt = min(0.1, now - self._last_tick)   # a stalled loop must not turn into one big step
+            self._last_tick = now
             with self._goals_lock:
                 goals, self._pending_goals = self._pending_goals, {}
-            if goals:
+                held = dict(self.last_goals)
+            if self.bus.control_mode == Control_Type.MIT:
+                self._stream_mit(goals, held, dt)
+            elif goals:
                 try:
                     self.bus.write_goals_deg(goals)
                 except DamiaoBusError as exc:
@@ -141,6 +168,7 @@ class DmRobotWorker(QThread):
                     (self.bus.enable_torque if enabled else self.bus.disable_torque)(name)
                 except DamiaoBusError as exc:
                     self.error.emit(str(exc))
+                self._slew.reset(name)   # re-arming approaches the next goal from the real position
 
             new_gains_applied = False
             while True:
@@ -161,13 +189,15 @@ class DmRobotWorker(QThread):
                 # hardware: raising joint4's kp live did nothing until it
                 # was jogged again). Same target, so this can't itself cause
                 # any new motion - only how hard the motor holds it.
+                resend = {n: self._slew.setpoint.get(n, g) for n, g in self.last_goals.items()}
                 try:
-                    self.bus.write_goals_deg(dict(self.last_goals))
+                    self.bus.write_goals_deg(resend)
                 except DamiaoBusError as exc:
                     self.error.emit(str(exc))
 
             try:
                 positions = self.bus.read_all_positions_deg()
+                self._measured = dict(positions)
                 self.positions_updated.emit(positions)
             except DamiaoBusError as exc:
                 self.error.emit(str(exc))
