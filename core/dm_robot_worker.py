@@ -25,6 +25,7 @@ from PySide6.QtCore import QThread, Signal
 
 from .damiao_bus import DamiaoBus, DamiaoBusError, speed_percent_to_mit_rate_deg_s, speed_percent_to_vel_limit
 from .dm_can import Control_Type
+from .gravity import GravityModel, clamp_ff
 from .setpoint_slew import SetpointSlew
 
 POLL_INTERVAL_S = 1 / 20  # see module docstring below for why this isn't 1/60 like RobotWorker
@@ -45,6 +46,7 @@ class DmRobotWorker(QThread):
     telemetry_updated = Signal(dict)   # {joint_name: {position, velocity, load}}
     error = Signal(str)
     connection_changed = Signal(bool)
+    gravity_status = Signal(bool, str)   # (model loaded, message)
 
     def __init__(
         self,
@@ -53,9 +55,11 @@ class DmRobotWorker(QThread):
         ranges_deg: dict[str, tuple[float, float]],
         control_mode: Control_Type = Control_Type.POS_VEL,
         mit_gains: dict[str, tuple[float, float]] | None = None,
+        gravity_mjcf_path: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
+        self.gravity_mjcf_path = gravity_mjcf_path
         self.port = port
         self.id_master_by_joint = id_master_by_joint
         self.ranges_deg = ranges_deg
@@ -76,6 +80,13 @@ class DmRobotWorker(QThread):
         # worker thread ever reads/writes self.bus after connect().
         self._gains_commands: queue.Queue = queue.Queue()
         self._speed_percent = 30.0
+        # MIT gravity feed-forward (core/gravity.py). Always starts OFF; the GUI only raises the
+        # target after its own check against the motors' torque feedback has passed.
+        self._gravity: GravityModel | None = None
+        self._g_target = 0.0     # percent, requested
+        self._g_now = 0.0        # percent, after the ramp
+        self._g_sent_nonzero = False
+        self._torque_on = False
         self._slew = SetpointSlew()          # MIT only: the setpoint streamed to each motor
         self._measured: dict[str, float] = {}
         self._last_tick = time.monotonic()
@@ -98,8 +109,37 @@ class DmRobotWorker(QThread):
         self._speed_percent = float(percent)
         self._speed_dirty = True
 
+    def request_gravity_percent(self, percent: float) -> None:
+        """0-100 % of the model's gravity torque, ramped in by the worker thread."""
+        self._g_target = max(0.0, min(100.0, float(percent)))
+
     def request_mit_gains(self, gains: dict[str, tuple[float, float]]) -> None:
         self._gains_commands.put(dict(gains))
+
+    GRAVITY_RAMP_PERCENT_PER_S = 40.0   # 0 -> 100 % takes 2.5 s: no torque step when it is switched on
+
+    def _load_gravity_model(self) -> None:
+        if not self.gravity_mjcf_path or self.bus.control_mode != Control_Type.MIT:
+            return
+        try:
+            self._gravity = GravityModel(self.gravity_mjcf_path, list(self.ranges_deg))
+            self.gravity_status.emit(True, f"model loaded ({self._gravity.total_mass_kg:.1f} kg)")
+        except Exception as exc:   # a missing / odd MJCF must not take the connection down
+            self._gravity = None
+            self.gravity_status.emit(False, f"gravity model unavailable: {exc}")
+
+    def _gravity_ff(self, dt: float) -> dict[str, float]:
+        """Feed-forward torque per joint for this cycle ({} when off)."""
+        step = self.GRAVITY_RAMP_PERCENT_PER_S * max(0.0, dt)
+        self._g_now += max(-step, min(step, self._g_target - self._g_now))
+        if self._g_now <= 0.0 or self._gravity is None or not self._torque_on:
+            return {}
+        names = self._gravity.joint_names
+        if not names or any(n not in self._measured for n in names):
+            return {}
+        tau = self._gravity.torques({n: self._measured[n] for n in names})
+        scale = self._g_now / 100.0
+        return {n: clamp_ff(n, t * scale) for n, t in tau.items()}
 
     def _stream_mit(self, new_goals: dict[str, float], held: dict[str, float], dt: float) -> None:
         """MIT: move each joint's setpoint toward its goal at the Speed-slider rate and
@@ -112,9 +152,30 @@ class DmRobotWorker(QThread):
             new = self._slew.step(name, goal, self._measured.get(name), rate, dt)
             if name in new_goals or before is None or new != before:
                 out[name] = new
+        ff = self._gravity_ff(dt)
+        if ff:
+            # The torque changes with the pose, so every held joint is re-sent each cycle (a joint
+            # that has arrived still needs its new torque), and a joint with no goal yet is held
+            # where it is, seeded once - never re-seeded from measured, which would only float it.
+            for name in ff:
+                if name not in held:
+                    out[name] = self._slew.setpoint.setdefault(name, self._measured[name])
+            for name in held:
+                out[name] = self._slew.setpoint[name]
+            self._g_sent_nonzero = True
+        elif self._g_sent_nonzero and self._torque_on:
+            # just switched off: send the held setpoints once more with zero torque, because a
+            # motor keeps the last command's torque until it receives another
+            for name in list(held) + [n for n in self._slew.setpoint if n not in held]:
+                if name in self._slew.setpoint:
+                    out[name] = self._slew.setpoint[name]
+            self._g_sent_nonzero = False
         if out:
             try:
-                self.bus.write_goals_deg(out)
+                if ff:
+                    self.bus.write_goals_deg(out, feedforward=ff)
+                else:
+                    self.bus.write_goals_deg(out)
             except DamiaoBusError as exc:
                 self.error.emit(str(exc))
 
@@ -138,6 +199,7 @@ class DmRobotWorker(QThread):
             return
 
         self.connection_changed.emit(True)
+        self._load_gravity_model()
         cycle = 0
 
         while not self._stop_requested:
@@ -169,6 +231,11 @@ class DmRobotWorker(QThread):
                 except DamiaoBusError as exc:
                     self.error.emit(str(exc))
                 self._slew.reset(name)   # re-arming approaches the next goal from the real position
+                if name is None:
+                    self._torque_on = enabled
+                if not enabled:
+                    self._g_now = self._g_target = 0.0   # never leave feed-forward behind a torque-off
+                    self._g_sent_nonzero = False
 
             new_gains_applied = False
             while True:

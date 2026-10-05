@@ -30,6 +30,7 @@ import threading
 import serial
 
 from .dm_can import Control_Type, DM_Motor_Type, Motor, MotorControl
+from .gravity import clamp_ff
 
 BAUD = 921600  # matches dm_setup_worker.py and Damiao's own DM_Tools
 
@@ -206,7 +207,7 @@ class DamiaoBus:
     def write_goal_deg(self, name: str, degrees: float) -> None:
         self.write_goals_deg({name: degrees})
 
-    def write_goals_deg(self, goals: dict[str, float]) -> None:
+    def write_goals_deg(self, goals: dict[str, float], feedforward: dict[str, float] | None = None) -> None:
         """Clamps every value to ranges_deg first - defence in depth,
         confirmed directly this session that dm_can.py's control_Pos_Vel and
         controlMIT pack their arguments with NO clamping of their own (MIT's
@@ -222,7 +223,10 @@ class DamiaoBus:
             q_rad = math.radians(clamped)
             if self.control_mode == Control_Type.MIT:
                 kp, kd = self.mit_gains.get(name, (DEFAULT_MIT_KP, DEFAULT_MIT_KD))
-                self._mc.controlMIT(motor, kp, kd, q_rad, 0.0, 0.0)
+                # feedforward = gravity torque (N*m, see core/gravity.py), clamped again here so a
+                # bad value upstream can never become a violent command
+                tau = clamp_ff(name, feedforward.get(name, 0.0)) if feedforward else 0.0
+                self._mc.controlMIT(motor, kp, kd, q_rad, 0.0, tau)
             else:
                 self._mc.control_Pos_Vel(motor, q_rad, self.vel_limit_rad_s)
 

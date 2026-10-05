@@ -773,6 +773,10 @@ def _mit_worker(measured):
     worker._slew = SetpointSlew()
     worker._measured = dict(measured)
     worker._speed_percent = 30.0        # 90 deg/s
+    worker._gravity = None
+    worker._g_target = worker._g_now = 0.0
+    worker._g_sent_nonzero = False
+    worker._torque_on = True
     worker.error = type("S", (), {"emit": staticmethod(lambda msg: None)})()
     return worker
 
@@ -811,3 +815,220 @@ def test_the_holding_preset_stays_inside_the_kp_kd_ranges(win):
     assert win.dm_tune_panel.mit_gains()["joint2"] == (40.0, 2.5)
     assert seen                                       # pushed out for a live retune
     assert not win.dm_tune_panel.save_preset(HOLDING_PRESET)   # built-ins cannot be overwritten
+
+
+# ---------------------------------------------------------------- gravity feed-forward
+B601_XML = None
+
+
+def _b601_path():
+    import os
+
+    from core import robot_profiles
+    return os.path.join(robot_profiles._MODELS_DIR, "rebot_b601_dm", "rebot_b601_dm.xml")
+
+
+def _gravity_model():
+    from core.gravity import GravityModel
+    return GravityModel(_b601_path(), ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "finger_left"])
+
+
+def test_gravity_model_covers_the_arm_joints_but_not_the_gripper():
+    model = _gravity_model()
+    assert model.joint_names == ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    assert 3.0 < model.total_mass_kg < 6.0           # a real-looking arm, not an empty model
+
+
+def test_gravity_torque_is_zero_on_the_vertical_axis_and_loads_the_lifting_joints():
+    model = _gravity_model()
+    tau = model.torques({})
+    assert tau["joint1"] == pytest.approx(0.0, abs=1e-6)   # base yaw: gravity has no lever arm
+    assert abs(tau["joint3"]) > 1.0                        # the elbow carries real load at the rest pose
+    # holding torque is exactly what it takes to hold: it equals MuJoCo's bias at qvel = 0
+    again = model.torques({"joint2": 0.0, "joint3": 0.0})
+    assert again == pytest.approx(tau)
+
+
+def test_gravity_torque_changes_with_pose_and_flips_sign_through_vertical():
+    model = _gravity_model()
+    a = model.torques({"joint2": -30.0, "joint3": -30.0})
+    b = model.torques({"joint2": -120.0, "joint3": -30.0})
+    assert a["joint2"] != pytest.approx(b["joint2"])
+
+
+def test_feedforward_is_clamped_per_joint_and_never_given_to_the_gripper():
+    from core.gravity import FF_TAU_CAP_NM, clamp_ff
+    assert clamp_ff("joint2", 99.0) == FF_TAU_CAP_NM["joint2"]
+    assert clamp_ff("joint5", -99.0) == -FF_TAU_CAP_NM["joint5"]
+    assert clamp_ff("finger_left", 5.0) == 0.0 and clamp_ff("unknown", 5.0) == 0.0
+
+
+class _FfBus(_FakeMitBus):
+    def write_goals_deg(self, goals, feedforward=None):
+        self.calls.append({"goals": dict(goals), "ff": dict(feedforward) if feedforward else None})
+
+
+def _gravity_worker(measured):
+    worker = _mit_worker(measured)
+    worker.bus = _FfBus()
+    worker._gravity = _gravity_model()
+    worker._torque_on = True
+    return worker
+
+
+ARM = {"joint1": 0.0, "joint2": -30.0, "joint3": -30.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0}
+
+
+def test_gravity_ramps_in_and_resends_every_held_joint_with_a_torque():
+    worker = _gravity_worker(ARM)
+    held = {"joint2": -30.0}
+    worker.request_gravity_percent(100.0)
+    worker._stream_mit(held, held, dt=0.05)
+    first = worker.bus.calls[-1]
+    # 40 %/s * 0.05 s = 2 % of the way in
+    full = worker._gravity.torques(ARM)["joint3"]
+    assert first["ff"]["joint3"] == pytest.approx(full * 0.02, rel=1e-6)
+    assert "joint3" in first["goals"]                  # a joint with no goal is held where it is
+    for _ in range(100):
+        worker._stream_mit({}, held, dt=0.05)
+    last = worker.bus.calls[-1]
+    cap = 12.0
+    assert last["ff"]["joint3"] == pytest.approx(max(-cap, min(cap, full)))
+    assert "finger_left" not in last["ff"]
+
+
+def test_the_unfloated_joint_is_held_not_chased():
+    worker = _gravity_worker(ARM)
+    worker.request_gravity_percent(100.0)
+    worker._stream_mit({}, {}, dt=0.05)
+    seeded = worker._slew.setpoint["joint3"]
+    worker._measured["joint3"] = -20.0                 # it sags
+    worker._stream_mit({}, {}, dt=0.05)
+    assert worker._slew.setpoint["joint3"] == seeded   # the setpoint did not follow it down
+
+
+def test_switching_gravity_off_sends_one_zero_torque_command_then_stops_streaming():
+    worker = _gravity_worker(ARM)
+    held = {"joint2": -30.0}
+    worker.request_gravity_percent(100.0)
+    for _ in range(30):
+        worker._stream_mit({}, held, dt=0.05)
+    worker.request_gravity_percent(0.0)
+    for _ in range(80):                                # ramp down at 40 %/s
+        worker._stream_mit({}, held, dt=0.05)
+    assert worker.bus.calls[-1]["ff"] is None          # the final command carried no torque
+    n = len(worker.bus.calls)
+    for _ in range(5):
+        worker._stream_mit({}, held, dt=0.05)
+    assert len(worker.bus.calls) == n                  # and then it is quiet again
+
+
+def test_no_feedforward_while_torque_is_off_or_without_a_model():
+    worker = _gravity_worker(ARM)
+    worker.request_gravity_percent(100.0)
+    worker._torque_on = False
+    worker._stream_mit({}, {"joint2": -30.0}, dt=0.5)
+    assert worker.bus.calls == [] or worker.bus.calls[-1]["ff"] is None
+    worker._torque_on = True
+    worker._gravity = None
+    worker._stream_mit({}, {"joint2": -30.0}, dt=0.5)
+    assert all(c["ff"] is None for c in worker.bus.calls)
+
+
+# ---------------------------------------------------------------- gravity check + switches in the GUI
+def _gravity_fake():
+    """A connected B601-DM follower in MIT mode (a DmRobotWorker shell: no thread, no bus)."""
+    from core.dm_can import Control_Type
+    from core.dm_robot_worker import DmRobotWorker
+    worker = DmRobotWorker.__new__(DmRobotWorker)
+    worker.control_mode = Control_Type.MIT
+    worker.last_goals = {}
+    worker.percent_calls = []
+    worker.request_gravity_percent = worker.percent_calls.append
+    worker.request_torque = lambda enabled, name=None: None
+    return worker
+
+
+def _telemetry_from_model(scale=1.0, speed=0.0):
+    model = _gravity_model()
+    tau = model.torques({})
+    return {j: {"position": 0.0, "velocity": speed, "load": t * scale} for j, t in tau.items()}
+
+
+@pytest.fixture
+def gwin(win):
+    _pick(win, "rebot_b601_dm")
+    win.robot_worker = _gravity_fake()
+    win._follower_connected = True
+    win.follower_torque_enabled = True
+    yield win
+    win.robot_worker = None
+
+
+def test_gravity_check_passes_when_the_motors_report_what_the_model_predicts(gwin):
+    gwin._last_telemetry = _telemetry_from_model(scale=0.8)      # friction etc.: a bit less than ideal
+    gwin._on_gravity_check()
+    assert gwin._gravity_ok
+    assert "CHECK PASSED" in gwin.dm_tune_panel.gravity_result.text()
+
+
+def test_gravity_check_fails_on_a_flipped_sign(gwin):
+    gwin._last_telemetry = _telemetry_from_model(scale=-1.0)     # the motor's sign convention is opposite
+    gwin._on_gravity_check()
+    assert not gwin._gravity_ok
+    assert "MISMATCH" in gwin.dm_tune_panel.gravity_result.text()
+
+
+def test_gravity_check_fails_on_a_wildly_wrong_magnitude(gwin):
+    gwin._last_telemetry = _telemetry_from_model(scale=10.0)
+    gwin._on_gravity_check()
+    assert not gwin._gravity_ok
+
+
+def test_gravity_check_refuses_a_moving_arm(gwin):
+    gwin._last_telemetry = _telemetry_from_model(speed=20.0)
+    gwin._on_gravity_check()
+    assert not gwin._gravity_ok and "moving" in gwin.dm_tune_panel.gravity_result.text()
+
+
+def test_gravity_check_needs_connection_mit_and_torque(gwin):
+    gwin._last_telemetry = _telemetry_from_model()
+    gwin.follower_torque_enabled = False
+    gwin._on_gravity_check()
+    assert not gwin._gravity_ok and "torque" in gwin.dm_tune_panel.gravity_result.text().lower()
+    gwin.follower_torque_enabled = True
+    from core.dm_can import Control_Type
+    gwin.robot_worker.control_mode = Control_Type.POS_VEL
+    gwin._on_gravity_check()
+    assert not gwin._gravity_ok and "MIT" in gwin.dm_tune_panel.gravity_result.text()
+
+
+def test_the_amount_slider_is_locked_until_the_check_passes_and_refuses_if_forced(gwin):
+    panel = gwin.dm_tune_panel
+    gwin._update_teleop_ui()
+    assert panel.gravity_check_btn.isEnabled() and not panel.gravity_slider.isEnabled()
+    panel.gravity_slider.setValue(50)            # forced anyway (programmatic): must be refused and reset
+    assert panel.gravity_percent() == 0 and 50 not in gwin.robot_worker.percent_calls
+    gwin._last_telemetry = _telemetry_from_model()
+    gwin._on_gravity_check()
+    assert panel.gravity_slider.isEnabled()
+    panel.gravity_slider.setValue(40)
+    assert gwin.robot_worker.percent_calls[-1] == 40
+
+
+@pytest.mark.parametrize("how", ["torque_off", "stop", "disconnect"])
+def test_gravity_switches_off_and_relocks_on_every_safety_event(gwin, how):
+    gwin._last_telemetry = _telemetry_from_model()
+    gwin._on_gravity_check()
+    gwin.dm_tune_panel.gravity_slider.setValue(60)
+    assert gwin.robot_worker.percent_calls[-1] == 60
+    worker = gwin.robot_worker
+    if how == "torque_off":
+        gwin._on_torque(False)
+    elif how == "stop":
+        gwin._on_emergency_stop()
+    else:
+        gwin._on_connection_changed(False)
+    assert worker.percent_calls[-1] == 0
+    assert gwin.dm_tune_panel.gravity_percent() == 0
+    assert not gwin._gravity_ok                  # needs a fresh check before it can come back

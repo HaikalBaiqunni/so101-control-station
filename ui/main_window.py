@@ -29,6 +29,7 @@ from core.dm_can import Control_Type
 from core.dm_robot_worker import DmRobotWorker
 from core.dm_setup_worker import DmSetupWorker
 from core.fashionstar_leader_worker import FashionStarLeaderWorker
+from core.gravity import GravityModel
 from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
 from core.robot_profiles import (
     DEFAULT_PROFILE_KEY,
@@ -116,6 +117,9 @@ UI_REFRESH_MS = 33  # ~30 Hz display refresh, independent of control-loop rate
 # raw ticks AND the calibrated degree value (see _raw_to_deg) - unlike the
 # other fields there's no vendor scale factor to cross-check, but a plot
 # wants degrees, not an arbitrary 0-4095 count.
+GRAVITY_CHECK_MIN_NM = 1.0          # joints loaded less than this are not used to judge the model
+GRAVITY_CHECK_MAX_SPEED_DEG_S = 3.0   # "at rest"
+GRAVITY_CHECK_RATIO = (0.25, 4.0)     # measured / model: friction and model error allowed, not a wrong model
 TELEMETRY_CSV_FIELDS = ("velocity", "load", "current", "voltage", "temperature")
 _TELEMETRY_CSV_UNITS = ("deg_per_s_est", "percent", "ma", "volts", "celsius")
 # strict=True so adding a field without its unit is an import-time error
@@ -287,6 +291,11 @@ class MainWindow(QMainWindow):
         # Leader -> follower tracking only runs while this is True (see
         # _on_engage_toggled); merely selecting the Leader arm source never starts it.
         self.teleop_engaged: bool = False
+        # Gravity feed-forward is OFF every session and unlocks only after a check (see
+        # _on_gravity_check) against the motors' own torque feedback.
+        self._gravity_ok: bool = False
+        self._last_telemetry: dict = {}
+        self._gravity_model: GravityModel | None = None
         self._leader_converted: dict[str, float] = {}   # latest leader pose in FOLLOWER degrees
         self.teleop_tolerance_deg: float = float(self._load_settings().get("teleop_align_tolerance_deg", 10.0))
         self._follower_connected = False
@@ -454,6 +463,8 @@ class MainWindow(QMainWindow):
         self.dm_tune_panel.mit_gains_changed.connect(self._on_dm_setup_mit_gains_changed)
         self.dm_tune_panel.presets_changed.connect(lambda presets: self._save_setting("dm_mit_gain_presets", presets))
         self.dm_tune_panel.nudge_requested.connect(self._on_nudge_requested)
+        self.dm_tune_panel.gravity_check_requested.connect(self._on_gravity_check)
+        self.dm_tune_panel.gravity_percent_changed.connect(self._on_gravity_percent)
         self.dm_tune_panel.set_presets(self._load_settings().get("dm_mit_gain_presets", {}))
         self.jog_panel.speed_slider.valueChanged.connect(self._push_speed)
         self.dm_calibration_page.gripper_calibrate_requested.connect(self._on_dm_gripper_calibrate_requested)
@@ -770,11 +781,16 @@ class MainWindow(QMainWindow):
             ranges_deg,
             control_mode=control_mode,
             mit_gains=mit_gains,
+            gravity_mjcf_path=self._gravity_path(),
+        )
+        self.robot_worker.gravity_status.connect(
+            lambda ok, text: self.dm_tune_panel.set_gravity_controls(False, False, text)
         )
         self.robot_worker.positions_updated.connect(self._on_positions_updated)
         self.robot_worker.telemetry_updated.connect(self._on_telemetry_updated)
         self.robot_worker.error.connect(self._on_robot_error)
         self.robot_worker.connection_changed.connect(self._on_connection_changed)
+        self._push_speed()   # the Speed slider may have been moved before connecting
         self.robot_worker.start()
 
     def _on_fashionstar_leader_connect(self, port: str) -> None:
@@ -875,6 +891,7 @@ class MainWindow(QMainWindow):
         self._follower_connected = False
         self.follower_torque_enabled = False
         self._disengage_teleop("follower disconnected")
+        self._gravity_off("follower disconnected")
         self._update_status_chips()
 
     def _on_connection_changed(self, connected: bool) -> None:
@@ -883,6 +900,7 @@ class MainWindow(QMainWindow):
         if not connected:
             self.follower_torque_enabled = False
             self._disengage_teleop("follower disconnected")
+            self._gravity_off("follower disconnected")
         self._update_status_chips()
         if connected:
             self.statusBar().showMessage(f"Connected to {self.robot_worker.port}")
@@ -926,6 +944,7 @@ class MainWindow(QMainWindow):
         self.follower_torque_enabled = enabled
         if not enabled:
             self._disengage_teleop("follower torque off")
+            self._gravity_off("follower torque off")
         self._update_status_chips()
 
     def _on_positions_updated(self, positions: dict[str, float]) -> None:
@@ -1065,6 +1084,7 @@ class MainWindow(QMainWindow):
             self.robot_worker.request_torque(False)
         self.follower_torque_enabled = False
         self._disengage_teleop("Stop pressed")
+        self._gravity_off("Stop pressed")
         self.control_source_panel.force_manual()
         self._jog_release_all()
         self._on_stop_sequence()
@@ -1104,6 +1124,113 @@ class MainWindow(QMainWindow):
                            f"{worst:.0f} deg apart (limit {tol:.0f}). The ghost shows the leader pose."), errors
         return True, f"Aligned (worst joint {worst:.1f} deg). Safe to engage.", errors
 
+    # ---------------------------------------------------------------- gravity feed-forward
+    def _gravity_path(self) -> str | None:
+        """The B601-DM MJCF the gravity torques are computed from (the same model as the twin)."""
+        import os
+        path = (self._load_settings().get("mjcf_path_by_profile", {}).get("rebot_b601_dm")
+                or PROFILES["rebot_b601_dm"].default_mjcf_path)
+        return path if path and os.path.isfile(path) else None
+
+    def _gravity_can_run(self) -> tuple[bool, str]:
+        worker = self.robot_worker
+        if not isinstance(worker, DmRobotWorker) or not self._follower_connected:
+            return False, "Connect the B601-DM follower first."
+        if getattr(worker, "control_mode", None) != Control_Type.MIT:
+            return False, "Gravity feed-forward is for MIT mode (choose MIT above and reconnect)."
+        if not self.follower_torque_enabled:
+            return False, "Turn torque ON first."
+        return True, ""
+
+    def _refresh_gravity_ui(self) -> None:
+        can, reason = self._gravity_can_run()
+        if not can and self._gravity_ok:
+            self._gravity_off(reason)
+        if can and self._gravity_ok:
+            note = "Check passed. Raise Amount slowly (watch the tracking chart); it ramps in over a few seconds."
+        elif can:
+            note = "Run the check with the arm still."
+        else:
+            note = reason
+        self.dm_tune_panel.set_gravity_controls(can, can and self._gravity_ok, note)
+
+    def _gravity_off(self, reason: str) -> None:
+        """Switch the feed-forward off at once and make it earn its way back with a new check."""
+        was_on = self.dm_tune_panel.gravity_percent() > 0
+        if isinstance(self.robot_worker, DmRobotWorker):
+            self.robot_worker.request_gravity_percent(0)
+        self.dm_tune_panel.reset_gravity()
+        self._gravity_ok = False
+        if was_on:
+            self.session_logger.log_event(f"Gravity feed-forward OFF ({reason})")
+            self.statusBar().showMessage(f"Gravity feed-forward off: {reason}")
+
+    def _gravity_model_for_check(self) -> GravityModel | None:
+        if self._gravity_model is None:
+            path = self._gravity_path()
+            if path:
+                try:
+                    self._gravity_model = GravityModel(path, list(self.robot_profile.joint_order))
+                except Exception:   # an unreadable MJCF just means no check, so no feed-forward
+                    self._gravity_model = None
+        return self._gravity_model
+
+    def _on_gravity_check(self) -> None:
+        """Compare the model's holding torques with what the motors report. At rest the
+        torque a motor outputs equals the torque gravity asks of it, so the two must agree
+        in sign (and roughly in size). Anything else - a flipped sign convention, a joint
+        resting on a stop, a wrong model - leaves the feed-forward locked."""
+        self._gravity_ok = False
+        can, reason = self._gravity_can_run()
+        if not can:
+            self.dm_tune_panel.set_gravity_result([reason], False)
+            return
+        model = self._gravity_model_for_check()
+        telemetry = self._last_telemetry
+        if model is None or not telemetry:
+            self.dm_tune_panel.set_gravity_result(["No model or no telemetry yet (wait a second and retry)."], False)
+            return
+        positions = {n: v["position"] for n, v in telemetry.items() if "position" in v}
+        expected = model.torques(positions)
+        lines: list[str] = []
+        eligible, ok = 0, True
+        for joint in self.robot_profile.arm_joints:
+            m, t = expected.get(joint), telemetry.get(joint)
+            if m is None or t is None:
+                continue
+            measured, speed = t.get("load"), t.get("velocity", 0.0)
+            if abs(m) < GRAVITY_CHECK_MIN_NM:
+                lines.append(f"{joint}: model {m:+.1f} N*m (too small to check)")
+                continue
+            if measured is None or abs(speed) > GRAVITY_CHECK_MAX_SPEED_DEG_S:
+                lines.append(f"{joint}: model {m:+.1f} N*m - moving, hold still and check again")
+                ok = False
+                continue
+            eligible += 1
+            ratio = abs(measured) / abs(m)
+            agrees = measured * m > 0 and GRAVITY_CHECK_RATIO[0] <= ratio <= GRAVITY_CHECK_RATIO[1]
+            ok = ok and agrees
+            lines.append(f"{joint}: model {m:+.1f}  measured {measured:+.1f} N*m  {'OK' if agrees else 'MISMATCH'}")
+        if eligible == 0:
+            ok = False
+            lines.append(f"No joint carries at least {GRAVITY_CHECK_MIN_NM:.0f} N*m here: move the arm to a pose that loads it, hold still, check again.")
+        self._gravity_ok = ok
+        self.dm_tune_panel.set_gravity_result(lines, ok)
+        self.session_logger.log_event("Gravity check " + ("PASSED" if ok else "NOT passed") + ": " + "; ".join(lines))
+        self._refresh_gravity_ui()
+
+    def _on_gravity_percent(self, percent: int) -> None:
+        if percent == 0:
+            if isinstance(self.robot_worker, DmRobotWorker):
+                self.robot_worker.request_gravity_percent(0)
+            return
+        can, reason = self._gravity_can_run()
+        if not (can and self._gravity_ok):
+            self._gravity_off("check not passed" if can else reason)
+            return
+        self.robot_worker.request_gravity_percent(percent)
+        self.session_logger.log_event(f"Gravity feed-forward -> {percent} %")
+
     def _push_speed(self, _value: int = 0) -> None:
         """The Jog panel's Speed slider is THE speed setting: besides scaling jog
         motion it caps how fast a Damiao follower chases any target (POS_VEL), so
@@ -1141,6 +1268,7 @@ class MainWindow(QMainWindow):
     def _update_teleop_ui(self) -> None:
         allowed, reason = self._nudge_allowed()
         self.dm_tune_panel.set_nudge_state(allowed, reason)
+        self._refresh_gravity_ui()
         if isinstance(self.robot_worker, DmRobotWorker) and not self.drawer.isHidden() \
                 and self.drawer.currentWidget() is self.dm_tune_panel:
             joint = self.dm_tune_panel.tracking_joint()
@@ -2338,6 +2466,7 @@ class MainWindow(QMainWindow):
         return (raw - mid) * 360.0 / MAX_RES
 
     def _on_telemetry_updated(self, telemetry: dict) -> None:
+        self._last_telemetry = telemetry
         self.telemetry_panel.update_telemetry(telemetry)
         self.twin_panel.update_telemetry(self._build_hud_telemetry(telemetry))
         if self._telemetry_csv_writer:

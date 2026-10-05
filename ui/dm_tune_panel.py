@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -51,6 +52,8 @@ class DmTunePanel(QWidget):
     mit_gains_changed = Signal(dict)     # {joint: (kp, kd)}
     presets_changed = Signal(dict)       # {name: {joint: [kp, kd]}} - user presets only
     nudge_requested = Signal(str, float) # joint, delta degrees
+    gravity_check_requested = Signal()   # compare the model's torques with the motors' own feedback
+    gravity_percent_changed = Signal(int)  # 0 = off
 
     def __init__(self, joint_order: tuple[str, ...], parent=None):
         super().__init__(parent)
@@ -131,6 +134,41 @@ class DmTunePanel(QWidget):
         preset_layout.addWidget(preset_note)
         self._refresh_preset_combo()
 
+        # -- gravity feed-forward: carries the arm's weight so kp does not have to ----------
+        gravity_box = QGroupBox("GRAVITY COMPENSATION (MIT)")
+        gravity_note = QLabel(
+            "In MIT mode the motor only gets kp / kd, so a loaded joint sags by about torque / kp. "
+            "This adds the arm's own weight (from the MuJoCo model) as feed-forward torque instead. "
+            "It is OFF until the check below passes: with torque ON and the arm still, the model's "
+            "torques must agree in sign with what the motors actually report."
+        )
+        gravity_note.setObjectName("sectionCaption")
+        gravity_note.setWordWrap(True)
+        self.gravity_check_btn = QPushButton("Check gravity model")
+        self.gravity_check_btn.clicked.connect(self.gravity_check_requested)
+        self.gravity_result = QLabel("not checked")
+        self.gravity_result.setObjectName("poseReadout")
+        self.gravity_result.setWordWrap(True)
+        self.gravity_slider = QSlider(Qt.Horizontal)
+        self.gravity_slider.setRange(0, 100)
+        self.gravity_slider.setValue(0)
+        self.gravity_slider.setEnabled(False)
+        self.gravity_value = QLabel("OFF")
+        self.gravity_slider.valueChanged.connect(self._on_gravity_slider)
+        self.gravity_status = QLabel("")
+        self.gravity_status.setObjectName("sectionCaption")
+        self.gravity_status.setWordWrap(True)
+        slider_row = QHBoxLayout()
+        slider_row.addWidget(QLabel("Amount"))
+        slider_row.addWidget(self.gravity_slider, 1)
+        slider_row.addWidget(self.gravity_value)
+        gravity_layout = QVBoxLayout(gravity_box)
+        gravity_layout.addWidget(gravity_note)
+        gravity_layout.addWidget(self.gravity_check_btn)
+        gravity_layout.addWidget(self.gravity_result)
+        gravity_layout.addLayout(slider_row)
+        gravity_layout.addWidget(self.gravity_status)
+
         # -- tracking: commanded vs measured for one joint ---------------------------
         track_box = QGroupBox("TRACKING")
         self.track_joint_combo = QComboBox()
@@ -167,6 +205,7 @@ class DmTunePanel(QWidget):
         root = QVBoxLayout(content)
         root.addWidget(box)
         root.addWidget(preset_box)
+        root.addWidget(gravity_box)
         root.addWidget(track_box)
         root.addStretch(1)
         scroll = QScrollArea()
@@ -258,6 +297,29 @@ class DmTunePanel(QWidget):
             self, "Delete preset", f"Delete the preset '{name}'?"
         ) == QMessageBox.Yes:
             self.delete_preset(name)
+
+    # -- gravity feed-forward ----------------------------------------------------
+    def _on_gravity_slider(self, value: int) -> None:
+        self.gravity_value.setText("OFF" if value == 0 else f"{value} %")
+        self.gravity_percent_changed.emit(value)
+
+    def gravity_percent(self) -> int:
+        return self.gravity_slider.value()
+
+    def reset_gravity(self) -> None:
+        """Back to OFF without emitting (the caller already switched the worker off)."""
+        self.gravity_slider.blockSignals(True)
+        self.gravity_slider.setValue(0)
+        self.gravity_slider.blockSignals(False)
+        self.gravity_value.setText("OFF")
+
+    def set_gravity_result(self, lines: list[str], passed: bool) -> None:
+        self.gravity_result.setText("\n".join(lines) + ("\n\nCHECK PASSED" if passed else "\n\nCHECK NOT PASSED"))
+
+    def set_gravity_controls(self, can_check: bool, slider_enabled: bool, note: str) -> None:
+        self.gravity_check_btn.setEnabled(can_check)
+        self.gravity_slider.setEnabled(slider_enabled)
+        self.gravity_status.setText(note)
 
     # -- tracking / nudge --------------------------------------------------------
     def tracking_joint(self) -> str:
