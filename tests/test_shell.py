@@ -776,6 +776,7 @@ def _mit_worker(measured):
     worker._gravity = None
     worker._g_target = worker._g_now = 0.0
     worker._g_sent_nonzero = False
+    worker._g_joints = None
     worker._torque_on = True
     worker.error = type("S", (), {"emit": staticmethod(lambda msg: None)})()
     return worker
@@ -945,6 +946,8 @@ def _gravity_fake():
     worker.last_goals = {}
     worker.percent_calls = []
     worker.request_gravity_percent = worker.percent_calls.append
+    worker.joint_calls = []
+    worker.request_gravity_joints = worker.joint_calls.append
     worker.request_torque = lambda enabled, name=None: None
     return worker
 
@@ -991,6 +994,19 @@ def test_gravity_check_refuses_a_moving_arm(gwin):
     assert not gwin._gravity_ok and "moving" in gwin.dm_tune_panel.gravity_result.text()
 
 
+def test_one_joint_jittering_is_skipped_not_fatal_and_gets_no_feedforward(gwin):
+    telemetry = _telemetry_from_model()
+    telemetry["joint4"]["velocity"] = 12.0          # the joint in the user's first real check
+    gwin._last_telemetry = telemetry
+    gwin._on_gravity_check()
+    assert gwin._gravity_ok
+    assert "joint4" not in gwin._gravity_verified and {"joint2", "joint3"} <= gwin._gravity_verified
+    text = gwin.dm_tune_panel.gravity_result.text()
+    assert "skipped" in text and "CHECK PASSED" in text
+    gwin.dm_tune_panel.gravity_slider.setValue(30)
+    assert gwin.robot_worker.joint_calls[-1] == gwin._gravity_verified   # the worker is told which joints
+
+
 def test_gravity_check_needs_connection_mit_and_torque(gwin):
     gwin._last_telemetry = _telemetry_from_model()
     gwin.follower_torque_enabled = False
@@ -1032,3 +1048,22 @@ def test_gravity_switches_off_and_relocks_on_every_safety_event(gwin, how):
     assert worker.percent_calls[-1] == 0
     assert gwin.dm_tune_panel.gravity_percent() == 0
     assert not gwin._gravity_ok                  # needs a fresh check before it can come back
+
+
+def test_feedforward_is_limited_to_the_verified_joints():
+    worker = _gravity_worker(ARM)
+    worker.request_gravity_joints({"joint3"})
+    worker.request_gravity_percent(100.0)
+    for _ in range(100):
+        worker._stream_mit({}, {"joint2": -30.0}, dt=0.05)
+    ff = worker.bus.calls[-1]["ff"]
+    assert set(ff) == {"joint3"}
+
+
+def test_the_gripper_is_not_slowed_by_the_mit_ramp():
+    worker = _mit_worker({"finger_left": 0.0, "joint2": 0.0})
+    held = {"finger_left": -300.0, "joint2": -300.0}
+    worker._stream_mit(held, held, dt=0.05)
+    sent = worker.bus.calls[-1]
+    assert sent["finger_left"] == pytest.approx(-300.0)      # straight to the goal
+    assert abs(sent["joint2"]) == pytest.approx(4.5)         # an arm joint still ramps: 90 deg/s * 0.05 s

@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and every arm joint is within a tolerance (default 10 deg, saved). The leader pose is
     shown as the ghost while standing by; teleop drops on Stop, torque off, source change
     and either arm disconnecting.
+  - MIT: the **gripper is no longer slowed by the setpoint ramp** (its motor range is a few hundred
+    degrees, so a deg/s limit sized for the arm made it take seconds). In the gravity check, a joint that
+    is moving is now *skipped* instead of failing the whole check, and only the joints that were
+    actually verified get feed-forward.
   - **Gravity compensation** (B601-DM, MIT): the arm's holding torque from its MuJoCo model is sent as
     the MIT feed-forward `tau`. Off at every start; unlocks only after *Check gravity model* shows the
     model's torques agree in sign and rough size with the motors' own torque feedback (so a flipped sign

@@ -294,6 +294,7 @@ class MainWindow(QMainWindow):
         # Gravity feed-forward is OFF every session and unlocks only after a check (see
         # _on_gravity_check) against the motors' own torque feedback.
         self._gravity_ok: bool = False
+        self._gravity_verified: set[str] = set()   # joints the check verified: only these get feed-forward
         self._last_telemetry: dict = {}
         self._gravity_model: GravityModel | None = None
         self._leader_converted: dict[str, float] = {}   # latest leader pose in FOLLOWER degrees
@@ -1194,6 +1195,7 @@ class MainWindow(QMainWindow):
         expected = model.torques(positions)
         lines: list[str] = []
         eligible, ok = 0, True
+        verified: set[str] = set()
         for joint in self.robot_profile.arm_joints:
             m, t = expected.get(joint), telemetry.get(joint)
             if m is None or t is None:
@@ -1203,18 +1205,22 @@ class MainWindow(QMainWindow):
                 lines.append(f"{joint}: model {m:+.1f} N*m (too small to check)")
                 continue
             if measured is None or abs(speed) > GRAVITY_CHECK_MAX_SPEED_DEG_S:
-                lines.append(f"{joint}: model {m:+.1f} N*m - moving, hold still and check again")
-                ok = False
+                # not judged, and so NOT given feed-forward: only verified joints are
+                lines.append(f"{joint}: model {m:+.1f} N*m - moving ({abs(speed or 0):.0f} deg/s), skipped: no feed-forward on this joint")
                 continue
-            eligible += 1
             ratio = abs(measured) / abs(m)
             agrees = measured * m > 0 and GRAVITY_CHECK_RATIO[0] <= ratio <= GRAVITY_CHECK_RATIO[1]
-            ok = ok and agrees
+            if agrees:
+                eligible += 1
+                verified.add(joint)
+            else:
+                ok = False
             lines.append(f"{joint}: model {m:+.1f}  measured {measured:+.1f} N*m  {'OK' if agrees else 'MISMATCH'}")
         if eligible == 0:
             ok = False
             lines.append(f"No joint carries at least {GRAVITY_CHECK_MIN_NM:.0f} N*m here: move the arm to a pose that loads it, hold still, check again.")
         self._gravity_ok = ok
+        self._gravity_verified = verified if ok else set()
         self.dm_tune_panel.set_gravity_result(lines, ok)
         self.session_logger.log_event("Gravity check " + ("PASSED" if ok else "NOT passed") + ": " + "; ".join(lines))
         self._refresh_gravity_ui()
@@ -1228,8 +1234,9 @@ class MainWindow(QMainWindow):
         if not (can and self._gravity_ok):
             self._gravity_off("check not passed" if can else reason)
             return
+        self.robot_worker.request_gravity_joints(self._gravity_verified)
         self.robot_worker.request_gravity_percent(percent)
-        self.session_logger.log_event(f"Gravity feed-forward -> {percent} %")
+        self.session_logger.log_event(f"Gravity feed-forward -> {percent} % on {sorted(self._gravity_verified)}")
 
     def _push_speed(self, _value: int = 0) -> None:
         """The Jog panel's Speed slider is THE speed setting: besides scaling jog

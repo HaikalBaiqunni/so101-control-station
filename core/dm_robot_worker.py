@@ -84,6 +84,7 @@ class DmRobotWorker(QThread):
         # target after its own check against the motors' torque feedback has passed.
         self._gravity: GravityModel | None = None
         self._g_target = 0.0     # percent, requested
+        self._g_joints: set[str] | None = None   # joints that passed the check; None = all
         self._g_now = 0.0        # percent, after the ramp
         self._g_sent_nonzero = False
         self._torque_on = False
@@ -109,12 +110,22 @@ class DmRobotWorker(QThread):
         self._speed_percent = float(percent)
         self._speed_dirty = True
 
+    def request_gravity_joints(self, joints) -> None:
+        """Only these joints get feed-forward (those the GUI's check actually verified)."""
+        self._g_joints = None if joints is None else set(joints)
+
     def request_gravity_percent(self, percent: float) -> None:
         """0-100 % of the model's gravity torque, ramped in by the worker thread."""
         self._g_target = max(0.0, min(100.0, float(percent)))
 
     def request_mit_gains(self, gains: dict[str, tuple[float, float]]) -> None:
         self._gains_commands.put(dict(gains))
+
+    # The gripper is not slowed by the MIT ramp: its range is a few hundred degrees of motor
+    # travel, so a deg/s limit sized for the arm joints made it take seconds, and a jaw has no
+    # inertia worth protecting. (Its own kp / kd still set how it moves.)
+    SLEW_EXEMPT_JOINTS = ("finger_left", "gripper")
+    UNLIMITED_RATE_DEG_S = 1e9
 
     GRAVITY_RAMP_PERCENT_PER_S = 40.0   # 0 -> 100 % takes 2.5 s: no torque step when it is switched on
 
@@ -139,7 +150,7 @@ class DmRobotWorker(QThread):
             return {}
         tau = self._gravity.torques({n: self._measured[n] for n in names})
         scale = self._g_now / 100.0
-        return {n: clamp_ff(n, t * scale) for n, t in tau.items()}
+        return {n: clamp_ff(n, t * scale) for n, t in tau.items() if self._g_joints is None or n in self._g_joints}
 
     def _stream_mit(self, new_goals: dict[str, float], held: dict[str, float], dt: float) -> None:
         """MIT: move each joint's setpoint toward its goal at the Speed-slider rate and
@@ -149,7 +160,8 @@ class DmRobotWorker(QThread):
         out: dict[str, float] = {}
         for name, goal in held.items():
             before = self._slew.setpoint.get(name)
-            new = self._slew.step(name, goal, self._measured.get(name), rate, dt)
+            joint_rate = self.UNLIMITED_RATE_DEG_S if name in self.SLEW_EXEMPT_JOINTS else rate
+            new = self._slew.step(name, goal, self._measured.get(name), joint_rate, dt)
             if name in new_goals or before is None or new != before:
                 out[name] = new
         ff = self._gravity_ff(dt)
