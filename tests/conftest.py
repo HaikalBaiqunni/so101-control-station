@@ -53,3 +53,17 @@ def _no_default_twin_for_so101(monkeypatch, request):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_so101_profile: keep the SO-101 profile's bundled twin path")
+    config.addinivalue_line("markers", "real_pylon: let the test use pypylon (the camera emulator)")
+
+
+@pytest.fixture(autouse=True)
+def _no_pylon_enumeration(monkeypatch, request):
+    """MainWindow's Camera panel lists Basler cameras through pypylon. Keep the suite off
+    real (and emulated) cameras unless a test opts in with @pytest.mark.real_pylon."""
+    if request.node.get_closest_marker("real_pylon"):
+        yield
+        return
+    from core import basler_camera
+
+    monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
+    yield

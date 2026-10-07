@@ -210,7 +210,10 @@ Plus:
   be painted directly on the render, toggled independently of the Table/Graph
   tabs below.
 - **Camera panel** — any USB webcam via OpenCV, picked by *name* rather than a
-  bare index. Handy for comparing the twin against the real arm side by side.
+  bare index, and **Basler industrial cameras** (USB3 Vision / GigE, e.g. the acA1300-200um)
+  through Basler's `pypylon` (`pip install pypylon`, plus the pylon driver; the camera appears
+  in the same list as `Basler <model> (<serial>)`, with auto exposure and gain on, and must not be
+  open in pylon Viewer at the same time). Handy for comparing the twin against the real arm side by side.
 - **Teaching (waypoints)** — record the current pose however it got there
   (hand-guided with torque off, leader-driven, or jog-set), reorder, and
   play the sequence back at a capped, quintic-eased speed. **Record Grip**

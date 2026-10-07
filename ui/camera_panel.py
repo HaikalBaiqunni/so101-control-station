@@ -13,11 +13,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.camera_enum import list_cameras
+from core.camera_enum import list_camera_sources
 
 
 class CameraPanel(QGroupBox):
-    start_requested = Signal(int)   # camera index
+    start_requested = Signal(object)   # camera index (int) or "basler:<serial>"
     stop_requested = Signal()
 
     def __init__(self, parent=None):
@@ -27,6 +27,7 @@ class CameraPanel(QGroupBox):
         self._refresh_devices()
 
         self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setToolTip("Re-scan cameras. Basler cameras are listed when the pypylon package is installed (pip install pypylon).")
         self.refresh_btn.clicked.connect(self._refresh_devices)
 
         self.toggle_btn = QPushButton("Start")
@@ -65,11 +66,11 @@ class CameraPanel(QGroupBox):
         current_index = self.selected_index()
         self.device_combo.blockSignals(True)
         self.device_combo.clear()
-        devices = list_cameras()
+        devices = list_camera_sources()
         if not devices:
             self.device_combo.addItem("no camera found", -1)
-        for index, name in devices:
-            self.device_combo.addItem(f"{name} (#{index})", index)
+        for source, label in devices:
+            self.device_combo.addItem(label, source)
         # try to keep the same physical device selected across a refresh
         if current_index is not None:
             for i in range(self.device_combo.count()):
@@ -78,8 +79,11 @@ class CameraPanel(QGroupBox):
                     break
         self.device_combo.blockSignals(False)
 
-    def selected_index(self) -> int | None:
+    def selected_index(self) -> int | str | None:
+        """The chosen camera: an OpenCV index, or "basler:<serial>" for a Basler camera."""
         data = self.device_combo.currentData()
+        if isinstance(data, str) and data:
+            return data
         return data if isinstance(data, int) and data >= 0 else None
 
     def _on_toggle(self) -> None:

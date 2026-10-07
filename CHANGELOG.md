@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Basler cameras** (USB3 Vision / GigE, e.g. acA1300-200um) in the Camera panel through `pypylon`
+  (optional: `pip install pypylon`, extra `basler`). Listed as `Basler <model> (<serial>)` next to the
+  webcams, grabbed as RGB with auto exposure / gain on, latest-frame-only (no queue). A camera that
+  another program (pylon Viewer) has open gives a plain explanation instead of pylon's long error.
+
 - **SO-101 digital twin is bundled** (`models/so101/`, TheRobotStudio's MJCF, Apache-2.0,
   with its licence and a NOTICE): the SO-101 twin now loads on first launch. A model you
   picked with Browse still wins.

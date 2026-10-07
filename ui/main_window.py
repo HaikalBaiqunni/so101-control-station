@@ -1649,9 +1649,15 @@ class MainWindow(QMainWindow):
     # switching" bug). QThread's own `finished` signal fires the instant the
     # thread really is done, with no arbitrary timeout to blow past, and
     # doesn't block anything while we wait for it.
-    def _on_camera_start(self, index: int) -> None:
-        self.camera_panel.set_busy(True, f"starting device #{index}...")
-        worker = CameraWorker(index)
+    def _on_camera_start(self, source) -> None:
+        from core.basler_camera import BaslerCameraWorker, is_basler_source, serial_of
+
+        if is_basler_source(source):
+            self.camera_panel.set_busy(True, f"starting Basler camera {serial_of(source)}...")
+            worker = BaslerCameraWorker(serial_of(source))
+        else:
+            self.camera_panel.set_busy(True, f"starting device #{source}...")
+            worker = CameraWorker(source)
         worker.frame_ready.connect(self.camera_panel.show_frame)
         worker.error.connect(self.camera_panel.show_error)
         worker.started_ok.connect(lambda: self.camera_panel.set_busy(False))

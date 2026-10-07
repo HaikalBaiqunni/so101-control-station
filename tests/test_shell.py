@@ -1078,3 +1078,139 @@ def test_leader_ghost_shows_whatever_the_control_source(teleop):
     assert teleop._compute_ghost() is not None                 # the leader is visible as the ghost
     teleop.teleop_engaged = True
     assert teleop._compute_ghost() is None                     # engaged: the follower itself moves
+
+
+# ---------------------------------------------------------------- Basler cameras
+def test_basler_source_ids_round_trip():
+    from core.basler_camera import is_basler_source, serial_of
+    assert is_basler_source("basler:23581801") and serial_of("basler:23581801") == "23581801"
+    assert not is_basler_source(0) and not is_basler_source("0") and not is_basler_source(None)
+
+
+@pytest.mark.real_pylon
+def test_listing_uses_serial_and_model_and_survives_pypylon_missing(monkeypatch):
+    from core import basler_camera
+
+    class Info:
+        def __init__(self, serial, model):
+            self._s, self._m = serial, model
+
+        def GetSerialNumber(self):
+            return self._s
+
+        def GetModelName(self):
+            return self._m
+
+    class Factory:
+        @staticmethod
+        def GetInstance():
+            return Factory
+
+        @staticmethod
+        def EnumerateDevices():
+            return [Info("23581801", "acA1300-200um")]
+
+    class FakePylon:
+        TlFactory = Factory
+
+    monkeypatch.setattr(basler_camera, "_pylon", lambda: FakePylon)
+    assert basler_camera.list_basler_cameras() == [("basler:23581801", "Basler acA1300-200um (23581801)")]
+
+    def missing():
+        raise ImportError("no pypylon")
+    monkeypatch.setattr(basler_camera, "_pylon", missing)
+    assert basler_camera.list_basler_cameras() == []
+
+
+def test_the_camera_panel_lists_and_selects_a_basler_source(qapp, monkeypatch):
+    from ui import camera_panel as cp
+    monkeypatch.setattr(cp, "list_camera_sources", lambda: [(0, "Integrated Webcam (#0)"), ("basler:123", "Basler acA1300-200um (123)")])
+    panel = cp.CameraPanel()
+    assert panel.device_combo.count() == 2 and panel.selected_index() == 0
+    panel.device_combo.setCurrentIndex(1)
+    assert panel.selected_index() == "basler:123"
+    seen = []
+    panel.start_requested.connect(seen.append)
+    panel.toggle_btn.click()
+    assert seen == ["basler:123"]
+
+
+def test_starting_a_basler_source_builds_the_basler_worker(win, monkeypatch):
+    from core import basler_camera
+
+    class Sig:
+        def connect(self, fn):
+            pass
+
+    class StubWorker:
+        created = []
+
+        def __init__(self, serial):
+            self.serial = serial
+            self.frame_ready = self.error = self.started_ok = self.finished = Sig()
+            StubWorker.created.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(basler_camera, "BaslerCameraWorker", StubWorker)
+    win._on_camera_start("basler:555")
+    assert [w.serial for w in StubWorker.created] == ["555"]
+    win.camera_worker = None
+
+
+@pytest.mark.real_pylon
+def test_the_worker_streams_rgb_frames_from_the_pylon_emulator(qapp, monkeypatch):
+    pytest.importorskip("pypylon")
+    monkeypatch.setenv("PYLON_CAMEMU", "1")          # a virtual camera: never the real hardware
+    import time
+
+    from core import basler_camera
+
+    emulated = [s for s, label in basler_camera.list_basler_cameras() if "Emulation" in label]
+    if not emulated:
+        pytest.skip("the pylon camera emulator is not available")
+    worker = basler_camera.BaslerCameraWorker(basler_camera.serial_of(emulated[0]), fps=30)
+    frames, errors = [], []
+    worker.frame_ready.connect(frames.append)
+    worker.error.connect(errors.append)
+    worker.start()
+    deadline = time.time() + 20
+    while not frames and not errors and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.02)
+    worker.stop()
+    worker.wait(5000)
+    assert not errors, errors
+    assert frames, "no frame arrived"
+    frame = frames[0]
+    assert frame.ndim == 3 and frame.shape[2] == 3 and frame.dtype.name == "uint8"
+
+
+@pytest.mark.real_pylon
+def test_a_missing_serial_reports_an_error(qapp, monkeypatch):
+    pytest.importorskip("pypylon")
+    monkeypatch.setenv("PYLON_CAMEMU", "1")
+    import time
+
+    from core import basler_camera
+    worker = basler_camera.BaslerCameraWorker("does-not-exist")
+    errors = []
+    worker.error.connect(errors.append)
+    worker.start()
+    deadline = time.time() + 15
+    while not errors and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.02)
+    worker.wait(5000)
+    assert errors and "not found" in errors[0]
+
+
+def test_pylon_errors_get_a_plain_explanation():
+    from core.basler_camera import friendly_error
+    busy = RuntimeError("Failed to open device for XML file download. Error: 'Device is exclusively opened by another client.'")
+    assert "pylon Viewer" in friendly_error(busy)
+    assert friendly_error(RuntimeError("something else")) == "Basler camera error: something else"

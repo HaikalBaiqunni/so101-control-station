@@ -15,6 +15,16 @@ from __future__ import annotations
 import cv2
 
 
+def list_camera_sources() -> list[tuple[int | str, str]]:
+    """Every selectable camera: OpenCV webcams (source = index) followed by Basler cameras
+    (source = "basler:<serial>", only when pypylon is installed)."""
+    from .basler_camera import list_basler_cameras
+
+    sources: list[tuple[int | str, str]] = [(index, f"{name} (#{index})") for index, name in list_cameras()]
+    sources.extend(list_basler_cameras())
+    return sources
+
+
 def list_cameras(max_probe: int = 10) -> list[tuple[int, str]]:
     try:
         from pygrabber.dshow_graph import FilterGraph
