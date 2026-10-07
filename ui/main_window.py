@@ -1651,8 +1651,13 @@ class MainWindow(QMainWindow):
     # doesn't block anything while we wait for it.
     def _on_camera_start(self, source) -> None:
         from core.basler_camera import BaslerCameraWorker, is_basler_source, serial_of
+        from core.realsense_camera import RealSenseCameraWorker, is_realsense_source, parse_source
 
-        if is_basler_source(source):
+        if is_realsense_source(source):
+            serial, mode = parse_source(source)
+            self.camera_panel.set_busy(True, f"starting RealSense {serial} ({mode})...")
+            worker = RealSenseCameraWorker(serial, mode)
+        elif is_basler_source(source):
             self.camera_panel.set_busy(True, f"starting Basler camera {serial_of(source)}...")
             worker = BaslerCameraWorker(serial_of(source))
         else:

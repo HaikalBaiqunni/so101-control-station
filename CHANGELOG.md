@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Intel RealSense cameras with depth** in the Camera panel through `pyrealsense2` (optional:
+  `pip install pyrealsense2`, extra `realsense`): three entries per camera - `color`, `depth (colormap)`
+  and `color + depth` (aligned, side by side). Picks the best mode the camera supports (1280x720, 848x480,
+  640x480 at 30 fps), tolerates a few late frames, and replaces the camera's webcam-style entries (the
+  Depth one cannot be opened by OpenCV).
 - **Basler cameras** (USB3 Vision / GigE, e.g. acA1300-200um) in the Camera panel through `pypylon`
   (optional: `pip install pypylon`, extra `basler`). Listed as `Basler <model> (<serial>)` next to the
   webcams, grabbed as RGB with auto exposure / gain on, latest-frame-only (no queue). A camera that

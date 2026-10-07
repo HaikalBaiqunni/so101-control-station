@@ -1214,3 +1214,187 @@ def test_pylon_errors_get_a_plain_explanation():
     busy = RuntimeError("Failed to open device for XML file download. Error: 'Device is exclusively opened by another client.'")
     assert "pylon Viewer" in friendly_error(busy)
     assert friendly_error(RuntimeError("something else")) == "Basler camera error: something else"
+
+
+# ---------------------------------------------------------------- RealSense cameras
+def test_realsense_source_ids_and_modes():
+    from core.realsense_camera import is_realsense_source, parse_source
+    assert is_realsense_source("realsense:123:depth") and not is_realsense_source("basler:123") and not is_realsense_source(2)
+    assert parse_source("realsense:123:depth") == ("123", "depth")
+    assert parse_source("realsense:123:both") == ("123", "both")
+    assert parse_source("realsense:123") == ("123", "color")
+    assert parse_source("realsense:123:nonsense") == ("123", "color")
+
+
+def test_compose_frame_picks_and_joins_the_views():
+    import numpy as np
+
+    from core.realsense_camera import compose_frame
+    color = np.full((4, 6, 3), 10, np.uint8)
+    depth = np.full((4, 6, 3), 200, np.uint8)
+    assert compose_frame(color, depth, "color") is color
+    assert compose_frame(color, depth, "depth") is depth
+    both = compose_frame(color, depth, "both")
+    assert both.shape == (4, 12, 3) and both[0, 0, 0] == 10 and both[0, 11, 0] == 200
+    assert compose_frame(color, None, "both") is None
+    assert compose_frame(color, np.zeros((2, 2, 3), np.uint8), "both") is color   # mismatch: never crash
+
+
+def test_realsense_errors_get_a_plain_explanation():
+    from core.realsense_camera import friendly_error
+    assert "RealSense Viewer" in friendly_error(RuntimeError("xioctl(VIDIOC_QBUF) failed: Device or resource busy"))
+    assert "No RealSense" in friendly_error(RuntimeError("No device connected"))
+    assert friendly_error(RuntimeError("boom")) == "RealSense camera error: boom"
+
+
+class _FakeRs:
+    """Just enough of pyrealsense2 for the worker: a camera that delivers `late` timeouts first."""
+    late = 0
+    delivered = 0
+
+    class camera_info:
+        serial_number = "name_s"
+        name = "name_n"
+
+    class stream:
+        color = "color"
+        depth = "depth"
+
+    class format:
+        rgb8 = "rgb8"
+        z16 = "z16"
+
+    class _Frame:
+        def __init__(self, value):
+            import numpy as np
+            self._a = np.full((4, 6, 3), value, np.uint8)
+
+        def __bool__(self):
+            return True
+
+        def get_data(self):
+            return self._a
+
+    class _Frames:
+        def get_color_frame(self):
+            return _FakeRs._Frame(10)
+
+        def get_depth_frame(self):
+            return _FakeRs._Frame(250)
+
+    class config:
+        def __init__(self):
+            self.streams = []
+
+        def enable_device(self, serial):
+            pass
+
+        def enable_stream(self, *args):
+            self.streams.append(args)
+
+        def can_resolve(self, wrapper):
+            return True
+
+    class pipeline_wrapper:
+        def __init__(self, pipeline):
+            pass
+
+    class pipeline:
+        def start(self, config):
+            _FakeRs.started_with = list(config.streams)
+
+        def wait_for_frames(self, timeout_ms=0):
+            if _FakeRs.late > 0:
+                _FakeRs.late -= 1
+                raise RuntimeError("Frame didn't arrive within 3000")
+            _FakeRs.delivered += 1
+            return _FakeRs._Frames()
+
+        def stop(self):
+            _FakeRs.stopped = True
+
+    class colorizer:
+        def colorize(self, frame):
+            return frame
+
+    class align:
+        def __init__(self, stream):
+            pass
+
+        def process(self, frames):
+            return frames
+
+
+def _run_fake_realsense(qapp, monkeypatch, mode, late=0, want=3):
+    import time
+
+    from core import realsense_camera as rc
+    _FakeRs.late, _FakeRs.delivered, _FakeRs.stopped = late, 0, False
+    monkeypatch.setattr(rc, "_rs", lambda: _FakeRs)
+    worker = rc.RealSenseCameraWorker("123", mode, fps=200)
+    frames, errors = [], []
+    worker.frame_ready.connect(frames.append)
+    worker.error.connect(errors.append)
+    worker.start()
+    deadline = time.time() + 10
+    while len(frames) < want and not errors and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    worker.stop()
+    worker.wait(5000)
+    return frames, errors
+
+
+@pytest.mark.parametrize("mode,shape,streams", [
+    ("color", (4, 6, 3), 1), ("depth", (4, 6, 3), 1), ("both", (4, 12, 3), 2)])
+def test_the_realsense_worker_delivers_each_view(qapp, monkeypatch, mode, shape, streams):
+    frames, errors = _run_fake_realsense(qapp, monkeypatch, mode)
+    assert not errors and frames and frames[0].shape == shape
+    assert len(_FakeRs.started_with) == streams and _FakeRs.stopped
+
+
+def test_a_few_late_frames_are_tolerated_but_a_dead_stream_is_an_error(qapp, monkeypatch):
+    frames, errors = _run_fake_realsense(qapp, monkeypatch, "color", late=3)
+    assert frames and not errors                    # three late frames in a row: still fine
+    frames, errors = _run_fake_realsense(qapp, monkeypatch, "color", late=50)
+    assert not frames and errors and "RealSense" in errors[0]
+
+
+def test_a_realsense_listed_through_its_sdk_replaces_its_webcam_entries(monkeypatch):
+    from core import basler_camera, camera_enum, realsense_camera
+    monkeypatch.setattr(camera_enum, "list_cameras", lambda: [
+        (0, "Integrated Webcam"), (1, "Intel(R) RealSense(TM) Depth Camera 455  Depth"),
+        (2, "Intel(R) RealSense(TM) Depth Camera 455  RGB")])
+    monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
+    monkeypatch.setattr(realsense_camera, "list_realsense_cameras", lambda: [("realsense:1:color", "RealSense D455 (1) - color")])
+    sources = camera_enum.list_camera_sources()
+    assert [s for s, _ in sources] == [0, "realsense:1:color"]       # the broken Depth entry and the duplicate RGB are gone
+    monkeypatch.setattr(realsense_camera, "list_realsense_cameras", lambda: [])
+    assert [s for s, _ in camera_enum.list_camera_sources()] == [0, 1, 2]   # without the SDK nothing is hidden
+
+
+def test_starting_a_realsense_source_builds_its_worker(win, monkeypatch):
+    from core import realsense_camera
+
+    class Sig:
+        def connect(self, fn):
+            pass
+
+    class Stub:
+        made = []
+
+        def __init__(self, serial, mode):
+            self.serial, self.mode = serial, mode
+            self.frame_ready = self.error = self.started_ok = self.finished = Sig()
+            Stub.made.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(realsense_camera, "RealSenseCameraWorker", Stub)
+    win._on_camera_start("realsense:777:both")
+    assert [(w.serial, w.mode) for w in Stub.made] == [("777", "both")]
+    win.camera_worker = None

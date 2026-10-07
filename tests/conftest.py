@@ -63,7 +63,8 @@ def _no_pylon_enumeration(monkeypatch, request):
     if request.node.get_closest_marker("real_pylon"):
         yield
         return
-    from core import basler_camera
+    from core import basler_camera, realsense_camera
 
     monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
+    monkeypatch.setattr(realsense_camera, "list_realsense_cameras", lambda: [])   # never the real D455
     yield

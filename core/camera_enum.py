@@ -19,9 +19,17 @@ def list_camera_sources() -> list[tuple[int | str, str]]:
     """Every selectable camera: OpenCV webcams (source = index) followed by Basler cameras
     (source = "basler:<serial>", only when pypylon is installed)."""
     from .basler_camera import list_basler_cameras
+    from .realsense_camera import list_realsense_cameras
 
-    sources: list[tuple[int | str, str]] = [(index, f"{name} (#{index})") for index, name in list_cameras()]
+    realsense = list_realsense_cameras()
+    sources: list[tuple[int | str, str]] = [
+        (index, f"{name} (#{index})") for index, name in list_cameras()
+        # a RealSense listed through its own SDK replaces its webcam-style entries: the Depth one
+        # cannot be opened by OpenCV, and the RGB one would be a duplicate of "color"
+        if not (realsense and "realsense" in name.lower())
+    ]
     sources.extend(list_basler_cameras())
+    sources.extend(realsense)
     return sources
 
 

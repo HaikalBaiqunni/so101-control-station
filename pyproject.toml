@@ -38,6 +38,8 @@ dependencies = [
 dev = ["pytest>=7.4", "ruff>=0.4"]
 # Basler industrial cameras (USB3 Vision / GigE) in the Camera panel; needs the pylon driver as well
 basler = ["pypylon>=3.0"]
+# Intel RealSense (D4xx) in the Camera panel, with a depth view
+realsense = ["pyrealsense2>=2.50"]
 
 [project.urls]
 Homepage = "https://github.com/HaikalBaiqunni/so101-control-station"

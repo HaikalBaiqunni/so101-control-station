@@ -27,7 +27,7 @@ class CameraPanel(QGroupBox):
         self._refresh_devices()
 
         self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setToolTip("Re-scan cameras. Basler cameras are listed when the pypylon package is installed (pip install pypylon).")
+        self.refresh_btn.setToolTip("Re-scan cameras. Basler cameras need pypylon (pip install pypylon); RealSense cameras (with depth) need pyrealsense2 (pip install pyrealsense2).")
         self.refresh_btn.clicked.connect(self._refresh_devices)
 
         self.toggle_btn = QPushButton("Start")

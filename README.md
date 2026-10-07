@@ -213,7 +213,10 @@ Plus:
   bare index, and **Basler industrial cameras** (USB3 Vision / GigE, e.g. the acA1300-200um)
   through Basler's `pypylon` (`pip install pypylon`, plus the pylon driver; the camera appears
   in the same list as `Basler <model> (<serial>)`, with auto exposure and gain on, and must not be
-  open in pylon Viewer at the same time). Handy for comparing the twin against the real arm side by side.
+  open in pylon Viewer at the same time).
+  **Intel RealSense** (D4xx) cameras are listed through `pyrealsense2` (`pip install pyrealsense2`)
+  as `color`, `depth (colormap)` and `color + depth` (depth aligned to the colour image), picking the
+  best stream mode the camera can run. A D455 on a USB 2 port streams poorly: use a USB 3 port and cable. Handy for comparing the twin against the real arm side by side.
 - **Teaching (waypoints)** — record the current pose however it got there
   (hand-guided with torque off, leader-driven, or jog-set), reorder, and
   play the sequence back at a capped, quintic-eased speed. **Record Grip**
