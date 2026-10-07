@@ -110,6 +110,9 @@ class StageView(QWidget):
 
         self._placed: dict[str, tuple[float, float]] = {}
         self._camera_size = QSize(CAMERA_DEFAULT)
+        # Once the user sizes the camera themselves it is theirs: it sits BEHIND the other cards and is
+        # neither squeezed above the dock nor folded away, so it can grow in any direction.
+        self._camera_custom = False
         self._collapsed: set[str] = set()      # minimised by the user (saved)
         self._auto: set[str] = set()           # folded automatically for lack of room (not saved)
         self._pinned_open: set[str] = set()    # the user re-opened an auto-folded card: leave it open
@@ -130,6 +133,10 @@ class StageView(QWidget):
         self.dock_card = make_card(dock_body, self)
 
         view_card = twin_panel.view_card
+        # The View card is built inside the twin panel but must be a sibling of the other cards, or the
+        # (larger) camera card could never be stacked below it.
+        view_card.setParent(self)
+        view_card.show()
         view_card.parts = twin_panel.view_parts
         view_card.min_btn = twin_panel.view_min_btn
         self.cards: dict[str, QFrame] = {
@@ -206,11 +213,13 @@ class StageView(QWidget):
                     self._placed[key] = (min(1.0, max(0.0, float(fx))), min(1.0, max(0.0, float(fy))))
             w, h = state.get("camera_size", (CAMERA_DEFAULT.width(), CAMERA_DEFAULT.height()))
             self._camera_size = QSize(max(CAMERA_MIN.width(), int(w)), max(CAMERA_MIN.height(), int(h)))
+            self._camera_custom = self._camera_size != CAMERA_DEFAULT
             self._collapsed = {k for k in state.get("collapsed", []) if k in self.cards}
         except (TypeError, ValueError, AttributeError):
             self._placed = {}
             self._collapsed = set()
             self._camera_size = QSize(CAMERA_DEFAULT)
+            self._camera_custom = False
         self._layout_cards()
 
     def reset_layout(self) -> None:
@@ -219,6 +228,7 @@ class StageView(QWidget):
         self._auto.clear()
         self._pinned_open.clear()
         self._camera_size = QSize(CAMERA_DEFAULT)
+        self._camera_custom = False
         self._layout_cards()
         self.layout_changed.emit(self.layout_state())
 
@@ -292,6 +302,7 @@ class StageView(QWidget):
         w = min(max(CAMERA_MIN.width(), size.width()), max(CAMERA_MIN.width(), self.width() - 2 * MARGIN))
         h = min(max(CAMERA_MIN.height(), size.height()), max(CAMERA_MIN.height(), self.height() - TOP - MARGIN))
         self._camera_size = QSize(w, h)
+        self._camera_custom = self._camera_size != CAMERA_DEFAULT
         self._expanded_size.pop("camera", None)
         self._layout_cards()
 
@@ -304,7 +315,7 @@ class StageView(QWidget):
         return max(content.sizeHint().height(), content.minimumSizeHint().height(), hint)
 
     def _raise_cards(self) -> None:
-        for key in ("view", "camera", "jog", "dock"):
+        for key in ("camera", "view", "jog", "dock"):   # the camera is the bottom card: the others float over it
             self.cards[key].raise_()
 
     def _tab_size(self, key: str) -> QSize:
@@ -375,6 +386,8 @@ class StageView(QWidget):
             if key == "dock":
                 return QRect(MARGIN + (avail_w - size.width()) // 2, h - MARGIN - size.height(),
                              size.width(), size.height())
+            if self._camera_custom:   # sized by the user: exactly that, from the top-left, any height that fits the stage
+                return QRect(MARGIN, TOP, size.width(), min(size.height(), h - TOP - MARGIN))
             # camera: under the View card wherever that ended up; shrink rather than run into the dock
             top = (final["view"].bottom() if "view" in final else TOP) + GAP
             dock_top = final["dock"].y() if "dock" in final else h
@@ -399,6 +412,9 @@ class StageView(QWidget):
             base = base_of(key)
             size = self._tab_size(key) if user_folded else base.size()
             rect = place(key, size, base)
+            if key == "camera" and self._camera_custom and not user_folded:
+                final[key] = rect   # not pushed around, and not an obstacle for anything else
+                continue
             if self._collides(rect, fixed):
                 moved = self._find_free(rect, fixed, w, h)
                 if moved is None and key in AUTO_COLLAPSIBLE and not user_folded and key not in self._pinned_open:

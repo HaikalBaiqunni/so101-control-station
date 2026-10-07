@@ -1411,3 +1411,23 @@ def test_realsense_frames_are_copies_not_views_of_the_sdk_buffers(qapp, monkeypa
     frames, errors = _run_fake_realsense(qapp, monkeypatch, mode)
     assert frames and not errors
     assert not any(np.shares_memory(frames[0], src) for src in _FakeRs.sources)
+
+
+def test_the_camera_card_grows_diagonally_and_sits_behind_the_other_cards(win):
+    from PySide6.QtCore import QSize
+    win.resize(1440, 900)
+    win.show()
+    win.twin_panel.camera_check.setChecked(True)
+    stage = win.stage
+    default_h = stage.camera_card.height()
+    stage._resize_camera(QSize(900, 700))                       # far taller than the room above the dock
+    assert stage.camera_card.width() == 900
+    assert stage.camera_card.height() == 700 > default_h
+    assert not stage.is_collapsed("camera")
+    assert stage.rect().contains(stage.camera_card.geometry())
+    order = [c for c in stage.children() if c in stage.cards.values()]
+    assert order.index(stage.camera_card) < order.index(stage.cards["dock"])     # lower in the stack
+    stage._resize_camera(QSize(5000, 5000))                     # clamped to the stage
+    assert stage.rect().contains(stage.camera_card.geometry())
+    stage.reset_layout()
+    assert stage.camera_card.height() <= default_h
