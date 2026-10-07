@@ -47,8 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the MIT feed-forward `tau`. Off at every start; unlocks only after *Check gravity model* shows the
     model's torques agree in sign and rough size with the motors' own torque feedback (so a flipped sign
     convention keeps it locked); ramps in over ~2.5 s; capped at 12 N*m (joints 1-3) / 4 N*m (joints 4-6),
-    none for the gripper; switches itself off on Stop, torque off and disconnect. Not validated on a real
-    arm yet.
+    none for the gripper; switches itself off on Stop, torque off and disconnect. Tried on a real B601-DM:
+    the check agreed with the motors on joints 2 and 3 (model +5.4 / -7.4 N*m, measured +5.3 / -6.4), and
+    with it on the joints no longer sag.
   - **MIT setpoint ramp + holding preset** (B601-DM): in MIT mode the commanded setpoint now moves
     toward the target at a bounded rate set by the Speed slider (30 % = 90 deg/s) instead of jumping
     there, and a *Holding start* preset (kp 40 / kd 2.5 on joint2-3, lower elsewhere) is built in as a
