@@ -112,7 +112,7 @@ class BaslerCameraWorker(QThread):
                 result = camera.RetrieveResult(500, pylon.TimeoutHandling_Return)
                 try:
                     if result is not None and result.IsValid() and result.GrabSucceeded():
-                        self.frame_ready.emit(np.ascontiguousarray(converter.Convert(result).GetArray()))
+                        self.frame_ready.emit(np.array(converter.Convert(result).GetArray(), order="C", copy=True))
                 finally:
                     if result is not None:
                         result.Release()

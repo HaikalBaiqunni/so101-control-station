@@ -1251,6 +1251,7 @@ class _FakeRs:
     """Just enough of pyrealsense2 for the worker: a camera that delivers `late` timeouts first."""
     late = 0
     delivered = 0
+    sources: list = []
 
     class camera_info:
         serial_number = "name_s"
@@ -1268,6 +1269,7 @@ class _FakeRs:
         def __init__(self, value):
             import numpy as np
             self._a = np.full((4, 6, 3), value, np.uint8)
+            _FakeRs.sources.append(self._a)
 
         def __bool__(self):
             return True
@@ -1398,3 +1400,14 @@ def test_starting_a_realsense_source_builds_its_worker(win, monkeypatch):
     win._on_camera_start("realsense:777:both")
     assert [(w.serial, w.mode) for w in Stub.made] == [("777", "both")]
     win.camera_worker = None
+
+
+@pytest.mark.parametrize("mode", ["color", "depth"])
+def test_realsense_frames_are_copies_not_views_of_the_sdk_buffers(qapp, monkeypatch, mode):
+    """The SDK has a small pool of frame buffers; handing out views of them stalls the stream
+    once the app holds a few (seen on a real D455: exactly 16 frames, then nothing)."""
+    import numpy as np
+    _FakeRs.sources = []
+    frames, errors = _run_fake_realsense(qapp, monkeypatch, mode)
+    assert frames and not errors
+    assert not any(np.shares_memory(frames[0], src) for src in _FakeRs.sources)

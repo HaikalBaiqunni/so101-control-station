@@ -164,7 +164,9 @@ class RealSenseCameraWorker(QThread):
                     depth_rgb = np.asanyarray(colorizer.colorize(depth_frame).get_data())
                 image = compose_frame(color, depth_rgb, self.mode)
                 if image is not None:
-                    self.frame_ready.emit(np.ascontiguousarray(image))
+                    # a COPY: `image` may be a view of an SDK buffer, and the SDK only has a small pool of
+                    # them - frames the app still holds would starve it and the stream would stall
+                    self.frame_ready.emit(np.array(image, order="C", copy=True))
                 time.sleep(max(0.0, period - (time.perf_counter() - started)))
         except Exception as exc:
             self.error.emit(friendly_error(exc))
