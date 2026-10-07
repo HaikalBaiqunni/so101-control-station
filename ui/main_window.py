@@ -1953,8 +1953,11 @@ class MainWindow(QMainWindow):
         if not self.twin_panel.ghost_enabled():
             return None
         candidates: list[dict[str, float]] = []
-        if (self.control_source == "leader" and not self.teleop_engaged
-                and self._leader_connected and self._leader_converted):
+        # Whenever a leader is online and not driving the follower, its pose is the ghost, whatever the
+        # control source: the solid twin mirrors the REAL follower, so without this moving the leader
+        # by hand showed nothing at all.
+        if (not self.teleop_engaged and self._leader_connected and self._leader_converted
+                and self._follower_connected):
             candidates.append(dict(self._leader_converted))   # where the follower WOULD go on Engage
         if self._playback_index is not None and self._playback_target_positions:
             candidates.append(self._playback_target_positions)

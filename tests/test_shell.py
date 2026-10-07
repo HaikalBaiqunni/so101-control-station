@@ -1067,3 +1067,14 @@ def test_the_gripper_is_not_slowed_by_the_mit_ramp():
     sent = worker.bus.calls[-1]
     assert sent["finger_left"] == pytest.approx(-300.0)      # straight to the goal
     assert abs(sent["joint2"]) == pytest.approx(4.5)         # an arm joint still ramps: 90 deg/s * 0.05 s
+
+
+def test_leader_ghost_shows_whatever_the_control_source(teleop):
+    joints = teleop.robot_profile.joint_order
+    teleop.control_source_panel.manual_radio.click()          # not on Leader arm
+    teleop.twin_panel.ghost_check.setChecked(True)
+    teleop.joint_deg_ranges = dict.fromkeys(joints, (-90.0, 90.0))
+    teleop._leader_converted[joints[0]] = 30.0
+    assert teleop._compute_ghost() is not None                 # the leader is visible as the ghost
+    teleop.teleop_engaged = True
+    assert teleop._compute_ghost() is None                     # engaged: the follower itself moves
