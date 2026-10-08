@@ -102,9 +102,9 @@ drawers or in the Setup hub.
 
 | | |
 |---|---|
-| **Top bar** | Robot picker, Follower / Leader / Torque / source chips, search (**Ctrl+K**), Waypoints, Telemetry, Tune (B601-DM), Setup, About, and a red **Stop** (follower torque off and back to Manual; **Ctrl+Shift+Space**). |
+| **Top bar** | Robot picker, Follower / Leader / Torque / source chips, search (**Ctrl+K**), Waypoints, Telemetry, Tune (B601-DM), Record, Setup, About, and a red **Stop** (follower torque off and back to Manual; **Ctrl+Shift+Space**). |
 | **Floating cards** | **View** (Ghost target, Axes, HUD overlay, Camera, Reset View, model file), **Jog**, **Connection** + **Control source**, **Camera**. Drag by the handle, minimise to a tab with the **-** button, resize the camera from its corner. Cards never overlap each other or the top bar; if a small window leaves no room, View and Camera fold into their tab by themselves. Positions are saved; *Reset layout* restores them. |
-| **Drawers** | **Waypoints**, **Telemetry**, **Tune** open on the right, one at a time. |
+| **Drawers** | **Waypoints**, **Telemetry**, **Tune**, **Record** open on the right, one at a time. Below 1280 px wide the top-bar buttons show icons only. |
 | **Setup hub** | **Motors and ids**, **Calibration**, **Inputs**, **Data and logs**, per robot. |
 | **Command palette** | **Ctrl+K**: navigation, view toggles, control-source choice and the calibration dialogs. Nothing in it moves an arm. |
 | **About** | Creator, version, licence and the tech stack with the versions installed on your machine. |
@@ -196,6 +196,20 @@ Pick a mode, then **hold a button** to move; let go and it stops.
 - **Telemetry** (drawer): current, load, velocity, voltage and temperature per joint at about 10 Hz, as a table or a
   live graph, with CSV capture and a live cross-check that differentiates `Present_Position` against the reported
   `Present_Velocity`, so you can confirm the unit on *your* hardware instead of trusting a datasheet.
+- **Recorder** (drawer): records demonstration **episodes** for imitation learning while you teleoperate. Name a
+  dataset, type the task, press **Record episode**; at 30 fps it samples the follower's measured joints (`state`),
+  the commanded goals (`action`) and the running camera, and saves on **Stop and save** or at the chosen maximum
+  length. **Discard** drops the take; so do Stop, a follower disconnect or stopping the camera mid-take. Frames the
+  camera failed to deliver in time are counted and flagged per episode. Recording is read-only: it never moves a
+  robot. Episodes land in `recordings/<dataset>/episode_NNNNNN/` (`data.npz`, `meta.json`, `front.mp4`); turn them
+  into a real LeRobot v3 dataset in an environment that has `lerobot[dataset]`:
+
+  ```bash
+  python tools/export_lerobot.py recordings/my-dataset --repo-id local/my-dataset
+  ```
+
+  A dataset keeps one robot, one frame rate and one camera setup, and the Recorder refuses to mix them. One camera
+  per take for now.
 - **Session log**: every connect, disconnect, error and mode change plus a throttled position feed, to a timestamped
   markdown file under `logs/` (Setup, *Data and logs* opens the folder).
 
@@ -340,7 +354,8 @@ Calibration files remain byte-compatible in both directions: use this app for se
 ## Known limitations
 
 - **Teaching is scripted waypoint playback, not learned behaviour**: point-to-point positions only, no recorded
-  velocity or force profile, no generalisation to a changed scene. For imitation learning, use `lerobot-record`.
+  velocity or force profile, no generalisation to a changed scene. For imitation learning, record episodes with the
+  Recorder (or `lerobot-record`).
 - **Gamepad mapping is fixed** (edit `DEFAULT_AXIS_MAP` / `DEFAULT_BUTTON_MAP` in `ui/gamepad_panel.py`).
 - **One camera at a time.** Switching between two *different* physical devices back-to-back crashes some
   Windows / OpenCV combinations, so the device picker is locked while a camera runs: Stop, switch, Start.

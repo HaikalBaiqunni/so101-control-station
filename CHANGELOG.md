@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Recorder** drawer (top bar **Record**): records imitation-learning episodes at 30 fps while you
+  teleoperate - follower joints (`state`), commanded goals (`action`) and the running camera - without moving
+  any robot. Per-episode status (ok / dropped frames / short), auto-save at a maximum length, discard,
+  delete; a take is discarded on Stop, follower disconnect or camera stop. Stored under
+  `recordings/<dataset>/` and converted to a LeRobot v3 dataset with `tools/export_lerobot.py`
+  (needs `lerobot[dataset]`; the export script has not yet been run against a live LeRobot install).
+- Top-bar buttons show icons only below 1280 px window width.
+
 ### Changed
 
 - **GUI redesign (stage-first).** The four tabs are replaced by a top bar, a

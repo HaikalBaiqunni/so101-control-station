@@ -10,6 +10,7 @@ venv/
 .vscode/
 .idea/
 logs/
+recordings/
 follower_*.json
 leader_*.json
 waypoints*.json

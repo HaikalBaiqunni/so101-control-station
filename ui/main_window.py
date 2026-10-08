@@ -31,6 +31,7 @@ from core.dm_setup_worker import DmSetupWorker
 from core.fashionstar_leader_worker import FashionStarLeaderWorker
 from core.gravity import GravityModel
 from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
+from core.recorder import DEFAULT_CAMERA_KEY, DEFAULT_FPS, Dataset, EpisodeRecorder
 from core.robot_profiles import (
     DEFAULT_PROFILE_KEY,
     PROFILES,
@@ -60,6 +61,7 @@ from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
 from .jog_panel import JogPanel
 from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
+from .recorder_panel import RecorderPanel
 from .setup_hub import SetupHub
 from .setup_panel import SetupPanel
 from .stage_view import StageView
@@ -181,6 +183,7 @@ class MainWindow(QMainWindow):
         self.camera_panel = CameraPanel()
         self.telemetry_panel = TelemetryPanel()
         self.dm_tune_panel = DmTunePanel(joint_order=PROFILES['rebot_b601_dm'].joint_order)
+        self.recorder_panel = RecorderPanel()
 
         # ================================================================ STAGE PAGE
         # The twin fills the stage with floating cards over it (View, Jog, the
@@ -197,6 +200,7 @@ class MainWindow(QMainWindow):
         self.drawer.addWidget(self.teaching_panel)
         self.drawer.addWidget(self.telemetry_panel)
         self.drawer.addWidget(self.dm_tune_panel)
+        self.drawer.addWidget(self.recorder_panel)
         self.drawer.setMinimumWidth(440)
         self.drawer.setContentsMargins(0, TopBar.BAR_H, 0, 0)
         self.drawer.hide()
@@ -417,6 +421,24 @@ class MainWindow(QMainWindow):
         # -- wiring: camera --------------------------------------------------
         self.camera_panel.start_requested.connect(self._on_camera_start)
         self.camera_panel.stop_requested.connect(self._on_camera_stop)
+
+        # -- wiring: recorder ----------------------------------------------------
+        self.recorder: EpisodeRecorder | None = None
+        self._recorder_limit_s = 0
+        self._recorder_dataset: Dataset | None = None
+        self._rec_frame: np.ndarray | None = None
+        self._rec_frame_id = 0
+        self.record_timer = QTimer(self)
+        self.record_timer.setTimerType(Qt.PreciseTimer)
+        self.record_timer.setInterval(int(1000 / DEFAULT_FPS))
+        self.record_timer.timeout.connect(self._on_record_tick)
+        self.recorder_panel.start_requested.connect(self._on_recorder_start)
+        self.recorder_panel.stop_requested.connect(self._on_recorder_stop)
+        self.recorder_panel.discard_requested.connect(self._on_recorder_discard)
+        self.recorder_panel.delete_requested.connect(self._on_recorder_delete)
+        self.recorder_panel.open_folder_requested.connect(self._on_recorder_open_folder)
+        self.recorder_panel.dataset_edit.editingFinished.connect(self._refresh_recorder_ui)
+        self._refresh_recorder_ui()
 
         # -- wiring: gamepad ---------------------------------------------------
         self.gamepad_panel.enable_toggled.connect(self._on_gamepad_toggled)
@@ -902,6 +924,9 @@ class MainWindow(QMainWindow):
             self.follower_torque_enabled = False
             self._disengage_teleop("follower disconnected")
             self._gravity_off("follower disconnected")
+            if self.recorder is not None and self.recorder.recording:
+                self._recorder_abort("follower disconnected")
+        self._refresh_recorder_ui()
         self._update_status_chips()
         if connected:
             self.statusBar().showMessage(f"Connected to {self.robot_worker.port}")
@@ -975,7 +1000,8 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- top bar / pages
     PAGE_STAGE = 0
     PAGE_SETUP = 1
-    DRAWER_PANELS = {"waypoints": "teaching_panel", "telemetry": "telemetry_panel", "tune": "dm_tune_panel"}
+    DRAWER_PANELS = {"waypoints": "teaching_panel", "telemetry": "telemetry_panel", "tune": "dm_tune_panel",
+                     "record": "recorder_panel"}
 
     def _show_motors_and_ids(self) -> None:
         self.setup_hub.show_section("Motors and ids")
@@ -1037,6 +1063,8 @@ class MainWindow(QMainWindow):
             PaletteAction("Back to stage", "close drawers and Setup", to_stage, "home main"),
             PaletteAction("Open Waypoints", "drawer", show("waypoints"), "teach record playback"),
             PaletteAction("Open Telemetry", "drawer", show("telemetry"), "graph table csv"),
+            PaletteAction("Open Recorder", "drawer: record imitation-learning episodes",
+                          show("record"), "dataset episode demonstration lerobot"),
             PaletteAction("Open Setup", "hub", show("setup"), "settings"),
         ]
         if is_dm:
@@ -1086,6 +1114,8 @@ class MainWindow(QMainWindow):
         self.follower_torque_enabled = False
         self._disengage_teleop("Stop pressed")
         self._gravity_off("Stop pressed")
+        if self.recorder is not None and self.recorder.recording:
+            self._recorder_abort("Stop pressed")
         self.control_source_panel.force_manual()
         self._jog_release_all()
         self._on_stop_sequence()
@@ -1664,9 +1694,11 @@ class MainWindow(QMainWindow):
             self.camera_panel.set_busy(True, f"starting device #{source}...")
             worker = CameraWorker(source)
         worker.frame_ready.connect(self.camera_panel.show_frame)
+        worker.frame_ready.connect(self._on_recorder_frame)
         worker.error.connect(self.camera_panel.show_error)
         worker.started_ok.connect(lambda: self.camera_panel.set_busy(False))
         self.camera_worker = worker
+        self._refresh_recorder_ui()
         worker.start()
 
     def _on_camera_stop(self) -> None:
@@ -1675,8 +1707,129 @@ class MainWindow(QMainWindow):
         self.camera_panel.set_busy(True, "stopping...")
         worker = self.camera_worker
         self.camera_worker = None
+        self._rec_frame = None
+        if self.recorder is not None and self.recorder.recording:
+            self._recorder_abort("camera stopped")   # the take would have no picture from here on
+        self._refresh_recorder_ui()
         worker.finished.connect(lambda: self.camera_panel.set_busy(False))
         self._retire_worker(worker)  # just flips a flag - the thread notices and exits on its own
+
+    # ---------------------------------------------------------------- recorder
+    RECORDINGS_DIR = "recordings"
+
+    def _on_recorder_frame(self, frame: np.ndarray) -> None:
+        self._rec_frame = frame
+        self._rec_frame_id += 1
+
+    def _recorder_dataset_for(self, name: str) -> Dataset:
+        return Dataset(self.RECORDINGS_DIR, name, list(self.robot_profile.joint_order), DEFAULT_FPS,
+                       DEFAULT_CAMERA_KEY if self.camera_worker else None, self.robot_profile.key)
+
+    def _refresh_recorder_ui(self) -> None:
+        panel = self.recorder_panel
+        if self.recorder is not None and self.recorder.recording:
+            return
+        if not self._follower_connected:
+            panel.set_readiness("Connect the follower first: its pose is what gets recorded.", False)
+        elif not self.camera_worker:
+            panel.set_readiness("No camera running - the episode will have joint data only.", False)
+        else:
+            panel.set_readiness("Follower and camera ready.", True)
+        panel.record_btn.setEnabled(self._follower_connected)
+        dataset = self._recorder_dataset_for(panel.dataset_edit.text())
+        panel.set_episodes(dataset.list_episodes())
+
+    def _on_recorder_start(self, dataset_name: str, task: str, limit_s: int) -> None:
+        if not self._follower_connected or not self.robot_worker:
+            self.recorder_panel.set_status("Connect the follower before recording.")
+            return
+        if not task.strip():
+            self.recorder_panel.set_status("Describe the task first - policies are trained against it.")
+            self.recorder_panel.task_edit.setFocus()
+            return
+        dataset = self._recorder_dataset_for(dataset_name)
+        recorder = EpisodeRecorder(dataset)
+        try:
+            index = recorder.start(task)
+        except (ValueError, OSError) as exc:
+            self.recorder_panel.set_status(str(exc))
+            return
+        self.recorder = recorder
+        self._recorder_dataset = dataset
+        self._recorder_limit_s = limit_s
+        self._rec_frame_id += 1   # the first tick must not read as a repeat of an old frame
+        self.recorder_panel.set_recording(True)
+        self.recorder_panel.set_status(f"Recording episode #{index} into {dataset.path}")
+        self.session_logger.log_event(f"Recorder: episode {index} started ({dataset.name}, task '{task.strip()}')")
+        self.record_timer.start()
+
+    def _recorder_sample(self) -> None:
+        names = self.robot_profile.joint_order
+        state = {n: self.current_positions.get(n, 0.0) for n in names}
+        goals = dict(getattr(self.robot_worker, "last_goals", {}) or {}) if self.robot_worker else {}
+        action = {n: goals.get(n, state[n]) for n in names}
+        self.recorder.add_sample(state, action, self._rec_frame, self._rec_frame_id)
+
+    def _on_record_tick(self) -> None:
+        recorder = self.recorder
+        if recorder is None or not recorder.recording:
+            self.record_timer.stop()
+            return
+        try:
+            due = int((time.monotonic() - recorder.started_at) * DEFAULT_FPS) + 1
+            for _ in range(min(5, due - recorder.frames)):   # catch up after a late tick, but never burst
+                self._recorder_sample()
+        except (OSError, RuntimeError) as exc:
+            self._recorder_abort(f"recording failed: {exc}")
+            return
+        self.recorder_panel.set_progress(recorder.elapsed_s, self._recorder_limit_s)
+        if recorder.elapsed_s >= self._recorder_limit_s:
+            self._on_recorder_stop()
+
+    def _on_recorder_stop(self) -> None:
+        recorder = self.recorder
+        if recorder is None or not recorder.recording:
+            return
+        self.record_timer.stop()
+        try:
+            info = recorder.finish()
+        except (OSError, RuntimeError) as exc:
+            self._recorder_abort(f"could not save the episode: {exc}")
+            return
+        self.recorder_panel.set_recording(False)
+        note = f"Saved episode #{info.index}: {info.frames} frames, {info.duration_s:.1f} s"
+        if info.status != "ok":
+            note += f" ({info.label})"
+        self.recorder_panel.set_status(note)
+        self.session_logger.log_event(f"Recorder: {note}")
+        self._refresh_recorder_ui()
+
+    def _on_recorder_discard(self) -> None:
+        self._recorder_abort("take discarded")
+
+    def _recorder_abort(self, reason: str) -> None:
+        """Throw the take in progress away (a broken take is worse than none)."""
+        self.record_timer.stop()
+        if self.recorder is not None and self.recorder.recording:
+            self.recorder.discard()
+            self.session_logger.log_event(f"Recorder: episode discarded ({reason})")
+        self.recorder_panel.set_recording(False)
+        self.recorder_panel.set_status(reason[:1].upper() + reason[1:] + ".")
+        self._refresh_recorder_ui()
+
+    def _on_recorder_delete(self, index: int) -> None:
+        dataset = self._recorder_dataset_for(self.recorder_panel.dataset_edit.text())
+        answer = QMessageBox.question(self, "Delete episode", f"Delete episode #{index} from {dataset.name}?")
+        if answer == QMessageBox.Yes:
+            dataset.delete_episode(index)
+            self.session_logger.log_event(f"Recorder: episode {index} deleted from {dataset.name}")
+            self._refresh_recorder_ui()
+
+    def _on_recorder_open_folder(self) -> None:
+        folder = os.path.abspath(self.RECORDINGS_DIR)
+        os.makedirs(folder, exist_ok=True)
+        if hasattr(os, "startfile"):
+            os.startfile(folder)
 
     # ---------------------------------------------------------------- gamepad
     def _on_gamepad_toggled(self, enabled: bool) -> None:
@@ -2824,6 +2977,9 @@ class MainWindow(QMainWindow):
         self.keyboard_timer.stop()
         self.gamepad_timer.stop()
         self.jog_timer.stop()
+        self.record_timer.stop()
+        if self.recorder is not None and self.recorder.recording:
+            self.recorder.discard()   # an unfinished take is not kept
         self._close_telemetry_csv()
 
         # These all go through _retire_worker, which deliberately does NOT

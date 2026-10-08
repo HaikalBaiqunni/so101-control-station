@@ -90,6 +90,11 @@ def _draw(name: str, p: QPainter) -> None:
         p.drawEllipse(QPointF(12, 12), 3.5, 3.5)
         p.drawLine(QPointF(12, 1.5), QPointF(12, 5))
         p.drawLine(QPointF(12, 19), QPointF(12, 22.5))
+    elif name == "record":
+        p.drawEllipse(QPointF(12, 12), 9, 9)
+        p.setBrush(QColor(p.pen().color()))
+        p.drawEllipse(QPointF(12, 12), 4.2, 4.2)
+        p.setBrush(Qt.NoBrush)
     elif name == "doc":
         _poly(p, [(6, 3), (14, 3), (19, 8), (19, 21), (6, 21), (6, 3)])
         for y in (12, 15.5):
