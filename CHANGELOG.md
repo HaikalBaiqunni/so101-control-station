@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `recordings/<dataset>/` and converted to a LeRobot v3 dataset with `tools/export_lerobot.py`
   (needs `lerobot[dataset]`; the export script has not yet been run against a live LeRobot install).
 - Top-bar buttons show icons only below 1280 px window width.
+- **RealSense L515** support through a helper process (`core/rs_legacy_helper.py`) that runs the old
+  `pyrealsense2` 2.54.x in a separate Python 3.11 environment, since newer SDKs dropped the L515. Same
+  `color` / `depth` / `color + depth` choices as the D455. Verified on a real L515 over USB 3.2.
 
 ### Changed
 

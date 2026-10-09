@@ -20,8 +20,10 @@ def list_camera_sources() -> list[tuple[int | str, str]]:
     (source = "basler:<serial>", only when pypylon is installed)."""
     from .basler_camera import list_basler_cameras
     from .realsense_camera import list_realsense_cameras
+    from .realsense_legacy import list_l515_cameras
 
-    realsense = list_realsense_cameras()
+    l515 = list_l515_cameras()
+    realsense = list_realsense_cameras() + l515
     sources: list[tuple[int | str, str]] = [
         (index, f"{name} (#{index})") for index, name in list_cameras()
         # a RealSense listed through its own SDK replaces its webcam-style entries: the Depth one
@@ -29,7 +31,7 @@ def list_camera_sources() -> list[tuple[int | str, str]]:
         if not (realsense and "realsense" in name.lower())
     ]
     sources.extend(list_basler_cameras())
-    sources.extend(realsense)
+    sources.extend(realsense)   # includes the L515 entries
     return sources
 
 

@@ -209,3 +209,84 @@ def test_record_drawer_nav_and_palette(win):
     assert win.drawer.currentWidget() is win.recorder_panel
     assert not win.drawer.isHidden()
     assert any(a.title == "Open Recorder" for a in win._palette_actions())
+
+
+# ---------------------------------------------------------------- RealSense L515 helper bridge
+FAKE_HELPER = r'''
+import json, struct, sys, time
+args = sys.argv[1:]
+if "--list" in args:
+    print(json.dumps([{"serial": "f1", "name": "Intel RealSense L515"}, {"serial": "d4", "name": "Intel RealSense D455"}]))
+elif "--fail" in args or MODE == "fail":
+    sys.stderr.write("RealSense L515 error: boom\n"); sys.exit(1)
+else:
+    w, h = 8, 4
+    for i in range(3):
+        sys.stdout.buffer.write(struct.pack("<4sIII", b"RSF1" if MODE != "corrupt" else b"XXXX", w, h, w * h * 3))
+        sys.stdout.buffer.write(bytes([i + 1]) * (w * h * 3)); sys.stdout.buffer.flush()
+    time.sleep(0.2)
+'''
+
+
+def fake_command(tmp_path, mode="ok"):
+    import sys
+    script = tmp_path / "fake_helper.py"
+    script.write_text(f"MODE = {mode!r}\n" + FAKE_HELPER, encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def run_l515(qapp, command):
+    from core.realsense_legacy import L515CameraWorker
+    worker = L515CameraWorker("f1", "color", command=command)
+    frames, errors, started = [], [], []
+    worker.frame_ready.connect(frames.append)
+    worker.error.connect(errors.append)
+    worker.started_ok.connect(lambda: started.append(True))
+    worker.start()
+    worker.wait(10000)
+    qapp.processEvents()
+    return frames, errors, started
+
+
+def test_l515_source_ids():
+    from core.realsense_legacy import is_l515_source, parse_source
+    assert is_l515_source("l515:abc:depth") and not is_l515_source("realsense:abc") and not is_l515_source(1)
+    assert parse_source("l515:abc:both") == ("abc", "both")
+    assert parse_source("l515:abc") == ("abc", "color")
+    assert parse_source("l515:abc:zzz") == ("abc", "color")
+
+
+def test_l515_worker_receives_frames_from_the_helper(qapp, tmp_path):
+    frames, errors, started = run_l515(qapp, fake_command(tmp_path))
+    assert started and len(frames) == 3
+    assert frames[0].shape == (4, 8, 3) and frames[0].dtype == np.uint8
+    assert [int(f[0, 0, 0]) for f in frames] == [1, 2, 3]
+
+
+def test_l515_worker_reports_the_helpers_error(qapp, tmp_path):
+    frames, errors, _ = run_l515(qapp, fake_command(tmp_path, "fail"))
+    assert not frames and errors and "boom" in errors[0]
+
+
+def test_l515_worker_rejects_a_corrupt_stream(qapp, tmp_path):
+    frames, errors, _ = run_l515(qapp, fake_command(tmp_path, "corrupt"))
+    assert not frames and errors and "corrupt" in errors[0]
+
+
+@pytest.mark.real_pylon   # opts out of the conftest stub of list_l515_cameras
+def test_l515_listing_keeps_only_the_l5xx(tmp_path, monkeypatch):
+    from core import realsense_legacy
+    monkeypatch.setattr(realsense_legacy, "find_helper", lambda: fake_command(tmp_path))
+    found = realsense_legacy.list_l515_cameras()
+    assert [s for s, _ in found] == ["l515:f1:color", "l515:f1:depth", "l515:f1:both"]
+    monkeypatch.setattr(realsense_legacy, "find_helper", lambda: None)
+    assert realsense_legacy.list_l515_cameras() == []
+
+
+def test_l515_entries_replace_the_webcam_style_realsense_entries(monkeypatch):
+    from core import basler_camera, camera_enum, realsense_legacy
+    monkeypatch.setattr(camera_enum, "list_cameras", lambda: [(0, "Integrated Webcam"), (1, "Intel(R) RealSense(TM) 515 RGB")])
+    monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
+    monkeypatch.setattr(realsense_legacy, "list_l515_cameras", lambda: [("l515:f1:color", "L515 - color")])
+    sources = [s for s, _ in camera_enum.list_camera_sources()]
+    assert sources == [0, "l515:f1:color"]

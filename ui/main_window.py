@@ -1682,8 +1682,14 @@ class MainWindow(QMainWindow):
     def _on_camera_start(self, source) -> None:
         from core.basler_camera import BaslerCameraWorker, is_basler_source, serial_of
         from core.realsense_camera import RealSenseCameraWorker, is_realsense_source, parse_source
+        from core.realsense_legacy import L515CameraWorker, is_l515_source
+        from core.realsense_legacy import parse_source as parse_l515_source
 
-        if is_realsense_source(source):
+        if is_l515_source(source):
+            serial, mode = parse_l515_source(source)
+            self.camera_panel.set_busy(True, f"starting RealSense L515 {serial} ({mode})...")
+            worker = L515CameraWorker(serial, mode)
+        elif is_realsense_source(source):
             serial, mode = parse_source(source)
             self.camera_panel.set_busy(True, f"starting RealSense {serial} ({mode})...")
             worker = RealSenseCameraWorker(serial, mode)

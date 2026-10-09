@@ -282,8 +282,28 @@ card and press Start (one camera at a time).
 | **USB webcam** | Works out of the box through OpenCV, listed by *name* rather than a bare index. |
 | **Basler** (USB3 Vision / GigE, e.g. acA1300-200um) | `pip install pypylon` plus the pylon driver. Listed as `Basler <model> (<serial>)`, with auto exposure and gain on. Close pylon Viewer first: the camera can only be opened by one program. |
 | **Intel RealSense** (D4xx) | `pip install pyrealsense2`. Listed as `color`, `depth (colormap)` and `color + depth` (depth aligned to the colour image), using the best stream mode the camera can run. A D455 on a USB 2 port streams poorly: use a USB 3 port and cable. |
+| **Intel RealSense L515** (LiDAR) | Intel removed the L515 from newer `pyrealsense2`, so it runs through a small helper process with the old SDK (see below). Listed as `Intel RealSense L515 (<serial>)` with `color`, `depth (colormap)` and `color + depth`. |
 
 Both extras are optional (`pip install .[basler]`, `.[realsense]`); without them nothing else changes.
+
+### RealSense L515 helper
+
+`pyrealsense2` 2.56 and newer no longer see an L515, and the last wheels that do (2.54.x) exist only for Python 3.11
+and older. The app therefore starts `core/rs_legacy_helper.py` in a separate Python 3.11 environment and receives the
+frames over a pipe. The camera then appears in the picker like any other, and the Recorder can use it. One-time setup:
+
+```bash
+conda create -n rs-l515 python=3.11
+conda activate rs-l515
+pip install pyrealsense2==2.54.2.5684 numpy
+```
+
+The app looks for an environment named `rs-l515` (under `~/.conda/envs`, miniconda or anaconda), or for the
+interpreter named in `SO101_RS_PYTHON`, or for an `rs_helper.exe` next to the app (`SO101_RS_HELPER` points at one
+explicitly). Without any of them the L515 is simply not listed. Use a USB 3 port, and close RealSense Viewer first.
+Starting takes about 1 to 3 seconds (the L515 is sometimes slow to start after a stop, so the helper retries) and
+stopping about 2 to 3 seconds. Frame rates measured on a USB 3.2 port: colour 1280x720 about 29 fps, depth 1024x768
+about 28 fps, colour + depth about 23 fps.
 
 ---
 
