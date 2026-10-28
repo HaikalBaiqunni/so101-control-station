@@ -78,8 +78,9 @@ class GripperGaugePanel(QWidget):
         self.max_push_spin.setSuffix(" deg")
         self.max_push_spin.setToolTip(
             "Friction can hold the jaw still under the gentle Preload push. A stop is only believed after "
-            "the push was raised stepwise to this (never above the tool's N*m ceiling). Raise it if a "
-            "measurement says the jaw did not move; set it equal to Preload to never push harder.")
+            "the push was raised stepwise to this (never above the tool's N*m ceiling). It is also the most "
+            "the leader can squeeze the follower's gripper: the target never runs further ahead of the jaw. "
+            "Raise it if a measurement says the jaw did not move; set it equal to Preload to never push harder.")
         self.repeats_spin = QSpinBox()
         self.repeats_spin.setRange(*REPEATS_RANGE)
         self.repeats_spin.setValue(3)
@@ -131,6 +132,13 @@ class GripperGaugePanel(QWidget):
 
         # -- measure --------------------------------------------------------------
         measure = QGroupBox("MEASURE")
+        self.live_label = QLabel("")
+        self.live_label.setObjectName("poseReadout")
+        self.live_label.setAlignment(Qt.AlignCenter)
+        self.live_label.setToolTip(
+            "The jaw opening right now, from its encoder and the calibration below. It is exact at rest or "
+            "touching an object; the gripper does not move for it, so it also works while you drive it by "
+            "leader. Needs the gauge calibrated and the follower connected.")
         self.result_label = QLabel("-")
         self.result_label.setObjectName("poseReadout")
         self.result_label.setAlignment(Qt.AlignCenter)
@@ -155,6 +163,8 @@ class GripperGaugePanel(QWidget):
         buttons.addWidget(self.measure_btn, 1)
         buttons.addWidget(self.cancel_btn)
         box2 = QVBoxLayout(measure)
+        box2.addWidget(QLabel("Live jaw opening"))
+        box2.addWidget(self.live_label)
         box2.addWidget(self.result_label)
         box2.addWidget(self.detail_label)
         box2.addWidget(self.warning_label)
@@ -245,6 +255,9 @@ class GripperGaugePanel(QWidget):
         del self._history[:-MAX_HISTORY]
         self.history_list.addItem(f"{row['time'][11:]}   {width_mm:.2f} mm  +/- {spread_mm:.2f}")
         self.history_list.scrollToBottom()
+
+    def set_live(self, text: str) -> None:
+        self.live_label.setText(text or "-")
 
     def clear_result(self) -> None:
         self.result_label.setText("-")

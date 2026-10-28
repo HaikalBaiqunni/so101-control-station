@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Grip limit on the leader relay, and a live jaw opening.** In MIT mode the follower gripper's squeeze is
+  kp x (goal - jaw), so a leader closed all the way squeezed as hard as the motor could. The relay now keeps the
+  gripper's goal within the Break-away push of where the jaw really is (never above the 1.5 N*m ceiling for its
+  kp), so the grip is bounded and a reading no longer depends on how hard the hand pushed. The Gripper gauge tab
+  also shows the jaw opening live in mm once calibrated, with or without the leader.
+  The saved gripper range is checked against the jaw's position once per connection: a Damiao encoder zero that
+  moved ~360 deg since the last calibration is reported instead of silently clamping goals toward the wrong spot.
 - **Break-away push** (Gripper gauge settings). Friction in the slide can hold the jaw still under the gentle Preload
   push, so a measurement failed with "the jaw did not move" and the range search stopped at a false end. A stall is
   now only believed after the push was raised stepwise to this value (capped by the 1.5 N*m ceiling for the gripper's

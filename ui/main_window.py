@@ -1061,6 +1061,7 @@ class MainWindow(QMainWindow):
         self._last_follower_update = time.monotonic()
         if not self._range_checked:
             self._check_gripper_range(positions)
+        self._update_live_width()
         self.session_logger.log_positions("follower", positions)  # internally throttled to 2Hz
         # Log the gripper's commanded value next to its measured one, at the
         # same throttled rate. "Won't open" and "was never asked to open" look
@@ -1069,6 +1070,36 @@ class MainWindow(QMainWindow):
             self.session_logger.log_positions(
                 "goal", {"gripper": self.robot_worker.last_goals["gripper"]}
             )
+
+    def _limit_grip(self, name: str, goal: float) -> float | None:
+        """The follower gripper's goal from the leader, with the setpoint kept within the Break-away push of
+        where the jaw really is. In MIT mode the squeeze is kp x (goal - jaw): without this a leader closed
+        all the way squeezes whatever is in the jaws as hard as the motor can, and a measurement taken that
+        way depends on how hard the hand pushed. None = no fresh position, so send nothing."""
+        worker = self.robot_worker
+        if (name != self.GAUGE_JOINT or self.robot_profile.key != "rebot_b601_dm" or worker is None
+                or getattr(worker, "control_mode", None) != Control_Type.MIT):
+            return goal
+        measured = self.current_positions.get(name)
+        if measured is None or time.monotonic() - self._last_follower_update > self.GAUGE_STALE_S:
+            return None
+        lead = self.gripper_gauge_panel.max_push_spin.value()
+        kp = self._gauge_kp()
+        if kp > 0:
+            lead = min(lead, math.degrees(self.GAUGE_MAX_PUSH_NM / kp))   # the N*m ceiling wins, even over Preload
+        return max(measured - lead, min(measured + lead, goal))
+
+    def _update_live_width(self) -> None:
+        """Show the jaw opening as a width whenever the gauge is calibrated (the gripper as a live caliper)."""
+        if self.robot_profile.key != "rebot_b601_dm":
+            return
+        angle = self.current_positions.get(self.GAUGE_JOINT)
+        width = None if angle is None else self._gauge_cal.width_mm(angle)
+        if width is None:
+            self.gripper_gauge_panel.set_live("")
+            return
+        note = "" if self._gauge_cal.in_span(angle) else "  (outside your references)"
+        self.gripper_gauge_panel.set_live(f"{max(width, 0.0):.1f} mm{note}")
 
     RANGE_MISMATCH_DEG = 10.0
 
@@ -1576,7 +1607,9 @@ class MainWindow(QMainWindow):
         self._leader_converted.update(converted)
         if self.teleop_engaged and self.control_source == "leader" and self.robot_worker and self._playback_index is None:
             for name, degrees in converted.items():
-                self._request_goal(name, degrees)
+                limited = self._limit_grip(name, degrees)
+                if limited is not None:
+                    self._request_goal(name, limited)
         elif self.robot_worker is None:
             # leader-only bring-up: show the leader's pose. With a follower connected the
             # follower's own feedback is the truth, and the leader is only shown as a ghost.

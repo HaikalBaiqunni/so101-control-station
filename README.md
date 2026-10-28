@@ -249,6 +249,9 @@ work the same, because the Damiao worker exposes the identical `request_goal` / 
   setting, 1.5 N*m ceiling) and a jaw that stops moving while the target runs ahead counts as the end of travel.
   It looks at most 360 deg either way, fails rather than pushes on, and saves and applies the range it found.
   Stop, torque off, Cancel or a disconnect abort it and leave the saved range untouched.
+- **Gripper as a live caliper.** Once the Gripper gauge is calibrated, the tab shows the jaw opening in mm all the
+  time, so you can measure by driving the gripper with the leader. While the leader relay drives it in MIT mode the
+  squeeze is limited (Break-away push, 1.5 N*m ceiling), so closing the leader fully cannot crush the object.
 
 ### Motion control and the Tune drawer
 

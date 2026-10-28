@@ -665,3 +665,55 @@ def test_a_range_that_does_not_contain_the_jaw_is_reported_once(win):
     win._range_checked = False
     win._on_positions_updated({"finger_left": 5.0})           # inside: silent
     assert win.statusBar().currentMessage() == ""
+
+
+# ---------------------------------------------------------------- leader relay: grip limit and live width
+def fresh(win, angle):
+    win.current_positions["finger_left"] = angle
+    win._last_follower_update = mw.time.monotonic()
+
+
+def test_the_leader_cannot_squeeze_harder_than_the_push_limit(win):
+    arm(win)                       # kp 8, Break-away push 8 deg -> the setpoint stays within 8 deg of the jaw
+    fresh(win, 50.0)
+    assert win._limit_grip("finger_left", 100.0) == pytest.approx(58.0)
+    assert win._limit_grip("finger_left", -100.0) == pytest.approx(42.0)
+    assert win._limit_grip("finger_left", 53.0) == 53.0            # a goal inside the lead is untouched
+    assert win._limit_grip("joint1", 100.0) == 100.0               # only the gripper
+
+
+def test_grip_limit_uses_the_ceiling_for_a_stiff_kp(win):
+    arm(win, kp=40.0)              # 1.5 N*m / 40 = 2.1 deg
+    fresh(win, 50.0)
+    assert win._limit_grip("finger_left", 100.0) == pytest.approx(50.0 + math.degrees(1.5 / 40.0), abs=1e-6)
+
+
+def test_grip_limit_waits_for_a_fresh_position_and_skips_other_modes(win):
+    arm(win)
+    win.current_positions["finger_left"] = 50.0
+    win._last_follower_update = mw.time.monotonic() - 5.0
+    assert win._limit_grip("finger_left", 100.0) is None            # no fresh feedback: send nothing
+    arm(win, mode=Control_Type.POS_VEL)
+    assert win._limit_grip("finger_left", 100.0) == 100.0           # POS_VEL has its own velocity-limited loop
+
+
+def test_the_relay_sends_the_limited_gripper_goal(win, monkeypatch):
+    worker = arm(win)
+    monkeypatch.setattr(win, "_leader_deg_to_follower_deg", lambda name, deg: deg)
+    win.teleop_engaged, win.control_source = True, "leader"
+    fresh(win, 50.0)
+    win._on_leader_positions({"finger_left": 100.0})
+    assert worker.last_goals["finger_left"] == pytest.approx(58.0)
+
+
+def test_live_width_follows_the_jaw_once_calibrated(win):
+    arm(win)
+    win._gauge_cal.set_point(80.0, 0.0)
+    win._gauge_cal.set_point(32.0, 30.0)       # 30 mm per 48 deg, closing = angle up
+    win._on_positions_updated({"finger_left": 56.0})
+    assert win.gripper_gauge_panel.live_label.text() == "15.0 mm"
+    win._on_positions_updated({"finger_left": 10.0})
+    assert "outside your references" in win.gripper_gauge_panel.live_label.text()
+    win._gauge_cal.clear()
+    win._on_positions_updated({"finger_left": 56.0})
+    assert win.gripper_gauge_panel.live_label.text() == "-"
