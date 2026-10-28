@@ -615,3 +615,32 @@ def test_the_connection_card_has_the_auto_button(win):
     win.connection_panel.calibrate_gripper_auto_btn.click()
     assert win._gauge is None
     assert win.connection_panel.calibrate_gripper_auto_btn.text() == "Auto-calibrate gripper range"
+
+
+def test_gauge_needs_the_breakaway_push_when_friction_beats_the_gentle_one():
+    # the user's real failure: "the jaw did not move" at 1 deg/s, because 0.42 N*m cannot beat 0.7 N*m of friction
+    gentle, _ = run(SimGripper(10.0, 1, contact_deg=60.0, coulomb=0.7), GaugeParams(limit_deg=100.0, speed_deg_s=1.0, repeats=1),
+                    ticks=1500)
+    assert gentle.state == FAILED and "did not move" in gentle.message
+    sim = SimGripper(10.0, 1, contact_deg=60.0, coulomb=0.7)
+    gauge, _ = run(sim, GaugeParams(limit_deg=100.0, speed_deg_s=4.0, repeats=2, max_preload_deg=8.6), ticks=6000)
+    assert gauge.state == DONE, gauge.message
+    assert 0.0 <= gauge.result.mean - 60.0 < 4.0
+    assert sim.max_torque <= 8.0 * math.radians(8.6 + 1.0)
+
+
+def test_finder_keeps_the_push_that_worked_so_the_motion_is_continuous():
+    sim = SimGripper(30.0, 1, end_deg=330.0, other_end_deg=-20.0, coulomb=0.7)
+    finder = GripperRangeFinder(speed_deg_s=25.0, max_travel_deg=400.0, max_preload_deg=8.6)
+    now, goal, moving, n = 0.0, finder.start(0.0, sim.deg), 0, 0
+    while not finder.finished and now < 120.0:
+        before = sim.deg
+        sim.advance(goal, 0.05)
+        now += 0.05
+        moving += abs(sim.deg - before) > 0.02
+        n += 1
+        new = finder.update(now, sim.deg)
+        goal = goal if new is None else new
+    assert finder.state == DONE, finder.message
+    assert now < 90.0              # ~350 deg out and back at 25 deg/s plus the settling, not minutes of stop-and-go
+    assert moving / n > 0.5        # it spends most of the time actually moving

@@ -70,6 +70,16 @@ class GripperGaugePanel(QWidget):
         self.preload_spin.setToolTip(
             "How far the target may run ahead of the jaw. In MIT mode the push is kp x this angle, "
             "so it is the force limit. Too low and friction wins; too high squeezes harder.")
+        self.max_push_spin = QDoubleSpinBox()
+        self.max_push_spin.setRange(*PRELOAD_RANGE)
+        self.max_push_spin.setDecimals(1)
+        self.max_push_spin.setSingleStep(0.5)
+        self.max_push_spin.setValue(8.0)
+        self.max_push_spin.setSuffix(" deg")
+        self.max_push_spin.setToolTip(
+            "Friction can hold the jaw still under the gentle Preload push. A stop is only believed after "
+            "the push was raised stepwise to this (never above the tool's N*m ceiling). Raise it if a "
+            "measurement says the jaw did not move; set it equal to Preload to never push harder.")
         self.repeats_spin = QSpinBox()
         self.repeats_spin.setRange(*REPEATS_RANGE)
         self.repeats_spin.setValue(3)
@@ -78,6 +88,7 @@ class GripperGaugePanel(QWidget):
         form.addRow("Closing", self.direction_combo)
         form.addRow("Speed", self.speed_spin)
         form.addRow("Preload", self.preload_spin)
+        form.addRow("Break-away push", self.max_push_spin)
         form.addRow("Passes", self.repeats_spin)
         self.force_label = QLabel("")
         self.force_label.setObjectName("sectionCaption")
@@ -174,7 +185,8 @@ class GripperGaugePanel(QWidget):
         self.clear_btn.clicked.connect(self.clear_references)
         self.csv_btn.clicked.connect(self._save_csv)
         for signal in (self.direction_combo.currentIndexChanged, self.speed_spin.valueChanged,
-                       self.preload_spin.valueChanged, self.repeats_spin.valueChanged):
+                       self.preload_spin.valueChanged, self.max_push_spin.valueChanged,
+                       self.repeats_spin.valueChanged):
             signal.connect(lambda *_: self.settings_changed.emit())
         self._running = False
 
@@ -182,15 +194,16 @@ class GripperGaugePanel(QWidget):
     def close_sign(self) -> int:
         return int(self.direction_combo.currentData())
 
-    def set_values(self, close_sign: int, speed: float, preload: float, repeats: int) -> None:
+    def set_values(self, close_sign: int, speed: float, preload: float, repeats: int, max_push: float = 8.0) -> None:
         """Load saved settings without firing settings_changed."""
-        for widget in (self.direction_combo, self.speed_spin, self.preload_spin, self.repeats_spin):
+        for widget in (self.direction_combo, self.speed_spin, self.preload_spin, self.max_push_spin, self.repeats_spin):
             widget.blockSignals(True)
         self.direction_combo.setCurrentIndex(0 if close_sign >= 0 else 1)
         self.speed_spin.setValue(speed)
         self.preload_spin.setValue(preload)
+        self.max_push_spin.setValue(max_push)
         self.repeats_spin.setValue(repeats)
-        for widget in (self.direction_combo, self.speed_spin, self.preload_spin, self.repeats_spin):
+        for widget in (self.direction_combo, self.speed_spin, self.preload_spin, self.max_push_spin, self.repeats_spin):
             widget.blockSignals(False)
 
     # -- driven by MainWindow -------------------------------------------------
@@ -198,7 +211,7 @@ class GripperGaugePanel(QWidget):
         self._running = running
         self.cancel_btn.setEnabled(running)
         for widget in (self.measure_btn, self.zero_btn, self.reference_btn, self.delete_btn, self.clear_btn,
-                       self.direction_combo, self.speed_spin, self.preload_spin, self.repeats_spin,
+                       self.direction_combo, self.speed_spin, self.preload_spin, self.max_push_spin, self.repeats_spin,
                        self.size_spin, self.reference_list):
             widget.setEnabled(not running)
 

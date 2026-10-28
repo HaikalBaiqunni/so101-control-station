@@ -106,7 +106,9 @@ class GripperGauge:
         self._samples: list[float] = []
         self._reopen_target = 0.0
         self.hit_limit = False   # True when a pass ended at the end of travel instead of on an object
-        self._cap = params.preload_deg   # how far the setpoint may lead the jaw right now (raised while confirming a stall)
+        # how far the setpoint may lead the jaw right now: raised while confirming a stall and then KEPT for the
+        # rest of the pass, so friction that was beaten once does not stop the jaw again (stop-and-go motion)
+        self._cap = params.preload_deg
 
     # -- state ---------------------------------------------------------------
     @property
@@ -207,14 +209,16 @@ class GripperGauge:
             self._stall_time += dt
         else:
             self._stall_time = 0.0
-            if speed is not None and speed > p.stall_speed_frac * p.speed_deg_s:
-                self._cap = p.preload_deg   # it is moving: friction was beaten, back to the gentle push
         max_cap = p.max_preload_deg or p.preload_deg
         if self._stall_time >= p.stall_s and not at_limit and self._cap < max_cap:
             # stopped, but at a gentle push that may only be friction: push harder (up to the ceiling)
             # before believing it is an end of travel
             self._cap = min(max_cap, self._cap + max(1.0, p.preload_deg))
             self._stall_time = 0.0
+            # apply it now: at a slow creep the setpoint would take many seconds to lead by the new cap
+            self.setpoint = measured + sign * self._cap
+            if sign * (self.setpoint - p.limit_deg) > 0:
+                self.setpoint = p.limit_deg
         elif self._stall_time >= p.stall_s or at_limit:
             travelled = sign * (measured - self._close_start_pos)
             if self._first_close and travelled < p.min_travel_deg and not at_limit and not p.allow_zero_travel:

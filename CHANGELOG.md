@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Break-away push** (Gripper gauge settings). Friction in the slide can hold the jaw still under the gentle Preload
+  push, so a measurement failed with "the jaw did not move" and the range search stopped at a false end. A stall is
+  now only believed after the push was raised stepwise to this value (capped by the 1.5 N*m ceiling for the gripper's
+  kp), and the push that worked is kept for the rest of the pass, so the jaw moves continuously instead of
+  stop-and-go. The range search has its own 25 deg/s creep speed, and an Auto-calibrate button on the Connection card.
 - **Auto-measure gripper range** (B601-DM, Setup, Calibration). The gripper finds both ends of travel by itself:
   it creeps one way, then the other, with the force capped at kp x Preload, and an encoder that stops while the
   target runs ahead marks the end. Built on the gauge's contact detection (`core/gripper_range.py`); the range is

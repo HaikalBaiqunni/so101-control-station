@@ -466,7 +466,8 @@ class MainWindow(QMainWindow):
         self._gauge_cal = GaugeCalibration.from_dict(saved_gauge)
         self.gripper_gauge_panel.set_values(
             self._gauge_cal.close_sign, float(saved_gauge.get("speed", 12.0)),
-            float(saved_gauge.get("preload", 3.0)), int(saved_gauge.get("repeats", 3)))
+            float(saved_gauge.get("preload", 3.0)), int(saved_gauge.get("repeats", 3)),
+            float(saved_gauge.get("max_push", 8.0)))
         self.gauge_timer = QTimer(self)
         self.gauge_timer.setInterval(self.GAUGE_TICK_MS)
         self.gauge_timer.timeout.connect(self._on_gauge_tick)
@@ -1821,6 +1822,13 @@ class MainWindow(QMainWindow):
         if self.robot_worker:
             self.robot_worker.request_goal(name, degrees)
 
+    def _breakaway_deg(self, preload: float) -> float:
+        """The push (as a setpoint lead in degrees) a stall is raised to before it is believed: the panel's
+        Break-away push, never above what the N*m ceiling allows for this kp, never below the Preload."""
+        kp = self._gauge_kp()
+        ceiling = math.degrees(self.GAUGE_MAX_PUSH_NM / kp) if kp > 0 else preload
+        return max(preload, min(self.gripper_gauge_panel.max_push_spin.value(), ceiling, PRELOAD_RANGE[1]))
+
     def _gauge_kp(self) -> float:
         gains = self.dm_tune_panel.mit_gains().get(self.GAUGE_JOINT)
         return float(gains[0]) if gains else 0.0
@@ -1852,6 +1860,7 @@ class MainWindow(QMainWindow):
         panel = self.gripper_gauge_panel
         data = self._gauge_cal.to_dict()
         data.update({"speed": panel.speed_spin.value(), "preload": panel.preload_spin.value(),
+                     "max_push": panel.max_push_spin.value(),
                      "repeats": panel.repeats_spin.value()})
         self._save_setting("gripper_gauge", data)
 
@@ -1914,7 +1923,8 @@ class MainWindow(QMainWindow):
         preload = panel.preload_spin.value()
         try:
             params = GaugeParams(close_sign=sign, limit_deg=hi if sign > 0 else lo, speed_deg_s=panel.speed_spin.value(),
-                                 preload_deg=preload, detect_lag_deg=min(2.0, preload), repeats=panel.repeats_spin.value())
+                                 preload_deg=preload, detect_lag_deg=min(2.0, preload), repeats=panel.repeats_spin.value(),
+                                 max_preload_deg=self._breakaway_deg(preload))
         except ValueError as exc:
             panel.set_status(str(exc))
             return
@@ -2018,6 +2028,7 @@ class MainWindow(QMainWindow):
             f"Gauge: object = {width:.2f} mm +/- {spread:.2f} (jaw {result.mean:.2f} deg, {len(result.angles)} passes)")
 
     RANGE_MAX_PUSH_NM = 1.2           # the most the range search pushes with while making sure a stop is a stop
+    RANGE_SPEED_DEG_S = 25.0          # the search's own creep speed (not the gauge's, which is meant to be slow)
     RANGE_SWEEP_DEG = 360.0           # how far past the start the range finder may look for an end of travel
     RANGE_ENCODER_LIMIT_DEG = 700.0   # a Damiao encoder reports about +-716 deg: never ask for more than this
 
@@ -2042,7 +2053,7 @@ class MainWindow(QMainWindow):
             preload = panel.preload_spin.value()
             # a stop is only believed once the push has been raised to this (friction can beat the gentle one)
             ceiling = math.degrees(self.RANGE_MAX_PUSH_NM / self._gauge_kp())
-            finder = GripperRangeFinder(speed_deg_s=panel.speed_spin.value(), preload_deg=preload,
+            finder = GripperRangeFinder(speed_deg_s=self.RANGE_SPEED_DEG_S, preload_deg=preload,
                                         max_travel_deg=self.RANGE_SWEEP_DEG,
                                         max_preload_deg=max(preload, min(PRELOAD_RANGE[1], ceiling)))
             GaugeParams(speed_deg_s=finder.speed_deg_s, preload_deg=finder.preload_deg,
