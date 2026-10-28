@@ -461,6 +461,7 @@ class MainWindow(QMainWindow):
         self._gauge_kind = ""
         self._gauge_size_mm = 0.0
         self._range_original: tuple[float, float] = (0.0, 0.0)   # the clamp to restore after a range search
+        self._range_checked = False   # the jaw's first position after connecting was compared with its saved range
         self._last_follower_update = 0.0
         saved_gauge = self._load_settings().get("gripper_gauge", {})
         self._gauge_cal = GaugeCalibration.from_dict(saved_gauge)
@@ -966,6 +967,7 @@ class MainWindow(QMainWindow):
         self._update_status_chips()
 
     def _on_connection_changed(self, connected: bool) -> None:
+        self._range_checked = False
         self.connection_panel.set_connected(connected)
         self._follower_connected = connected
         if not connected:
@@ -1057,6 +1059,8 @@ class MainWindow(QMainWindow):
         via _refresh_ui(), so this can never fall behind."""
         self.current_positions.update(positions)
         self._last_follower_update = time.monotonic()
+        if not self._range_checked:
+            self._check_gripper_range(positions)
         self.session_logger.log_positions("follower", positions)  # internally throttled to 2Hz
         # Log the gripper's commanded value next to its measured one, at the
         # same throttled rate. "Won't open" and "was never asked to open" look
@@ -1065,6 +1069,26 @@ class MainWindow(QMainWindow):
             self.session_logger.log_positions(
                 "goal", {"gripper": self.robot_worker.last_goals["gripper"]}
             )
+
+    RANGE_MISMATCH_DEG = 10.0
+
+    def _check_gripper_range(self, positions: dict[str, float]) -> None:
+        """Once per connection: is the jaw inside the range that was saved for it? A Damiao encoder can
+        come up 360 deg away from where it was at the last power-up, which leaves the saved range pointing
+        at the wrong place: goals would then be clamped toward a spot the jaw may not be able to reach."""
+        name = self.GAUGE_JOINT
+        if name not in positions or name not in self.joint_deg_ranges or self.robot_profile.key != "rebot_b601_dm":
+            return
+        self._range_checked = True
+        lo, hi = self.joint_deg_ranges[name]
+        pos = positions[name]
+        if lo - self.RANGE_MISMATCH_DEG <= pos <= hi + self.RANGE_MISMATCH_DEG:
+            return
+        message = (f"The gripper is at {pos:.1f} deg, outside its saved range {lo:.1f} to {hi:.1f}: the encoder zero "
+                   "probably moved (about 360 deg) since that range was measured. Run Auto-calibrate gripper range "
+                   "before driving the gripper.")
+        self.statusBar().showMessage(message)
+        self.session_logger.log_event(f"Gripper range mismatch: {message}")
 
     def _on_goal_changed(self, name: str, degrees: float) -> None:
         """Fired by a slider/spinbox edit - only takes effect in Manual mode

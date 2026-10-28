@@ -41,7 +41,7 @@ class GripperGaugePanel(QWidget):
 
         note = QLabel(
             "Closes the gripper gently on an object and converts the jaw angle to a width. "
-            "Calibrate once with gauge blocks, then measure. Only with torque ON, MIT mode and "
+            "Calibrate once with gauge blocks, then measure. Start every measurement with the jaws open and the object loose between them. Only with torque ON, MIT mode and "
             "teleop off. The force is capped at kp x Preload, and Stop aborts it."
         )
         note.setObjectName("sectionCaption")
@@ -103,9 +103,11 @@ class GripperGaugePanel(QWidget):
         self.size_spin.setSingleStep(0.5)
         self.size_spin.setValue(10.0)
         self.size_spin.setSuffix(" mm")
-        self.zero_btn = QPushButton("Measure zero (jaws closed, nothing between)")
+        self.zero_btn = QPushButton("Measure zero (jaws open a little, nothing between)")
         self.reference_btn = QPushButton("Measure this block")
-        self.reference_btn.setToolTip("Put a gauge block of the size above between the jaws, then press.")
+        self.reference_btn.setToolTip(
+            "Put a gauge block of the size above loosely between the OPEN jaws (not touching), then press: "
+            "the gripper closes on it by itself.")
         self.delete_btn = QPushButton("Delete selected")
         self.clear_btn = QPushButton("Clear all")
         self.reference_list = QListWidget()

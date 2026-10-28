@@ -644,3 +644,24 @@ def test_finder_keeps_the_push_that_worked_so_the_motion_is_continuous():
     assert finder.state == DONE, finder.message
     assert now < 90.0              # ~350 deg out and back at 25 deg/s plus the settling, not minutes of stop-and-go
     assert moving / n > 0.5        # it spends most of the time actually moving
+
+
+def test_passes_agree_under_friction_because_the_reading_is_held_at_the_confirming_push():
+    sim = SimGripper(10.0, 1, contact_deg=60.0, coulomb=0.7, obstacle_k=400.0)
+    gauge, _ = run(sim, GaugeParams(limit_deg=100.0, speed_deg_s=4.0, repeats=3, max_preload_deg=8.6), ticks=9000)
+    assert gauge.state == DONE, gauge.message
+    assert gauge.result.std < 0.5
+
+
+def test_a_range_that_does_not_contain_the_jaw_is_reported_once(win):
+    arm(win)
+    win.joint_deg_ranges["finger_left"] = (-336.0, 12.0)
+    win._range_checked = False
+    win._on_positions_updated({"finger_left": 24.0})          # inside by 12 deg margin? no: 24 > 12 + 10
+    assert "360" in win.statusBar().currentMessage()
+    win.statusBar().clearMessage()
+    win._on_positions_updated({"finger_left": 24.0})
+    assert win.statusBar().currentMessage() == ""             # only once per connection
+    win._range_checked = False
+    win._on_positions_updated({"finger_left": 5.0})           # inside: silent
+    assert win.statusBar().currentMessage() == ""

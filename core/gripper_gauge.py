@@ -222,12 +222,13 @@ class GripperGauge:
         elif self._stall_time >= p.stall_s or at_limit:
             travelled = sign * (measured - self._close_start_pos)
             if self._first_close and travelled < p.min_travel_deg and not at_limit and not p.allow_zero_travel:
-                self._fail("the jaw did not move: it is already touching something, blocked, or the "
-                           "gripper's kp is too low to move it")
+                self._fail("the jaw did not move: it was already touching something (open the jaws a little "
+                           "first - it closes by itself), blocked, or kp is too low to move it")
                 return None
             self._first_close = False
             self.hit_limit = self.hit_limit or at_limit or pinned
-            hold = measured + sign * p.preload_deg   # constant torque while it is read
+            hold = measured + sign * self._cap   # constant torque while it is read (the push that confirmed it:
+            # held gentler, friction would let the jaw settle anywhere inside its stiction band, pass to pass)
             if sign * (hold - p.limit_deg) > 0:
                 hold = p.limit_deg
             self._hold = self.setpoint = hold
@@ -265,8 +266,9 @@ class GripperGauge:
         step = OPEN_SPEED_FACTOR * self.p.speed_deg_s * dt
         diff = target - self.setpoint
         setpoint = self.setpoint + max(-step, min(step, diff))
-        # the same force cap as when closing: the setpoint stays within `preload_deg` of the jaw
-        self.setpoint = max(measured - self.p.preload_deg, min(measured + self.p.preload_deg, setpoint))
+        # the same force cap as when closing (including a break-away push that was needed): the setpoint stays
+        # within `_cap` of the jaw
+        self.setpoint = max(measured - self._cap, min(measured + self._cap, setpoint))
         near = abs(measured - target) <= POSITION_TOLERANCE_DEG
         speed = self._measured_speed(now, measured)
         # parked: the setpoint is at the target but stiction holds the jaw a little short of it
