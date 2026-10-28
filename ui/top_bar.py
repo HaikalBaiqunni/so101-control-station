@@ -20,13 +20,13 @@ class TopBar(QWidget):
     """Pure view: it owns no robot state. MainWindow feeds it through
     set_chip() and listens to nav_toggled / stop_requested."""
 
-    nav_toggled = Signal(str, bool)   # "waypoints" | "telemetry" | "tune" | "record" | "setup", checked
+    nav_toggled = Signal(str, bool)   # "waypoints" | "telemetry" | "tune" | "record" | "gauge" | "setup", checked
     stop_requested = Signal()
     palette_requested = Signal()
     about_requested = Signal()
 
     NAV = (("waypoints", "Waypoints"), ("telemetry", "Telemetry"), ("tune", "Tune"),
-           ("record", "Record"), ("setup", "Setup"))
+           ("record", "Record"), ("gauge", "Gauge"), ("setup", "Setup"))
     BAR_H = BAR_H
 
     def __init__(self, robot_combo: QComboBox):
@@ -111,7 +111,7 @@ class TopBar(QWidget):
                 region = region.united(QRegion(widget.geometry()))
         self.setMask(region)
 
-    COMPACT_BELOW_PX = 1280   # narrower than this the nav buttons drop their labels (icons stay)
+    COMPACT_BELOW_PX = 1600   # narrower than this the nav buttons drop their labels (icons stay)
 
     def _apply_compact(self) -> None:
         compact = self.width() < self.COMPACT_BELOW_PX

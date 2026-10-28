@@ -95,6 +95,14 @@ def _draw(name: str, p: QPainter) -> None:
         p.setBrush(QColor(p.pen().color()))
         p.drawEllipse(QPointF(12, 12), 4.2, 4.2)
         p.setBrush(Qt.NoBrush)
+    elif name == "gauge":   # a caliper: beam with a fixed and a sliding jaw
+        p.drawLine(QPointF(3, 17), QPointF(21, 17))
+        p.drawLine(QPointF(5, 17), QPointF(5, 6))
+        p.drawLine(QPointF(14, 17), QPointF(14, 9))
+        p.drawLine(QPointF(5, 6), QPointF(8, 6))
+        p.drawLine(QPointF(14, 9), QPointF(17, 9))
+        for x in (8, 10.5, 13):
+            p.drawLine(QPointF(x, 17), QPointF(x, 19.5))
     elif name == "doc":
         _poly(p, [(6, 3), (14, 3), (19, 8), (19, 21), (6, 21), (6, 3)])
         for y in (12, 15.5):

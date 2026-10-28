@@ -102,9 +102,9 @@ drawers or in the Setup hub.
 
 | | |
 |---|---|
-| **Top bar** | Robot picker, Follower / Leader / Torque / source chips, search (**Ctrl+K**), Waypoints, Telemetry, Tune (B601-DM), Record, Setup, About, and a red **Stop** (follower torque off and back to Manual; **Ctrl+Shift+Space**). |
+| **Top bar** | Robot picker, Follower / Leader / Torque / source chips, search (**Ctrl+K**), Waypoints, Telemetry, Tune and Gauge (B601-DM), Record, Setup, About, and a red **Stop** (follower torque off and back to Manual; **Ctrl+Shift+Space**). |
 | **Floating cards** | **View** (Ghost target, Axes, HUD overlay, Camera, Reset View, model file), **Jog**, **Connection** + **Control source**, **Camera**. Drag by the handle, minimise to a tab with the **-** button, resize the camera from its corner. Cards never overlap each other or the top bar; if a small window leaves no room, View and Camera fold into their tab by themselves. Positions are saved; *Reset layout* restores them. |
-| **Drawers** | **Waypoints**, **Telemetry**, **Tune**, **Record** open on the right, one at a time. Below 1280 px wide the top-bar buttons show icons only. |
+| **Drawers** | **Waypoints**, **Telemetry**, **Tune**, **Record**, **Gauge** open on the right, one at a time. Below 1600 px wide the top-bar buttons show icons only. |
 | **Setup hub** | **Motors and ids**, **Calibration**, **Inputs**, **Data and logs**, per robot. |
 | **Command palette** | **Ctrl+K**: navigation, view toggles, control-source choice and the calibration dialogs. Nothing in it moves an arm. |
 | **About** | Creator, version, licence and the tech stack with the versions installed on your machine. |
@@ -210,6 +210,19 @@ Pick a mode, then **hold a button** to move; let go and it stops.
 
   A dataset keeps one robot, one frame rate and one camera setup, and the Recorder refuses to mix them. One camera
   per take for now.
+- **Gripper gauge** (drawer, B601-DM): uses the linear-slide gripper as a rough caliper. Calibrate once: measure the
+  closed jaws (0 mm) and one or more gauge blocks; the app fits `width = a + b x angle` and shows how far each block
+  misses the line. Then put an object between the jaws and press **Measure object**: the jaws creep shut at 12 deg/s,
+  stop on contact (the jaw stalls while the target keeps leading), read the angle, release, and repeat for the chosen
+  number of passes, always approaching from the same side. The result is a width with the spread between passes.
+  The force is capped by construction: the target never leads the jaw by more than the **Preload** angle, so in MIT
+  mode the push is at most `kp x Preload` (shown in N*m, and refused above 1.5 N*m). It runs only with torque ON, in
+  MIT mode, with the control source on Manual, after the gripper range was calibrated; Stop, torque off, a disconnect,
+  stale position feedback or changing the control source abort it, and nothing else can command the gripper meanwhile.
+  Passes that disagree by more than 1 deg are rejected (friction fooled the contact detector), and a run where the
+  jaws close all the way is reported as "nothing between the jaws", not as 0 mm. Expect roughly 0.5 to 1 mm with
+  good references; backlash, a springy object or a tilted one all add error, and the accuracy has not yet been
+  measured on a real gripper.
 - **Session log**: every connect, disconnect, error and mode change plus a throttled position feed, to a timestamped
   markdown file under `logs/` (Setup, *Data and logs* opens the folder).
 

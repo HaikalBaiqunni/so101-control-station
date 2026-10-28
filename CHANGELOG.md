@@ -15,7 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delete; a take is discarded on Stop, follower disconnect or camera stop. Stored under
   `recordings/<dataset>/` and converted to a LeRobot v3 dataset with `tools/export_lerobot.py`
   (needs `lerobot[dataset]`; the export script has not yet been run against a live LeRobot install).
-- Top-bar buttons show icons only below 1280 px window width.
+- **Gripper gauge** drawer (B601-DM): the gripper as a rough caliper. Calibration against gauge blocks
+  (linear fit with the worst miss shown), contact detection by stall, multi-pass reading with a spread,
+  CSV export of the history. The force is capped at kp x Preload (MIT mode only, refused above 1.5 N*m);
+  Stop, torque off, disconnect, stale feedback and a control-source change abort it. Tested against a
+  simulated gripper only so far, not yet on a real one.
+- Top-bar buttons show icons only below 1600 px window width.
 - **RealSense L515** support through a helper process (`core/rs_legacy_helper.py`) that runs the old
   `pyrealsense2` 2.54.x in a separate Python 3.11 environment, since newer SDKs dropped the L515. Same
   `color` / `depth` / `color + depth` choices as the D455. Verified on a real L515 over USB 3.2.

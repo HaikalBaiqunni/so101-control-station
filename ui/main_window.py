@@ -30,6 +30,8 @@ from core.dm_robot_worker import DmRobotWorker
 from core.dm_setup_worker import DmSetupWorker
 from core.fashionstar_leader_worker import FashionStarLeaderWorker
 from core.gravity import GravityModel
+from core.gripper_gauge import FAILED as GAUGE_FAILED
+from core.gripper_gauge import GaugeCalibration, GaugeParams, GripperGauge, describe_measurement
 from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
 from core.recorder import DEFAULT_CAMERA_KEY, DEFAULT_FPS, Dataset, EpisodeRecorder
 from core.robot_profiles import (
@@ -58,6 +60,7 @@ from .dm_setup_panel import DmSetupPanel
 from .dm_tune_panel import DmTunePanel
 from .fashionstar_calibration_dialog import FashionStarCalibrationDialog
 from .gamepad_panel import DEFAULT_AXIS_MAP, DEFAULT_BUTTON_MAP, GamepadPanel
+from .gripper_gauge_panel import GripperGaugePanel
 from .jog_panel import JogPanel
 from .joint_panel import JointPanel
 from .keyboard_jog_panel import KEY_JOG_MAP, KeyboardJogPanel
@@ -184,6 +187,7 @@ class MainWindow(QMainWindow):
         self.telemetry_panel = TelemetryPanel()
         self.dm_tune_panel = DmTunePanel(joint_order=PROFILES['rebot_b601_dm'].joint_order)
         self.recorder_panel = RecorderPanel()
+        self.gripper_gauge_panel = GripperGaugePanel()
 
         # ================================================================ STAGE PAGE
         # The twin fills the stage with floating cards over it (View, Jog, the
@@ -201,6 +205,7 @@ class MainWindow(QMainWindow):
         self.drawer.addWidget(self.telemetry_panel)
         self.drawer.addWidget(self.dm_tune_panel)
         self.drawer.addWidget(self.recorder_panel)
+        self.drawer.addWidget(self.gripper_gauge_panel)
         self.drawer.setMinimumWidth(440)
         self.drawer.setContentsMargins(0, TopBar.BAR_H, 0, 0)
         self.drawer.hide()
@@ -304,6 +309,8 @@ class MainWindow(QMainWindow):
         self._leader_converted: dict[str, float] = {}   # latest leader pose in FOLLOWER degrees
         self.teleop_tolerance_deg: float = float(self._load_settings().get("teleop_align_tolerance_deg", 10.0))
         self._follower_connected = False
+        self._gauge: GripperGauge | None = None   # the running gripper measurement (see the gripper gauge section)
+        self._gauge_jog_was_enabled = True
         self._leader_connected = False
         self.leader_worker: RobotWorker | None = None
         self.calibration_worker: CalibrationWorker | None = None
@@ -439,6 +446,26 @@ class MainWindow(QMainWindow):
         self.recorder_panel.open_folder_requested.connect(self._on_recorder_open_folder)
         self.recorder_panel.dataset_edit.editingFinished.connect(self._refresh_recorder_ui)
         self._refresh_recorder_ui()
+
+        # -- wiring: gripper gauge --------------------------------------------------
+        self._gauge_kind = ""
+        self._gauge_size_mm = 0.0
+        self._last_follower_update = 0.0
+        saved_gauge = self._load_settings().get("gripper_gauge", {})
+        self._gauge_cal = GaugeCalibration.from_dict(saved_gauge)
+        self.gripper_gauge_panel.set_values(
+            self._gauge_cal.close_sign, float(saved_gauge.get("speed", 12.0)),
+            float(saved_gauge.get("preload", 3.0)), int(saved_gauge.get("repeats", 3)))
+        self.gauge_timer = QTimer(self)
+        self.gauge_timer.setInterval(self.GAUGE_TICK_MS)
+        self.gauge_timer.timeout.connect(self._on_gauge_tick)
+        self.gripper_gauge_panel.measure_requested.connect(self._on_gauge_measure)
+        self.gripper_gauge_panel.cancel_requested.connect(lambda: self._gauge_abort("cancelled", release=True))
+        self.gripper_gauge_panel.settings_changed.connect(self._on_gauge_settings_changed)
+        self.gripper_gauge_panel.delete_reference.connect(self._on_gauge_delete_reference)
+        self.gripper_gauge_panel.clear_references.connect(self._on_gauge_clear_references)
+        self.dm_tune_panel.mit_gains_changed.connect(lambda _gains: self._refresh_gauge_ui())
+        self._refresh_gauge_ui()
 
         # -- wiring: gamepad ---------------------------------------------------
         self.gamepad_panel.enable_toggled.connect(self._on_gamepad_toggled)
@@ -690,6 +717,12 @@ class MainWindow(QMainWindow):
         self.top_bar.nav_buttons["tune"].setVisible(is_dm)
         if not is_dm and self.drawer.currentWidget() is self.dm_tune_panel:
             self.top_bar.nav_buttons["tune"].setChecked(False)
+        # the gripper gauge relies on the Damiao gripper's MIT torque cap
+        self.top_bar.nav_buttons["gauge"].setVisible(is_dm)
+        if not is_dm:
+            self._gauge_abort("robot changed", release=False)
+            if self.drawer.currentWidget() is self.gripper_gauge_panel:
+                self.top_bar.nav_buttons["gauge"].setChecked(False)
 
         if self.robot_profile.key == "rebot_b601_dm":
             self.setup_stack.setCurrentWidget(self.dm_setup_panel)
@@ -924,6 +957,7 @@ class MainWindow(QMainWindow):
             self.follower_torque_enabled = False
             self._disengage_teleop("follower disconnected")
             self._gravity_off("follower disconnected")
+            self._gauge_abort("follower disconnected", release=False)
             if self.recorder is not None and self.recorder.recording:
                 self._recorder_abort("follower disconnected")
         self._refresh_recorder_ui()
@@ -971,6 +1005,7 @@ class MainWindow(QMainWindow):
         if not enabled:
             self._disengage_teleop("follower torque off")
             self._gravity_off("follower torque off")
+            self._gauge_abort("torque off", release=False)
         self._update_status_chips()
 
     def _on_positions_updated(self, positions: dict[str, float]) -> None:
@@ -978,6 +1013,7 @@ class MainWindow(QMainWindow):
         full 60Hz; widget/twin refresh happens separately at a bounded rate
         via _refresh_ui(), so this can never fall behind."""
         self.current_positions.update(positions)
+        self._last_follower_update = time.monotonic()
         self.session_logger.log_positions("follower", positions)  # internally throttled to 2Hz
         # Log the gripper's commanded value next to its measured one, at the
         # same throttled rate. "Won't open" and "was never asked to open" look
@@ -995,13 +1031,13 @@ class MainWindow(QMainWindow):
             return
         self.current_positions[name] = degrees
         if self.robot_worker:
-            self.robot_worker.request_goal(name, degrees)
+            self._request_goal(name, degrees)
 
     # ---------------------------------------------------------------- top bar / pages
     PAGE_STAGE = 0
     PAGE_SETUP = 1
     DRAWER_PANELS = {"waypoints": "teaching_panel", "telemetry": "telemetry_panel", "tune": "dm_tune_panel",
-                     "record": "recorder_panel"}
+                     "record": "recorder_panel", "gauge": "gripper_gauge_panel"}
 
     def _show_motors_and_ids(self) -> None:
         self.setup_hub.show_section("Motors and ids")
@@ -1069,6 +1105,8 @@ class MainWindow(QMainWindow):
         ]
         if is_dm:
             actions.append(PaletteAction("Open Tune", "drawer: MIT gains, presets, tracking", show("tune"), "kp kd gain pid"))
+            actions.append(PaletteAction("Open Gripper gauge", "drawer: measure objects with the gripper",
+                                         show("gauge"), "caliper measure size width"))
         for title in self.setup_hub.section_titles():
             actions.append(PaletteAction(f"Setup: {title}", "", setup_section(title)))
         actions += [
@@ -1114,6 +1152,7 @@ class MainWindow(QMainWindow):
         self.follower_torque_enabled = False
         self._disengage_teleop("Stop pressed")
         self._gravity_off("Stop pressed")
+        self._gauge_abort("Stop pressed", release=False)
         if self.recorder is not None and self.recorder.recording:
             self._recorder_abort("Stop pressed")
         self.control_source_panel.force_manual()
@@ -1299,7 +1338,7 @@ class MainWindow(QMainWindow):
         lo_hi = self.joint_deg_ranges.get(joint)
         if lo_hi:
             target = max(lo_hi[0], min(lo_hi[1], target))
-        self.robot_worker.request_goal(joint, target)
+        self._request_goal(joint, target)
         self.session_logger.log_event(f"Nudge: {joint} {delta:+.1f} deg -> goal {target:.1f}")
 
     def _update_teleop_ui(self) -> None:
@@ -1322,6 +1361,7 @@ class MainWindow(QMainWindow):
         if not want:
             self._disengage_teleop("button")
             return
+        self._gauge_abort("teleop engaged", release=False)   # the leader would fight the gauge for the gripper
         can, text, _errors = self._teleop_alignment()
         if not can or self.control_source != "leader":
             self.statusBar().showMessage(f"Cannot engage teleop: {text}")
@@ -1366,6 +1406,8 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- control source / teleoperation
     def _on_control_source_changed(self, source: str) -> None:
         self.control_source = source
+        if source != "manual":
+            self._gauge_abort("control source changed", release=False)
         if source != "leader":
             self._disengage_teleop(f"control source -> {source}")
         self._apply_control_source_lock()
@@ -1464,7 +1506,7 @@ class MainWindow(QMainWindow):
         self._leader_converted.update(converted)
         if self.teleop_engaged and self.control_source == "leader" and self.robot_worker and self._playback_index is None:
             for name, degrees in converted.items():
-                self.robot_worker.request_goal(name, degrees)
+                self._request_goal(name, degrees)
         elif self.robot_worker is None:
             # leader-only bring-up: show the leader's pose. With a follower connected the
             # follower's own feedback is the truth, and the leader is only shown as a ghost.
@@ -1720,6 +1762,213 @@ class MainWindow(QMainWindow):
         worker.finished.connect(lambda: self.camera_panel.set_busy(False))
         self._retire_worker(worker)  # just flips a flag - the thread notices and exits on its own
 
+    # ---------------------------------------------------------------- gripper gauge
+    GAUGE_JOINT = "finger_left"
+    GAUGE_TICK_MS = 50
+    GAUGE_MAX_PUSH_NM = 1.5       # refuse settings whose kp x preload would push harder than this
+    GAUGE_STALE_S = 0.5           # no fresh position from the follower for this long -> abort
+
+    def _request_goal(self, name: str, degrees: float) -> None:
+        """Every goal for the follower goes through here. While the gauge is measuring it owns the
+        gripper joint, so a jog button, slider, leader or playback cannot fight it."""
+        if self._gauge is not None and name == self.GAUGE_JOINT:
+            return
+        if self.robot_worker:
+            self.robot_worker.request_goal(name, degrees)
+
+    def _gauge_kp(self) -> float:
+        gains = self.dm_tune_panel.mit_gains().get(self.GAUGE_JOINT)
+        return float(gains[0]) if gains else 0.0
+
+    def _refresh_gauge_ui(self) -> None:
+        panel = self.gripper_gauge_panel
+        kp, preload = self._gauge_kp(), panel.preload_spin.value()
+        push = kp * math.radians(preload)
+        ok = 0.0 < push <= self.GAUGE_MAX_PUSH_NM
+        text = f"Push limit: kp {kp:.1f} x {preload:.1f} deg = {push:.2f} N*m at the motor"
+        if kp <= 0:
+            text = "Set the gripper's MIT kp in Tune first (it is 0)."
+        elif push > self.GAUGE_MAX_PUSH_NM:
+            text += f" - above the {self.GAUGE_MAX_PUSH_NM:g} N*m this tool allows: lower the preload or kp"
+        panel.set_force_hint(text, ok)
+        fit = self._gauge_cal.fit()
+        if fit is None:
+            fit_text = "Measure the closed jaws (zero) and at least one gauge block. Three or more blocks also show how straight the fit is."
+            fit_ok = True
+        else:
+            fit_ok = self._gauge_cal.direction_ok() and self._gauge_cal.max_residual_mm() <= 0.5
+            fit_text = (f"width = {fit[1]:.2f} + ({fit[0]:.4f}) x angle   |   {len(self._gauge_cal.points)} points, "
+                        f"worst miss {self._gauge_cal.max_residual_mm():.2f} mm")
+            if not self._gauge_cal.direction_ok():
+                fit_text += "   |   closing should make the width smaller: check the Closing direction"
+        panel.set_references(self._gauge_cal.points, fit_text, fit_ok)
+
+    def _save_gauge_settings(self) -> None:
+        panel = self.gripper_gauge_panel
+        data = self._gauge_cal.to_dict()
+        data.update({"speed": panel.speed_spin.value(), "preload": panel.preload_spin.value(),
+                     "repeats": panel.repeats_spin.value()})
+        self._save_setting("gripper_gauge", data)
+
+    def _on_gauge_settings_changed(self) -> None:
+        sign = self.gripper_gauge_panel.close_sign()
+        if sign != self._gauge_cal.close_sign:
+            self._gauge_cal.close_sign = sign
+            if self._gauge_cal.points:
+                self._gauge_cal.clear()
+                self.gripper_gauge_panel.set_status("Closing direction changed: the references were cleared.")
+        self._save_gauge_settings()
+        self._refresh_gauge_ui()
+
+    def _on_gauge_delete_reference(self, index: int) -> None:
+        self._gauge_cal.remove(index)
+        self._save_gauge_settings()
+        self._refresh_gauge_ui()
+
+    def _on_gauge_clear_references(self) -> None:
+        self._gauge_cal.clear()
+        self._save_gauge_settings()
+        self._refresh_gauge_ui()
+
+    def _gauge_precheck(self, kind: str) -> str | None:
+        """Why a measurement cannot start now, or None when it can."""
+        panel = self.gripper_gauge_panel
+        if self.robot_profile.key != "rebot_b601_dm":
+            return "The gripper gauge is for the reBot B601-DM."
+        if self._gauge is not None:
+            return "A measurement is already running."
+        if not self._follower_connected or self.robot_worker is None:
+            return "Connect the follower first."
+        if getattr(self.robot_worker, "control_mode", None) != Control_Type.MIT:
+            return "The gauge needs MIT mode (Tune): that is what caps the force on the object."
+        if not self.follower_torque_enabled:
+            return "Turn the follower's torque ON first - the gripper has to close itself."
+        if self.control_source != "manual" or self.teleop_engaged or self._playback_index is not None:
+            return "Set Control source to Manual and stop playback first: nothing else may drive the gripper while it measures."
+        if self.GAUGE_JOINT not in self._load_settings().get("dm_follower_calibrated_ranges", {}):
+            return "Calibrate the gripper range first (Setup > Calibration): the gauge needs its real end of travel."
+        if self.GAUGE_JOINT not in self.current_positions or self.GAUGE_JOINT not in self.joint_deg_ranges:
+            return "No gripper position yet."
+        if time.monotonic() - self._last_follower_update > self.GAUGE_STALE_S:
+            return "No fresh position from the follower."
+        push = self._gauge_kp() * math.radians(panel.preload_spin.value())
+        if not 0.0 < push <= self.GAUGE_MAX_PUSH_NM:
+            return "The push limit (kp x preload) is not within what this tool allows - see the note under Settings."
+        if kind == "object" and not self._gauge_cal.usable:
+            return "Calibrate first: measure the closed jaws (zero) and at least one gauge block."
+        return None
+
+    def _on_gauge_measure(self, kind: str, size_mm: float) -> None:
+        panel = self.gripper_gauge_panel
+        error = self._gauge_precheck(kind)
+        if error:
+            panel.set_status(error)
+            return
+        lo, hi = self.joint_deg_ranges[self.GAUGE_JOINT]
+        sign = panel.close_sign()
+        preload = panel.preload_spin.value()
+        try:
+            params = GaugeParams(close_sign=sign, limit_deg=hi if sign > 0 else lo, speed_deg_s=panel.speed_spin.value(),
+                                 preload_deg=preload, detect_lag_deg=min(2.0, preload), repeats=panel.repeats_spin.value())
+        except ValueError as exc:
+            panel.set_status(str(exc))
+            return
+        gauge = GripperGauge(params)
+        goal = gauge.start(time.monotonic(), self.current_positions[self.GAUGE_JOINT])
+        self._gauge, self._gauge_kind, self._gauge_size_mm = gauge, kind, size_mm
+        panel.clear_result()
+        panel.set_running(True)
+        self._set_gauge_lockout(True)
+        panel.set_status("closing...")
+        self.robot_worker.request_goal(self.GAUGE_JOINT, goal)   # hold where it is
+        self.session_logger.log_event(
+            f"Gauge: {kind} measurement started (speed {params.speed_deg_s:g} deg/s, preload {preload:g} deg, "
+            f"{params.repeats} passes)")
+        self.gauge_timer.start()
+
+    def _on_gauge_tick(self) -> None:
+        self._gauge_step(time.monotonic())
+
+    def _gauge_step(self, now: float) -> None:
+        gauge = self._gauge
+        if gauge is None:
+            self.gauge_timer.stop()
+            return
+        measured = self.current_positions.get(self.GAUGE_JOINT)
+        if now - self._last_follower_update > self.GAUGE_STALE_S:
+            measured = None   # the gauge fails the run instead of acting on an old position
+        goal = gauge.update(now, measured)
+        if gauge.state == GAUGE_FAILED:
+            self._gauge_finish()
+            return
+        if goal is not None and self.robot_worker is not None:
+            self.robot_worker.request_goal(self.GAUGE_JOINT, goal)
+        if gauge.finished:
+            self._gauge_finish()
+        else:
+            self.gripper_gauge_panel.set_status(gauge.progress_text)
+
+    def _gauge_abort(self, reason: str, release: bool) -> None:
+        """Stop a running measurement. `release` opens the jaws back to where they started (only
+        sensible while the follower is still powered and connected)."""
+        gauge = self._gauge
+        if gauge is None:
+            return
+        self.gauge_timer.stop()
+        self._gauge = None
+        if release and self._follower_connected and self.follower_torque_enabled and self.robot_worker is not None:
+            self.robot_worker.request_goal(self.GAUGE_JOINT, gauge.start_angle)
+        self.gripper_gauge_panel.set_running(False)
+        self._set_gauge_lockout(False)
+        self.gripper_gauge_panel.set_status(f"Measurement stopped: {reason}.")
+        self.session_logger.log_event(f"Gauge: stopped ({reason})")
+
+    def _gauge_finish(self) -> None:
+        gauge, kind, size = self._gauge, self._gauge_kind, self._gauge_size_mm
+        self.gauge_timer.stop()
+        self._gauge = None
+        panel = self.gripper_gauge_panel
+        panel.set_running(False)
+        self._set_gauge_lockout(False)
+        if gauge is None:
+            return
+        # open the jaws again whatever happened: nobody wants the object squeezed afterwards
+        if self._follower_connected and self.follower_torque_enabled and self.robot_worker is not None:
+            self.robot_worker.request_goal(self.GAUGE_JOINT, gauge.start_angle)
+        if gauge.state == GAUGE_FAILED:
+            panel.set_status(f"Failed: {gauge.message}")
+            self.session_logger.log_event(f"Gauge: {kind} failed - {gauge.message}")
+            return
+        result = gauge.result
+        if result is None:
+            panel.set_status("No reading.")
+            return
+        if gauge.hit_limit and kind != "zero":
+            panel.set_status("The jaws closed all the way: there was nothing between them. Nothing recorded.")
+            self.session_logger.log_event(f"Gauge: {kind} - jaws closed fully, discarded")
+            return
+        if kind in ("zero", "reference"):
+            self._gauge_cal.set_point(result.mean, 0.0 if kind == "zero" else size)
+            self._save_gauge_settings()
+            self._refresh_gauge_ui()
+            label = "zero" if kind == "zero" else f"{size:g} mm"
+            panel.set_status(f"Recorded {label} at {result.mean:.2f} deg (passes differ by {result.std:.2f} deg).")
+            self.session_logger.log_event(f"Gauge: reference {label} = {result.mean:.2f} deg (std {result.std:.2f})")
+            return
+        width, spread, warnings = describe_measurement(self._gauge_cal, result)
+        panel.show_result(width, spread, result.mean, len(result.angles), warnings)
+        panel.set_status(f"Measured {width:.2f} mm.")
+        self.session_logger.log_event(
+            f"Gauge: object = {width:.2f} mm +/- {spread:.2f} (jaw {result.mean:.2f} deg, {len(result.angles)} passes)")
+
+    def _set_gauge_lockout(self, locked: bool) -> None:
+        """While measuring, the manual jog / slider controls are off, so nothing else drives the gripper."""
+        if locked:
+            self._gauge_jog_was_enabled = self.jog_panel.isEnabled()
+            self.jog_panel.setEnabled(False)
+        else:
+            self.jog_panel.setEnabled(self._gauge_jog_was_enabled)
+
     # ---------------------------------------------------------------- recorder
     RECORDINGS_DIR = "recordings"
 
@@ -1936,7 +2185,7 @@ class MainWindow(QMainWindow):
         degrees = max(lo, min(hi, degrees))
         self.current_positions[name] = degrees
         if self.robot_worker:
-            self.robot_worker.request_goal(name, degrees)
+            self._request_goal(name, degrees)
         row = self.joint_panel.rows.get(name)
         if row:
             row.set_feedback_deg(degrees)
@@ -2817,6 +3066,7 @@ class MainWindow(QMainWindow):
         if not self.robot_worker:
             QMessageBox.warning(self, "No follower", "Connect the follower first - playback drives it directly.")
             return
+        self._gauge_abort("playback started", release=False)
         # Confirmed real failure mode: playback drives the follower directly
         # via request_goal(), completely independent of control_source - the
         # leader relay is only blocked from ALSO calling request_goal while
@@ -2901,7 +3151,7 @@ class MainWindow(QMainWindow):
         eased_t = t * t * t * (t * (t * 6 - 15) + 10)
         for name, target in self._playback_target_positions.items():
             start = self._playback_start_positions.get(name, target)
-            self.robot_worker.request_goal(name, start + eased_t * (target - start))
+            self._request_goal(name, start + eased_t * (target - start))
 
         arrived = t >= 1.0 and all(
             abs(self.current_positions.get(name, 0.0) - degrees) <= PLAYBACK_ARRIVE_TOLERANCE_DEG
@@ -2984,6 +3234,7 @@ class MainWindow(QMainWindow):
         self.gamepad_timer.stop()
         self.jog_timer.stop()
         self.record_timer.stop()
+        self.gauge_timer.stop()
         if self.recorder is not None and self.recorder.recording:
             self.recorder.discard()   # an unfinished take is not kept
         self._close_telemetry_csv()
