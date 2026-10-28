@@ -52,6 +52,7 @@ class GaugeParams:
     stable_std_deg: float = 0.4       # a noisier reading than this is rejected (object slipping / still moving)
     min_travel_deg: float = 1.0       # contact sooner than this means "already touching or too weak to move"
     allow_zero_travel: bool = False   # the range finder may start right at an end of travel: that is a valid contact
+    max_preload_deg: float = 0.0      # > preload: a stall is only believed after the push was raised stepwise to this
     repeats: int = 3
     reopen_deg: float = 8.0
     max_duration_s: float = 120.0
@@ -65,6 +66,8 @@ class GaugeParams:
             raise ValueError(f"preload must be {PRELOAD_RANGE[0]:g}-{PRELOAD_RANGE[1]:g} deg")
         if not 0.0 < self.detect_lag_deg <= self.preload_deg:
             raise ValueError("detect lag must be above 0 and not above the preload")
+        if self.max_preload_deg and not self.preload_deg <= self.max_preload_deg <= PRELOAD_RANGE[1]:
+            raise ValueError("max preload must be between the preload and the preload ceiling")
         if not REPEATS_RANGE[0] <= self.repeats <= REPEATS_RANGE[1]:
             raise ValueError(f"repeats must be {REPEATS_RANGE[0]}-{REPEATS_RANGE[1]}")
 
@@ -103,6 +106,7 @@ class GripperGauge:
         self._samples: list[float] = []
         self._reopen_target = 0.0
         self.hit_limit = False   # True when a pass ended at the end of travel instead of on an object
+        self._cap = params.preload_deg   # how far the setpoint may lead the jaw right now (raised while confirming a stall)
 
     # -- state ---------------------------------------------------------------
     @property
@@ -145,6 +149,7 @@ class GripperGauge:
         self.setpoint = measured
         self._close_start_pos = measured
         self._stall_time = 0.0
+        self._cap = self.p.preload_deg
         self._enter(CLOSING, now)
 
     def _measured_speed(self, now: float, measured: float) -> float | None:
@@ -184,7 +189,7 @@ class GripperGauge:
     def _closing(self, now: float, measured: float, dt: float, sign: int) -> float | None:
         p = self.p
         setpoint = self.setpoint + sign * p.speed_deg_s * dt
-        ceiling = measured + sign * p.preload_deg          # the force cap: never further ahead than this
+        ceiling = measured + sign * self._cap              # the force cap: never further ahead than this
         if sign * (setpoint - ceiling) > 0:
             setpoint = ceiling
         if sign * (setpoint - p.limit_deg) > 0:
@@ -202,7 +207,15 @@ class GripperGauge:
             self._stall_time += dt
         else:
             self._stall_time = 0.0
-        if self._stall_time >= p.stall_s or at_limit:
+            if speed is not None and speed > p.stall_speed_frac * p.speed_deg_s:
+                self._cap = p.preload_deg   # it is moving: friction was beaten, back to the gentle push
+        max_cap = p.max_preload_deg or p.preload_deg
+        if self._stall_time >= p.stall_s and not at_limit and self._cap < max_cap:
+            # stopped, but at a gentle push that may only be friction: push harder (up to the ceiling)
+            # before believing it is an end of travel
+            self._cap = min(max_cap, self._cap + max(1.0, p.preload_deg))
+            self._stall_time = 0.0
+        elif self._stall_time >= p.stall_s or at_limit:
             travelled = sign * (measured - self._close_start_pos)
             if self._first_close and travelled < p.min_travel_deg and not at_limit and not p.allow_zero_travel:
                 self._fail("the jaw did not move: it is already touching something, blocked, or the "

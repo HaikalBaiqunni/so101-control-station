@@ -19,11 +19,12 @@ class GripperRangeFinder:
     MainWindow can run it in the gauge's slot and every way of stopping the gauge stops this too."""
 
     def __init__(self, speed_deg_s: float = 15.0, preload_deg: float = 3.0,
-                 max_travel_deg: float = 360.0, min_span_deg: float = 20.0):
+                 max_travel_deg: float = 360.0, min_span_deg: float = 20.0, max_preload_deg: float = 0.0):
         self.speed_deg_s = speed_deg_s
         self.preload_deg = preload_deg
         self.max_travel_deg = max_travel_deg
         self.min_span_deg = min_span_deg
+        self.max_preload_deg = max_preload_deg
         self.state = IDLE
         self.message = ""
         self.start_angle = 0.0
@@ -55,7 +56,8 @@ class GripperRangeFinder:
         self._sign = sign
         params = GaugeParams(close_sign=sign, limit_deg=measured + sign * self.max_travel_deg,
                              speed_deg_s=self.speed_deg_s, preload_deg=self.preload_deg,
-                             detect_lag_deg=min(2.0, self.preload_deg), repeats=1, allow_zero_travel=True)
+                             detect_lag_deg=min(2.0, self.preload_deg), repeats=1, allow_zero_travel=True,
+                             max_preload_deg=self.max_preload_deg)
         self._sub = GripperGauge(params)
         self.state = "seeking"
         return self._sub.start(now, measured)

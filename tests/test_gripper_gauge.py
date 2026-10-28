@@ -577,3 +577,41 @@ def test_every_way_out_stops_the_range_search_and_keeps_the_old_range(win, how):
     if how != "disconnect":
         _, lo, hi = worker.ranges[-1]                         # the clamp is back to the old range (or just the jaw's spot)
         assert (lo, hi) == (0.0, 100.0)
+
+
+def test_finder_does_not_mistake_friction_for_an_end_of_travel():
+    # stiction 0.7 N*m beats the gentle 3 deg push (8 x 0.052 = 0.42): the jaw sits still far from any stop
+    gentle, _ = run_finder(SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0, coulomb=0.7))
+    assert gentle.state == FAILED and "only moved" in gentle.message
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0, coulomb=0.7)
+    finder, _ = run_finder(sim, GripperRangeFinder(max_preload_deg=8.6))   # may push up to 8 x 0.15 = 1.2 N*m
+    assert finder.state == DONE, finder.message
+    low, high = finder.result
+    assert 76.0 <= high <= 81.0 and -21.0 <= low <= -16.0
+    assert sim.max_torque <= 8.0 * math.radians(8.6 + 0.8)       # never more than the ceiling
+
+
+def test_finder_still_stops_at_a_real_stop_with_the_escalation_on():
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0)
+    finder, _ = run_finder(sim, GripperRangeFinder(max_preload_deg=8.6))
+    assert finder.state == DONE
+    low, high = finder.result
+    assert 78.0 <= high <= 81.0 and -21.0 <= low <= -18.0
+
+
+def test_the_connection_card_has_the_auto_button(win):
+    win.show()
+    win.robot_combo.setCurrentIndex(win.robot_combo.findData("so101"))
+    assert not win.connection_panel.calibrate_gripper_auto_btn.isVisible()
+    win.robot_combo.setCurrentIndex(win.robot_combo.findData("rebot_b601_dm"))
+    assert win.connection_panel.calibrate_gripper_auto_btn.isVisible()
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0)
+    arm(win)
+    win.current_positions["finger_left"] = sim.deg
+    win._last_follower_update = mw.time.monotonic()
+    win.connection_panel.calibrate_gripper_auto_btn.click()
+    assert isinstance(win._gauge, GripperRangeFinder)
+    assert win.connection_panel.calibrate_gripper_auto_btn.text().startswith("Cancel")
+    win.connection_panel.calibrate_gripper_auto_btn.click()
+    assert win._gauge is None
+    assert win.connection_panel.calibrate_gripper_auto_btn.text() == "Auto-calibrate gripper range"

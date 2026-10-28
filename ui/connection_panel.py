@@ -19,6 +19,7 @@ class ConnectionPanel(QGroupBox):
     disconnect_requested = Signal()
     torque_requested = Signal(bool)          # True = enable, False = disable
     calibrate_gripper_requested = Signal()
+    calibrate_gripper_auto_requested = Signal()   # start, or cancel a search that is running
 
     def __init__(self, parent=None):
         super().__init__("CONNECTION", parent)
@@ -55,9 +56,12 @@ class ConnectionPanel(QGroupBox):
         # incident: RobotProfile.preview_ranges' assumed gripper range didn't
         # match this unit's true mechanical travel, and held-down jogging
         # past the real stop stalled the motor until a fuse blew.
-        self.calibrate_gripper_btn = QPushButton("Calibrate gripper range...")
+        self.calibrate_gripper_btn = QPushButton("Calibrate gripper range by hand...")
         self.calibrate_gripper_btn.setVisible(False)
         self.calibrate_gripper_btn.clicked.connect(self.calibrate_gripper_requested)
+        self.calibrate_gripper_auto_btn = QPushButton("Auto-calibrate gripper range")
+        self.calibrate_gripper_auto_btn.setVisible(False)
+        self.calibrate_gripper_auto_btn.clicked.connect(self.calibrate_gripper_auto_requested)
 
         layout = QGridLayout(self)
         layout.setVerticalSpacing(10)
@@ -73,12 +77,18 @@ class ConnectionPanel(QGroupBox):
         layout.addWidget(self.status_label, 2, 2)
         layout.addWidget(self.torque_on_btn, 3, 0)
         layout.addWidget(self.torque_off_btn, 3, 1)
-        layout.addWidget(self.calibrate_gripper_btn, 4, 0, 1, 3)
+        layout.addWidget(self.calibrate_gripper_auto_btn, 4, 0, 1, 3)
+        layout.addWidget(self.calibrate_gripper_btn, 5, 0, 1, 3)
         self.set_connected(False)   # after the layout: it hides rows that must exist first
-        layout.setRowStretch(5, 1)   # spare height goes below the rows, not between them
+        layout.setRowStretch(6, 1)   # spare height goes below the rows, not between them
 
     def set_gripper_calibration_visible(self, visible: bool) -> None:
         self.calibrate_gripper_btn.setVisible(visible)
+        self.calibrate_gripper_auto_btn.setVisible(visible)
+
+    def set_gripper_auto_running(self, running: bool) -> None:
+        self.calibrate_gripper_auto_btn.setText("Cancel auto-calibration" if running else "Auto-calibrate gripper range")
+        self.calibrate_gripper_btn.setEnabled(not running)
 
     def _refresh_ports(self) -> None:
         current = self.port_combo.currentText()
