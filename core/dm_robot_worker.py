@@ -80,6 +80,7 @@ class DmRobotWorker(QThread):
         # queue-handoff pattern as _torque_commands, safe because only the
         # worker thread ever reads/writes self.bus after connect().
         self._gains_commands: queue.Queue = queue.Queue()
+        self._range_commands: queue.Queue = queue.Queue()   # (joint, lo, hi): applied by the worker thread
         self._speed_percent = 30.0
         # MIT gravity feed-forward (core/gravity.py). Always starts OFF; the GUI only raises the
         # target after its own check against the motors' torque feedback has passed.
@@ -104,6 +105,11 @@ class DmRobotWorker(QThread):
 
     def request_torque(self, enabled: bool, name: str | None = None) -> None:
         self._torque_commands.put((enabled, name))
+
+    def request_range(self, name: str, lo: float, hi: float) -> None:
+        """Change the clamp every goal for this joint is held to (the gripper's range finder widens it
+        for the sweep, then sets it to what it found)."""
+        self._range_commands.put((name, float(lo), float(hi)))
 
     def request_speed_percent(self, percent: float) -> None:
         """Speed slider -> POS_VEL velocity cap (ignored in MIT, which has none).
@@ -220,6 +226,12 @@ class DmRobotWorker(QThread):
             if self._speed_dirty:
                 self._speed_dirty = False
                 self.bus.vel_limit_rad_s = speed_percent_to_vel_limit(self._speed_percent)
+            while True:   # before this cycle's goals, so a widened range is already in force for them
+                try:
+                    joint, lo, hi = self._range_commands.get_nowait()
+                except queue.Empty:
+                    break
+                self.bus.ranges_deg[joint] = (lo, hi)
             now = time.monotonic()
             dt = min(0.1, now - self._last_tick)   # a stalled loop must not turn into one big step
             self._last_tick = now

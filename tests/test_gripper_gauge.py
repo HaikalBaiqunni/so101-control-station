@@ -13,18 +13,21 @@ from core.gripper_gauge import (
     GripperGauge,
     describe_measurement,
 )
+from core.gripper_range import GripperRangeFinder
 
 
 class SimGripper:
     """A jaw driven the way MIT mode drives it: torque = kp * (setpoint - q) - kd * speed, with
     friction (stiction included), inertia, a hard end stop and optionally an object at `contact_deg`."""
 
-    def __init__(self, q_deg, sign=1, contact_deg=None, kp=8.0, kd=0.5, coulomb=0.15, end_deg=100.0, obstacle_k=60.0):
+    def __init__(self, q_deg, sign=1, contact_deg=None, kp=8.0, kd=0.5, coulomb=0.15, end_deg=100.0, obstacle_k=60.0,
+                 other_end_deg=None):
         self.q = math.radians(q_deg)
         self.v = 0.0
         self.sign, self.kp, self.kd, self.coulomb = sign, kp, kd, coulomb
         self.contact = None if contact_deg is None else math.radians(contact_deg)
         self.end = math.radians(end_deg)
+        self.other_end = None if other_end_deg is None else math.radians(other_end_deg)   # a stop on the far side too
         self.k = obstacle_k
         self.max_torque = 0.0
 
@@ -41,6 +44,8 @@ class SimGripper:
                 tau -= self.k * (self.q - self.contact)
             if self.sign * (self.q - self.end) > 0:
                 tau -= 500.0 * (self.q - self.end)
+            if self.other_end is not None and self.sign * (self.q - self.other_end) < 0:
+                tau -= 500.0 * (self.q - self.other_end)
             if abs(self.v) < 1e-4 and abs(tau) <= self.coulomb:
                 self.v = 0.0
                 continue
@@ -212,6 +217,9 @@ class FakeDmFollower:
 
     def request_torque(self, enabled, name=None):
         self.torque_calls.append(enabled)
+
+    def request_range(self, name, lo, hi):
+        self.ranges = getattr(self, "ranges", []) + [(name, lo, hi)]
 
 
 def arm(win, mode=Control_Type.MIT, torque=True, kp=8.0):
@@ -432,3 +440,140 @@ def test_disconnecting_forgets_the_alert(win):
     assert win._motor_alert
     win._on_connection_changed(False)
     assert win._motor_alert == ""
+
+
+# ---------------------------------------------------------------- automatic range finder
+def run_finder(sim, finder=None, start=None, ticks=6000, tick=0.05):
+    finder = finder or GripperRangeFinder()
+    now = 0.0
+    goal = finder.start(now, sim.deg if start is None else start)
+    goals = [goal]
+    for _ in range(ticks):
+        sim.advance(goal, tick)
+        now += tick
+        new = finder.update(now, sim.deg)
+        if new is not None:
+            goal = new
+            goals.append(goal)
+        if finder.finished:
+            break
+    return finder, goals
+
+
+def test_finder_finds_both_ends_and_returns():
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0)
+    finder, goals = run_finder(sim)
+    assert finder.state == DONE
+    low, high = finder.result
+    assert 78.0 <= high <= 81.0 and -21.0 <= low <= -18.0       # a little inside each stop is the jaw's give
+    assert abs(sim.deg - 30.0) < 3.0                              # back where it started
+    assert sim.max_torque <= 8.0 * math.radians(3.0 + 0.8)        # the force cap held at both stops
+
+
+def test_finder_works_whichever_end_it_starts_at():
+    for start in (80.0, -20.0):
+        sim = SimGripper(start, 1, end_deg=80.0, other_end_deg=-20.0)
+        finder, _ = run_finder(sim)
+        assert finder.state == DONE, finder.message
+        low, high = finder.result
+        assert 78.0 <= high <= 81.0 and -21.0 <= low <= -18.0
+
+
+def test_finder_goals_stay_within_the_travel_cap():
+    sim = SimGripper(30.0, 1, end_deg=1000.0, other_end_deg=-1000.0)
+    finder, goals = run_finder(sim, GripperRangeFinder(max_travel_deg=60.0))
+    assert finder.state == FAILED and "no upper end" in finder.message
+    assert max(goals) <= 90.0 + 1e-9 and min(goals) >= -30.0 - 1e-9
+
+
+def test_finder_refuses_a_jaw_that_barely_moves():
+    sim = SimGripper(30.0, 1, end_deg=34.0, other_end_deg=26.0)   # blocked 8 deg apart
+    finder, _ = run_finder(sim)
+    assert finder.state == FAILED and "only moved" in finder.message
+
+
+def test_finder_stops_on_lost_feedback():
+    finder = GripperRangeFinder()
+    finder.start(0.0, 10.0)
+    assert finder.update(0.1, None) is None and finder.state == FAILED and "feedback" in finder.message
+    assert finder.update(0.2, 10.0) is None
+
+
+def drive_range(win, sim, seconds, tick=0.05):
+    return drive(win, sim, seconds, tick=tick)
+
+
+def test_auto_range_saves_and_applies_the_range(win):
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0)
+    worker = arm(win)
+    win.current_positions["finger_left"] = sim.deg
+    win._last_follower_update = mw.time.monotonic()
+    win.dm_calibration_page.gripper_auto_btn.click()
+    assert isinstance(win._gauge, GripperRangeFinder) and not win.jog_panel.isEnabled()
+    assert worker.ranges[0][0] == "finger_left" and worker.ranges[0][1] < -20.0 and worker.ranges[0][2] > 80.0   # widened
+    assert win.dm_calibration_page.gripper_auto_btn.text().startswith("Cancel")
+    drive_range(win, sim, 200)
+    assert win._gauge is None and win.jog_panel.isEnabled()
+    low, high = win._load_settings()["dm_follower_calibrated_ranges"]["finger_left"]
+    assert 78.0 <= high <= 81.0 and -21.0 <= low <= -18.0
+    assert win.joint_deg_ranges["finger_left"] == (low, high)
+    name, lo, hi = worker.ranges[-1]                              # the clamp now matches what was found
+    assert lo <= low + 1e-6 and hi >= high - 1e-6 and hi - lo < 105.0
+    assert "saved" in win.statusBar().currentMessage().lower()
+    assert win.dm_calibration_page.gripper_auto_btn.text() == "Auto-measure gripper range"
+
+
+def test_auto_range_refuses_unless_safe(win):
+    sim = SimGripper(30.0, 1)
+    arm(win, torque=False)
+    win.current_positions["finger_left"] = sim.deg
+    win._last_follower_update = mw.time.monotonic()
+    win.dm_calibration_page.gripper_auto_btn.click()
+    assert win._gauge is None and "torque" in win.statusBar().currentMessage().lower()
+    arm(win, mode=Control_Type.POS_VEL)
+    win.current_positions["finger_left"] = sim.deg
+    win._last_follower_update = mw.time.monotonic()
+    win.dm_calibration_page.gripper_auto_btn.click()
+    assert win._gauge is None and "MIT" in win.statusBar().currentMessage()
+
+
+def test_auto_range_needs_no_saved_range(win):
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0)
+    arm(win)
+    win._save_setting("dm_follower_calibrated_ranges", {})
+    win.current_positions["finger_left"] = sim.deg
+    win._last_follower_update = mw.time.monotonic()
+    win.dm_calibration_page.gripper_auto_btn.click()
+    assert isinstance(win._gauge, GripperRangeFinder)
+    win._gauge_abort("test", release=False)
+
+
+@pytest.mark.parametrize("how", ["stop", "torque", "cancel", "disconnect"])
+def test_every_way_out_stops_the_range_search_and_keeps_the_old_range(win, how):
+    sim = SimGripper(30.0, 1, end_deg=80.0, other_end_deg=-20.0)
+    worker = arm(win)
+    win.current_positions["finger_left"] = sim.deg
+    win._last_follower_update = mw.time.monotonic()
+    win.dm_calibration_page.gripper_auto_btn.click()
+    drive_range(win, sim, 1.0)
+    assert win._gauge is not None
+    before = len(worker.goals)
+    if how == "stop":
+        win.top_bar.stop_btn.click()
+    elif how == "torque":
+        win._on_torque(False)
+    elif how == "cancel":
+        win.dm_calibration_page.gripper_auto_btn.click()
+    else:
+        win._on_connection_changed(False)
+    assert win._gauge is None and win.jog_panel.isEnabled() and not win.gauge_timer.isActive()
+    assert win._load_settings()["dm_follower_calibrated_ranges"]["finger_left"] == [0.0, 100.0]   # untouched
+    assert win.dm_calibration_page.gripper_auto_btn.text() == "Auto-measure gripper range"
+    after = worker.goals[before:]
+    if how == "cancel":
+        assert after == [pytest.approx(sim.deg, abs=3.0)]     # relaxes where it is, never goes anywhere
+    else:
+        assert after == []
+    if how != "disconnect":
+        _, lo, hi = worker.ranges[-1]                         # the clamp is back to the old range (or just the jaw's spot)
+        assert (lo, hi) == (0.0, 100.0)

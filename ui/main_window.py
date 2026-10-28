@@ -33,6 +33,7 @@ from core.fashionstar_leader_worker import FashionStarLeaderWorker
 from core.gravity import GravityModel
 from core.gripper_gauge import FAILED as GAUGE_FAILED
 from core.gripper_gauge import GaugeCalibration, GaugeParams, GripperGauge, describe_measurement
+from core.gripper_range import GripperRangeFinder
 from core.kinematics import AXES, KinematicChain, TcpSpec, rpy_deg_from_matrix
 from core.recorder import DEFAULT_CAMERA_KEY, DEFAULT_FPS, Dataset, EpisodeRecorder
 from core.robot_profiles import (
@@ -310,7 +311,7 @@ class MainWindow(QMainWindow):
         self._leader_converted: dict[str, float] = {}   # latest leader pose in FOLLOWER degrees
         self.teleop_tolerance_deg: float = float(self._load_settings().get("teleop_align_tolerance_deg", 10.0))
         self._follower_connected = False
-        self._gauge: GripperGauge | None = None   # the running gripper measurement (see the gripper gauge section)
+        self._gauge: GripperGauge | GripperRangeFinder | None = None   # the running gripper job (gripper gauge section)
         self._gauge_jog_was_enabled = True
         self._motor_alert = ""          # e.g. "finger_left: overload" while a motor reports a fault
         self._disabled_counts: dict[str, int] = {}
@@ -453,6 +454,7 @@ class MainWindow(QMainWindow):
         # -- wiring: gripper gauge --------------------------------------------------
         self._gauge_kind = ""
         self._gauge_size_mm = 0.0
+        self._range_original: tuple[float, float] = (0.0, 0.0)   # the clamp to restore after a range search
         self._last_follower_update = 0.0
         saved_gauge = self._load_settings().get("gripper_gauge", {})
         self._gauge_cal = GaugeCalibration.from_dict(saved_gauge)
@@ -521,6 +523,7 @@ class MainWindow(QMainWindow):
         self.dm_tune_panel.set_presets(self._load_settings().get("dm_mit_gain_presets", {}))
         self.jog_panel.speed_slider.valueChanged.connect(self._push_speed)
         self.dm_calibration_page.gripper_calibrate_requested.connect(self._on_dm_gripper_calibrate_requested)
+        self.dm_calibration_page.gripper_auto_requested.connect(self._on_gripper_auto_range)
         self.dm_calibration_page.leader_calibrate_requested.connect(self._on_leader_calibrate_requested)
         self.dm_calibration_page.open_ids_requested.connect(self._show_motors_and_ids)
         self.dm_setup_panel.set_mapping(self._load_settings().get("dm_can_id_mapping", {}))
@@ -1880,7 +1883,7 @@ class MainWindow(QMainWindow):
             return "Turn the follower's torque ON first - the gripper has to close itself."
         if self.control_source != "manual" or self.teleop_engaged or self._playback_index is not None:
             return "Set Control source to Manual and stop playback first: nothing else may drive the gripper while it measures."
-        if self.GAUGE_JOINT not in self._load_settings().get("dm_follower_calibrated_ranges", {}):
+        if kind != "range" and self.GAUGE_JOINT not in self._load_settings().get("dm_follower_calibrated_ranges", {}):
             return "Calibrate the gripper range first (Setup > Calibration): the gauge needs its real end of travel."
         if self.GAUGE_JOINT not in self.current_positions or self.GAUGE_JOINT not in self.joint_deg_ranges:
             return "No gripper position yet."
@@ -1942,6 +1945,8 @@ class MainWindow(QMainWindow):
             self._gauge_finish()
         else:
             self.gripper_gauge_panel.set_status(gauge.progress_text)
+            if isinstance(gauge, GripperRangeFinder):
+                self.dm_calibration_page.set_gripper_summary(gauge.progress_text + "...")
 
     def _gauge_abort(self, reason: str, release: bool) -> None:
         """Stop a running measurement. `release` opens the jaws back to where they started (only
@@ -1951,12 +1956,18 @@ class MainWindow(QMainWindow):
             return
         self.gauge_timer.stop()
         self._gauge = None
-        if release and self._follower_connected and self.follower_torque_enabled and self.robot_worker is not None:
+        if isinstance(gauge, GripperRangeFinder):
+            self._range_settle(None, hold=release)
+        elif release and self._follower_connected and self.follower_torque_enabled and self.robot_worker is not None:
             self.robot_worker.request_goal(self.GAUGE_JOINT, gauge.start_angle)
         self.gripper_gauge_panel.set_running(False)
         self._set_gauge_lockout(False)
         self.gripper_gauge_panel.set_status(f"Measurement stopped: {reason}.")
         self.session_logger.log_event(f"Gauge: stopped ({reason})")
+        if isinstance(gauge, GripperRangeFinder):
+            self.dm_calibration_page.set_auto_running(False)
+            self._refresh_dm_calibration_summary()
+            self.statusBar().showMessage(f"Gripper range search stopped: {reason}. The saved range is unchanged.")
 
     def _gauge_finish(self) -> None:
         gauge, kind, size = self._gauge, self._gauge_kind, self._gauge_size_mm
@@ -1966,6 +1977,9 @@ class MainWindow(QMainWindow):
         panel.set_running(False)
         self._set_gauge_lockout(False)
         if gauge is None:
+            return
+        if isinstance(gauge, GripperRangeFinder):
+            self._range_finished(gauge)
             return
         # open the jaws again whatever happened: nobody wants the object squeezed afterwards
         if self._follower_connected and self.follower_torque_enabled and self.robot_worker is not None:
@@ -1995,6 +2009,87 @@ class MainWindow(QMainWindow):
         panel.set_status(f"Measured {width:.2f} mm.")
         self.session_logger.log_event(
             f"Gauge: object = {width:.2f} mm +/- {spread:.2f} (jaw {result.mean:.2f} deg, {len(result.angles)} passes)")
+
+    RANGE_SWEEP_DEG = 360.0           # how far past the start the range finder may look for an end of travel
+    RANGE_ENCODER_LIMIT_DEG = 700.0   # a Damiao encoder reports about +-716 deg: never ask for more than this
+
+    def _on_gripper_auto_range(self) -> None:
+        """Find the gripper's two ends of travel by itself (creep until the encoder stalls) and save them
+        as the follower's gripper range. The same call cancels a search that is already running."""
+        if isinstance(self._gauge, GripperRangeFinder):
+            self._gauge_abort("cancelled", release=True)
+            return
+        error = self._gauge_precheck("range")
+        if error:
+            self.statusBar().showMessage(error)
+            self.gripper_gauge_panel.set_status(error)
+            self.dm_calibration_page.set_gripper_summary(error)
+            return
+        panel = self.gripper_gauge_panel
+        try:
+            finder = GripperRangeFinder(speed_deg_s=panel.speed_spin.value(), preload_deg=panel.preload_spin.value(),
+                                        max_travel_deg=self.RANGE_SWEEP_DEG)
+            GaugeParams(speed_deg_s=finder.speed_deg_s, preload_deg=finder.preload_deg,
+                        detect_lag_deg=min(2.0, finder.preload_deg))   # the settings the sweep will use must be valid
+        except ValueError as exc:
+            self.statusBar().showMessage(str(exc))
+            return
+        start_deg = self.current_positions[self.GAUGE_JOINT]
+        self._range_original = self.joint_deg_ranges[self.GAUGE_JOINT]
+        lo = min(self._range_original[0], max(-self.RANGE_ENCODER_LIMIT_DEG, start_deg - self.RANGE_SWEEP_DEG))
+        hi = max(self._range_original[1], min(self.RANGE_ENCODER_LIMIT_DEG, start_deg + self.RANGE_SWEEP_DEG))
+        self.robot_worker.request_range(self.GAUGE_JOINT, lo, hi)   # the old clamp would stop the sweep short
+        goal = finder.start(time.monotonic(), start_deg)
+        self._gauge, self._gauge_kind = finder, "range"
+        panel.clear_result()
+        panel.set_running(True)
+        self._set_gauge_lockout(True)
+        self.dm_calibration_page.set_auto_running(True)
+        panel.set_status(finder.progress_text)
+        self.robot_worker.request_goal(self.GAUGE_JOINT, goal)   # hold where it is
+        self.statusBar().showMessage("Gripper range search running: Stop or Cancel aborts it.")
+        self.session_logger.log_event(
+            f"Gripper range: search started (speed {finder.speed_deg_s:g} deg/s, preload {finder.preload_deg:g} deg, "
+            f"from {start_deg:.1f} deg)")
+        self.gauge_timer.start()
+
+    def _range_settle(self, new_range: tuple[float, float] | None, hold: bool) -> None:
+        """After a range search: put the follower's clamp back (to the new range, or the old one),
+        never narrower than where the jaw is now, so holding it there is not clamped to a stop it may
+        still be resting on. `hold` also commands the jaw to stay where it is, relaxing the push."""
+        worker = self.robot_worker
+        if worker is None or not self._follower_connected:
+            return
+        lo, hi = new_range or self._range_original
+        measured = self.current_positions.get(self.GAUGE_JOINT)
+        if measured is not None:
+            lo, hi = min(lo, measured), max(hi, measured)
+        worker.request_range(self.GAUGE_JOINT, lo, hi)
+        if hold and measured is not None and self.follower_torque_enabled:
+            worker.request_goal(self.GAUGE_JOINT, measured)
+
+    def _range_finished(self, finder: GripperRangeFinder) -> None:
+        """The search ended by itself (found both ends, or failed)."""
+        self.dm_calibration_page.set_auto_running(False)
+        found = finder.result
+        if found is None:
+            self._range_settle(None, hold=True)
+            self.gripper_gauge_panel.set_status(f"Failed: {finder.message}")
+            self.statusBar().showMessage(f"Gripper range search failed: {finder.message}. The saved range is unchanged.")
+            self.session_logger.log_event(f"Gripper range: failed - {finder.message}")
+            self._refresh_dm_calibration_summary()
+            return
+        lo, hi = round(found[0], 2), round(found[1], 2)
+        saved = dict(self._load_settings().get("dm_follower_calibrated_ranges", {}))
+        saved[self.GAUGE_JOINT] = [lo, hi]
+        self._save_setting("dm_follower_calibrated_ranges", saved)
+        self.joint_deg_ranges[self.GAUGE_JOINT] = (lo, hi)
+        self.joint_panel.set_limits(self.GAUGE_JOINT, lo, hi)
+        self._range_settle((lo, hi), hold=True)    # the jaw already went back to where it started
+        self.gripper_gauge_panel.set_status(f"Gripper range found: {lo:.1f} to {hi:.1f} deg.")
+        self.statusBar().showMessage(f"Gripper range saved and applied: {lo:.1f} to {hi:.1f} deg (span {hi - lo:.1f}).")
+        self.session_logger.log_event(f"Gripper range: found {lo} .. {hi} deg (span {hi - lo:.1f}), saved and applied")
+        self._refresh_dm_calibration_summary()
 
     def _set_gauge_lockout(self, locked: bool) -> None:
         """While measuring, the manual jog / slider controls are off, so nothing else drives the gripper."""

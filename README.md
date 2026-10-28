@@ -244,6 +244,11 @@ work the same, because the Damiao worker exposes the identical `request_goal` / 
 - **Gripper range calibration** (*Calibrate gripper range...*, Connection card, or Setup, Calibration): sweep the real
   jaw's open / closed travel by hand with torque off. It replaces an assumed default that once let a held jog drive the
   motor past its real stop until a fuse blew, and refuses to run while torque is on.
+- **Auto-measure gripper range** (Setup, Calibration): with torque ON, MIT mode and Control source Manual, the
+  gripper creeps to one end, then the other, by itself. The push is capped at kp x Preload (the Gripper gauge tab's
+  setting, 1.5 N*m ceiling) and a jaw that stops moving while the target runs ahead counts as the end of travel.
+  It looks at most 360 deg either way, fails rather than pushes on, and saves and applies the range it found.
+  Stop, torque off, Cancel or a disconnect abort it and leave the saved range untouched.
 
 ### Motion control and the Tune drawer
 

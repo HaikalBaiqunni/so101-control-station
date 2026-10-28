@@ -51,6 +51,7 @@ class GaugeParams:
     max_pass_spread_deg: float = 1.0  # a pass further than this from the earlier ones means friction fooled it
     stable_std_deg: float = 0.4       # a noisier reading than this is rejected (object slipping / still moving)
     min_travel_deg: float = 1.0       # contact sooner than this means "already touching or too weak to move"
+    allow_zero_travel: bool = False   # the range finder may start right at an end of travel: that is a valid contact
     repeats: int = 3
     reopen_deg: float = 8.0
     max_duration_s: float = 120.0
@@ -203,7 +204,7 @@ class GripperGauge:
             self._stall_time = 0.0
         if self._stall_time >= p.stall_s or at_limit:
             travelled = sign * (measured - self._close_start_pos)
-            if self._first_close and travelled < p.min_travel_deg and not at_limit:
+            if self._first_close and travelled < p.min_travel_deg and not at_limit and not p.allow_zero_travel:
                 self._fail("the jaw did not move: it is already touching something, blocked, or the "
                            "gripper's kp is too low to move it")
                 return None

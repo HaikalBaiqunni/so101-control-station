@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Auto-measure gripper range** (B601-DM, Setup, Calibration). The gripper finds both ends of travel by itself:
+  it creeps one way, then the other, with the force capped at kp x Preload, and an encoder that stops while the
+  target runs ahead marks the end. Built on the gauge's contact detection (`core/gripper_range.py`); the range is
+  saved and applied live. It gives up after 360 deg without a stop or if the jaw moves under 20 deg between its
+  stops. `DmRobotWorker.request_range` lets the sweep widen the bus clamp, which is restored on every way out.
 - **Damiao motor status.** The status nibble of every feedback frame (overload, overcurrent, over-voltage,
   over-temperature, disabled ...) was discarded by the vendored driver, so a motor in a fault state looked healthy:
   the slider and ghost moved, the joint did not. It is now decoded; a fault (or a motor still disabled while

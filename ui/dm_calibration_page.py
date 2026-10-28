@@ -17,6 +17,7 @@ class DmCalibrationPage(QWidget):
     hand, the app just watches) - no calibration logic lives here."""
 
     gripper_calibrate_requested = Signal()
+    gripper_auto_requested = Signal()       # start, or cancel when a range search is already running
     leader_calibrate_requested = Signal()
     open_ids_requested = Signal()
 
@@ -26,14 +27,20 @@ class DmCalibrationPage(QWidget):
         gripper = QGroupBox("FOLLOWER GRIPPER RANGE")
         self.gripper_summary = QLabel("not measured yet")
         self.gripper_summary.setObjectName("poseReadout")
-        self.gripper_btn = QPushButton("Measure gripper range...")
+        self.gripper_btn = QPushButton("Measure gripper range by hand...")
         self.gripper_btn.clicked.connect(self.gripper_calibrate_requested)
+        self.gripper_auto_btn = QPushButton("Auto-measure gripper range")
+        self.gripper_auto_btn.setObjectName("primaryButton")
+        self.gripper_auto_btn.clicked.connect(self.gripper_auto_requested)
         box = QVBoxLayout(gripper)
         box.addWidget(_note(
-            "Sweep the jaw open to closed by hand with torque OFF. Stops the app from "
-            "ever driving the gripper past its real end stop. Needs the follower connected."
+            "Stops the app from ever driving the gripper past its real end stop. Needs the follower "
+            "connected. By hand: sweep the jaw open to closed with torque OFF. Auto: with torque ON, "
+            "MIT mode and Control source Manual, the gripper creeps to each end by itself with a "
+            "capped force (kp x Preload from the Gripper gauge tab) and stops when the encoder stalls."
         ))
         box.addWidget(self.gripper_summary)
+        box.addWidget(self.gripper_auto_btn)
         box.addWidget(self.gripper_btn)
 
         leader = QGroupBox("LEADER - STAR ARM 102")
@@ -70,6 +77,10 @@ class DmCalibrationPage(QWidget):
 
     def set_gripper_summary(self, text: str) -> None:
         self.gripper_summary.setText(text)
+
+    def set_auto_running(self, running: bool) -> None:
+        self.gripper_auto_btn.setText("Cancel auto-measure" if running else "Auto-measure gripper range")
+        self.gripper_btn.setEnabled(not running)
 
     def set_leader_summary(self, text: str) -> None:
         self.leader_summary.setText(text)
