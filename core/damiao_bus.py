@@ -86,6 +86,26 @@ _MOTOR_TYPE_BY_JOINT = {
 _DEFAULT_MOTOR_TYPE = DM_Motor_Type.DM4310
 
 
+# The status nibble every Damiao feedback frame carries (see dm_can.Motor.err_state). A motor in a
+# fault state stops obeying commands but keeps reporting its position, which looks exactly like
+# "the slider moves, the ghost moves, the joint does not".
+MOTOR_STATE_NAMES = {
+    0x0: "disabled", 0x1: "enabled", 0x8: "overvoltage", 0x9: "undervoltage", 0xA: "overcurrent",
+    0xB: "driver overtemperature", 0xC: "motor overtemperature", 0xD: "communication lost", 0xE: "overload",
+}
+FAULT_FROM = 0x8   # states from here up are faults
+
+
+def describe_motor_state(code: int | None) -> str:
+    if code is None:
+        return "unknown"
+    return MOTOR_STATE_NAMES.get(code, f"state 0x{code:X}")
+
+
+def is_fault(code: int | None) -> bool:
+    return code is not None and code >= FAULT_FROM
+
+
 class DamiaoBusError(RuntimeError):
     pass
 
@@ -180,6 +200,11 @@ class DamiaoBus:
         motion "no mistake" means avoiding."""
         for target_name, motor in self._iter_targets(name):
             self._mc.refresh_motor_status(motor)
+            if is_fault(motor.err_state):
+                # a latched fault (overload ...) would make the enable below do nothing: clear it first.
+                # If the cause is still there the motor simply faults again and the GUI says so.
+                self._mc.clear_error(motor)
+                self._mc.refresh_motor_status(motor)
             pos = motor.getPosition()
             if self.control_mode == Control_Type.MIT:
                 kp, kd = self.mit_gains.get(target_name, (DEFAULT_MIT_KP, DEFAULT_MIT_KD))
@@ -236,6 +261,10 @@ class DamiaoBus:
             self._mc.refresh_motor_status(motor)
             positions[name] = math.degrees(motor.getPosition())
         return positions
+
+    def motor_states(self) -> dict[str, int | None]:
+        """The latest status nibble of every motor (from the last feedback frame each one sent)."""
+        return {name: motor.err_state for name, motor in self._motors.items()}
 
     def read_telemetry(self) -> dict[str, dict[str, float]]:
         """Position (deg), velocity (deg/s) and load (N*m, straight off the

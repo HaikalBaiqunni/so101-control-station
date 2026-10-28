@@ -171,3 +171,57 @@ def test_write_goals_deg_clamps_to_a_calibrated_range_narrower_than_the_default(
     # Would have been clamped to the wrong (too-wide) default before a real
     # measured range existed - now clamps to the calibrated stop instead.
     assert narrow_p_desired == pytest.approx(math.radians(100.0))
+
+
+# ---------------------------------------------------------------- motor status nibble / faults
+def test_status_nibble_is_decoded_from_a_feedback_frame():
+    from core.dm_can import MotorControl
+    mc = MotorControl.__new__(MotorControl)          # no serial port: only the frame decoder is exercised
+    motor = Motor(DM_Motor_Type.DM4310, 7, 0x17)
+    mc.motors_map = {0x7: motor}                       # keyed by the master id in the low nibble of byte 0
+    process = mc._MotorControl__process_packet
+    # data[0] = status nibble (0xE = overload) | master id 0x7; q / dq / tau all centred
+    process(bytes([0xE7, 0x80, 0x00, 0x80, 0x08, 0x00, 0, 0]), 0x00, 0x11)
+    assert motor.err_state == 0xE
+    process(bytes([0x17, 0x80, 0x00, 0x80, 0x08, 0x00, 0, 0]), 0x00, 0x11)
+    assert motor.err_state == 0x1
+
+
+def test_state_names_and_fault_test():
+    assert db.describe_motor_state(0xE) == "overload"
+    assert db.describe_motor_state(0xA) == "overcurrent"
+    assert db.describe_motor_state(None) == "unknown"
+    assert db.describe_motor_state(0x5) == "state 0x5"
+    assert db.is_fault(0xE) and db.is_fault(0x8) and not db.is_fault(0x1) and not db.is_fault(0x0) and not db.is_fault(None)
+
+
+class FaultyMotorControl(FakeMotorControl):
+    """Reports an overload until clear_error() is called."""
+
+    def __init__(self, _ser):
+        super().__init__(_ser)
+        self.faulted = True
+
+    def refresh_motor_status(self, motor):
+        motor.recv_data(1.23, 0.0, 0.0, 0xE if self.faulted else 0x0)
+
+    def clear_error(self, motor):
+        self.calls.append(("clear_error", motor.SlaveID))
+        self.faulted = False
+
+
+def test_enabling_clears_a_latched_fault_first(monkeypatch):
+    monkeypatch.setattr(db, "MotorControl", FaultyMotorControl)
+    bus = db.DamiaoBus("COM_FAKE", IDS, RANGES)
+    bus.connect()
+    assert bus.motor_states() == {"joint1": None, "joint4": None}   # nothing heard yet
+    bus.enable_torque("joint1")
+    kinds = [c[0] for c in bus._mc.calls]
+    assert kinds.index("clear_error") < kinds.index("enable")
+
+
+def test_enabling_a_healthy_motor_sends_no_clear_error():
+    bus = db.DamiaoBus("COM_FAKE", IDS, RANGES)
+    bus.connect()
+    bus.enable_torque()
+    assert "clear_error" not in [c[0] for c in bus._mc.calls]

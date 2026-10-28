@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Damiao motor status.** The status nibble of every feedback frame (overload, overcurrent, over-voltage,
+  over-temperature, disabled ...) was discarded by the vendored driver, so a motor in a fault state looked healthy:
+  the slider and ghost moved, the joint did not. It is now decoded; a fault (or a motor still disabled while
+  Torque is ON) shows on the top-bar torque chip and the status bar and is logged, and switching Torque ON clears a
+  latched fault first.
 - **Recorder** drawer (top bar **Record**): records imitation-learning episodes at 30 fps while you
   teleoperate - follower joints (`state`), commanded goals (`action`) and the running camera - without moving
   any robot. Per-episode status (ok / dropped frames / short), auto-save at a maximum length, discard,

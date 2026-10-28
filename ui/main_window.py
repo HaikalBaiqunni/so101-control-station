@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.calibration_worker import CalibrationWorker
+from core.damiao_bus import describe_motor_state, is_fault
 from core.dm_can import Control_Type
 from core.dm_robot_worker import DmRobotWorker
 from core.dm_setup_worker import DmSetupWorker
@@ -311,6 +312,8 @@ class MainWindow(QMainWindow):
         self._follower_connected = False
         self._gauge: GripperGauge | None = None   # the running gripper measurement (see the gripper gauge section)
         self._gauge_jog_was_enabled = True
+        self._motor_alert = ""          # e.g. "finger_left: overload" while a motor reports a fault
+        self._disabled_counts: dict[str, int] = {}
         self._leader_connected = False
         self.leader_worker: RobotWorker | None = None
         self.calibration_worker: CalibrationWorker | None = None
@@ -839,6 +842,7 @@ class MainWindow(QMainWindow):
             mit_gains=mit_gains,
             gravity_mjcf_path=self._gravity_path(),
         )
+        self.robot_worker.motor_status.connect(self._on_motor_status)
         self.robot_worker.gravity_status.connect(
             lambda ok, text: self.dm_tune_panel.set_gravity_controls(False, False, text)
         )
@@ -958,6 +962,8 @@ class MainWindow(QMainWindow):
             self._disengage_teleop("follower disconnected")
             self._gravity_off("follower disconnected")
             self._gauge_abort("follower disconnected", release=False)
+            self._motor_alert = ""
+            self._disabled_counts.clear()
             if self.recorder is not None and self.recorder.recording:
                 self._recorder_abort("follower disconnected")
         self._refresh_recorder_ui()
@@ -1006,6 +1012,32 @@ class MainWindow(QMainWindow):
             self._disengage_teleop("follower torque off")
             self._gravity_off("follower torque off")
             self._gauge_abort("torque off", release=False)
+        self._update_status_chips()
+
+    def _on_motor_status(self, states: dict) -> None:
+        """A motor that reports a fault (overload, overcurrent, over-temperature ...), or that is
+        disabled although torque is ON, ignores commands while still reporting its position. Say so."""
+        parts = []
+        for joint, code in states.items():
+            if is_fault(code):
+                parts.append(f"{joint}: {describe_motor_state(code)}")
+            if code == 0 and self.follower_torque_enabled:
+                self._disabled_counts[joint] = self._disabled_counts.get(joint, 0) + 1
+                if self._disabled_counts[joint] >= 2:   # not just the instant before the enable lands
+                    parts.append(f"{joint}: motor disabled")
+            else:
+                self._disabled_counts[joint] = 0
+        alert = ", ".join(parts)
+        if alert == self._motor_alert:
+            return
+        self._motor_alert = alert
+        if alert:
+            self.statusBar().showMessage(
+                f"Motor problem - {alert}. It will not move until the cause is gone: switch Torque OFF, "
+                "wait for it to cool / free the jaws, then Torque ON (that clears the fault).")
+            self.session_logger.log_event(f"Motor status: {alert}")
+        else:
+            self.session_logger.log_event("Motor status: all motors normal again")
         self._update_status_chips()
 
     def _on_positions_updated(self, positions: dict[str, float]) -> None:
@@ -1395,7 +1427,10 @@ class MainWindow(QMainWindow):
         bar.set_chip("leader", "Leader online" if self._leader_connected else "Leader offline",
                      "good" if self._leader_connected else "off")
         torque = self._follower_connected and self.follower_torque_enabled
-        bar.set_chip("torque", "Torque ON" if torque else "Torque off", "warn" if torque else "off")
+        if self._motor_alert:
+            bar.set_chip("torque", f"! {self._motor_alert}", "warn")
+        else:
+            bar.set_chip("torque", "Torque ON" if torque else "Torque off", "warn" if torque else "off")
         if self.control_source == "leader":
             bar.set_chip("source", "Teleop engaged" if self.teleop_engaged else "Leader (standby)",
                          "good" if self.teleop_engaged else "warn")

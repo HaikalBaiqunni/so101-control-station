@@ -267,6 +267,9 @@ class FakeDamiaoBus:
     def read_all_positions_deg(self):
         return dict(self._positions)
 
+    def motor_states(self):
+        return {}
+
     def read_telemetry(self):
         return {n: {"position": p, "velocity": 0.0, "load": 0.0} for n, p in self._positions.items()}
 

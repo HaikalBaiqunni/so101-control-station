@@ -47,6 +47,7 @@ class DmRobotWorker(QThread):
     error = Signal(str)
     connection_changed = Signal(bool)
     gravity_status = Signal(bool, str)   # (model loaded, message)
+    motor_status = Signal(dict)          # {joint: status nibble}, see damiao_bus.MOTOR_STATE_NAMES
 
     def __init__(
         self,
@@ -284,6 +285,7 @@ class DmRobotWorker(QThread):
             if cycle % TELEMETRY_EVERY_N_CYCLES == 0:
                 try:
                     self.telemetry_updated.emit(self.bus.read_telemetry())
+                    self.motor_status.emit(self.bus.motor_states())
                 except DamiaoBusError as exc:
                     self.error.emit(str(exc))
 

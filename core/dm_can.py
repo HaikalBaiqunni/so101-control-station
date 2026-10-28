@@ -24,11 +24,17 @@ class Motor:
         self.isEnable = False
         self.NowControlMode = Control_Type.MIT
         self.temp_param_dict = {}
+        # high nibble of the first feedback byte (None until a frame arrived): 0 disabled, 1 enabled,
+        # 8 overvoltage, 9 undervoltage, 0xA overcurrent, 0xB MOS overtemp, 0xC coil overtemp,
+        # 0xD lost communication, 0xE overload. Added by this project; the vendored library ignored it.
+        self.err_state = None
 
-    def recv_data(self, q: float, dq: float, tau: float):
+    def recv_data(self, q: float, dq: float, tau: float, err_state: int | None = None):
         self.state_q = q
         self.state_dq = dq
         self.state_tau = tau
+        if err_state is not None:
+            self.err_state = int(err_state)
 
     def getPosition(self):
         """
@@ -229,6 +235,12 @@ class MotorControl:
         sleep(0.1)
         self.recv()  # receive the data from serial port
 
+    def clear_error(self, Motor):
+        """Clear a latched fault (overload, overcurrent, over-temperature ...) so the motor can be enabled again."""
+        self.__control_cmd(Motor, np.uint8(0xFB))
+        sleep(0.1)
+        self.recv()  # receive the data from serial port
+
     def set_zero_position(self, Motor):
         """
         set the zero position of the motor 设置电机0位
@@ -271,7 +283,7 @@ class MotorControl:
                     recv_q = uint_to_float(q_uint, -Q_MAX, Q_MAX, 16)
                     recv_dq = uint_to_float(dq_uint, -DQ_MAX, DQ_MAX, 12)
                     recv_tau = uint_to_float(tau_uint, -TAU_MAX, TAU_MAX, 12)
-                    self.motors_map[CANID].recv_data(recv_q, recv_dq, recv_tau)
+                    self.motors_map[CANID].recv_data(recv_q, recv_dq, recv_tau, data[0] >> 4)
             else:
                 MasterID=data[0] & 0x0f
                 if MasterID in self.motors_map:
@@ -285,7 +297,7 @@ class MotorControl:
                     recv_q = uint_to_float(q_uint, -Q_MAX, Q_MAX, 16)
                     recv_dq = uint_to_float(dq_uint, -DQ_MAX, DQ_MAX, 12)
                     recv_tau = uint_to_float(tau_uint, -TAU_MAX, TAU_MAX, 12)
-                    self.motors_map[MasterID].recv_data(recv_q, recv_dq, recv_tau)
+                    self.motors_map[MasterID].recv_data(recv_q, recv_dq, recv_tau, data[0] >> 4)
 
 
     def __process_set_param_packet(self, data, CANID, CMD):

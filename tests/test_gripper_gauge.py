@@ -395,3 +395,40 @@ def test_changing_the_closing_direction_clears_the_references(win):
     win.gripper_gauge_panel.direction_combo.setCurrentIndex(1)
     assert win._gauge_cal.points == [] and win._gauge_cal.close_sign == -1
     assert win._load_settings()["gripper_gauge"]["close_sign"] == -1
+
+
+def test_motor_fault_is_shown_on_the_torque_chip_and_clears(win):
+    arm(win)
+    win._update_status_chips()
+    assert win.top_bar.chips["torque"].text() == "Torque ON"
+    win._on_motor_status({"joint1": 1, "finger_left": 0xE})
+    assert win.top_bar.chips["torque"].text() == "! finger_left: overload"
+    assert win.top_bar.chips["torque"].property("state") == "warn"
+    assert "finger_left: overload" in win.statusBar().currentMessage()
+    win._on_motor_status({"joint1": 1, "finger_left": 1})
+    assert win.top_bar.chips["torque"].text() == "Torque ON"
+
+
+def test_a_motor_that_stays_disabled_while_torque_is_on_is_reported(win):
+    arm(win)
+    win._on_motor_status({"finger_left": 0})
+    assert win._motor_alert == ""                       # one reading could be the instant before the enable lands
+    win._on_motor_status({"finger_left": 0})
+    assert win._motor_alert == "finger_left: motor disabled"
+    win._on_motor_status({"finger_left": 1})
+    assert win._motor_alert == ""
+
+
+def test_a_disabled_motor_is_normal_while_torque_is_off(win):
+    arm(win, torque=False)
+    for _ in range(3):
+        win._on_motor_status({"finger_left": 0})
+    assert win._motor_alert == ""
+
+
+def test_disconnecting_forgets_the_alert(win):
+    arm(win)
+    win._on_motor_status({"finger_left": 0xE})
+    assert win._motor_alert
+    win._on_connection_changed(False)
+    assert win._motor_alert == ""
