@@ -9,12 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Leader gripper hold test** (Gauge tab, experimental). Locks the Star Arm 102's gripper handle where it is for up to
-  5 s (Light / Medium pulsed or Full steady) so a force-feedback 'wall' can be felt. It only starts when the handle is
-  still, lets go by itself, when pushed 8 deg away, on Stop, on an error and on disconnect, and is refused while the
-  leader relay runs. Only the gripper servo is ever commanded.
 - **Leader relay: gripper follows freely, gentle only on contact; big width readout.** The relay's force limit now
-  adapts to the jaw's speed: a moving jaw (or an opening one) may be led by up to 3 N*m / kp, a stopped one only by
+  adapts to the jaw's speed: a moving jaw (or an opening one) may be led by up to 4 N*m / kp, a stopped one only by
   the Break-away push, so free motion matches the leader again and a jaw that hits something is limited within one
   follower cycle. When the leader keeps squeezing while the jaw has stopped for 0.2 s, the width is latched as the
   size of what it holds and shown in a large readout in the top bar (calibrated B601-DM only).

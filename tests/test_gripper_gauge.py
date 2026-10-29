@@ -677,7 +677,7 @@ def test_the_leader_cannot_squeeze_harder_than_the_push_limit(win):
     arm(win)                       # kp 8, Break-away push 8 deg -> the setpoint stays within 8 deg of the jaw
     fresh(win, 50.0)
     assert win._limit_grip("finger_left", 100.0) == pytest.approx(58.0)
-    assert win._limit_grip("finger_left", -100.0) == pytest.approx(50.0 - math.degrees(3.0 / 8.0))   # opening: free
+    assert win._limit_grip("finger_left", -100.0) == pytest.approx(50.0 - math.degrees(mw.MainWindow.GRIP_FREE_MAX_NM / 8.0))   # opening: free
     assert win._limit_grip("finger_left", 53.0) == 53.0            # a goal inside the lead is untouched
     assert win._limit_grip("joint1", 100.0) == 100.0               # only the gripper
 
@@ -737,7 +737,7 @@ def test_a_moving_jaw_is_led_further_than_a_stopped_one(win):
     moving(win, [44.0, 47.0, 50.0])                                    # 60 deg/s
     free = win._limit_grip("finger_left", 200.0) - 50.0
     assert free > stopped + 5.0
-    assert free <= math.degrees(3.0 / 8.0) + 1e-9                      # never past the free ceiling
+    assert free <= math.degrees(mw.MainWindow.GRIP_FREE_MAX_NM / 8.0) + 1e-9                      # never past the free ceiling
 
 
 def test_a_jaw_that_just_hit_something_is_limited_at_once(win):
@@ -793,36 +793,22 @@ def test_the_top_bar_shows_the_width_only_when_calibrated(win):
     assert not win.top_bar.width_pill.isHidden() and win.top_bar.width_value.text() == "15.0 mm"
 
 
-# ---------------------------------------------------------------- leader hold test (GUI side)
-class FakeLeaderWorker:
-    def __init__(self):
-        self.bus = object()
-        self.holds, self.releases = [], 0
 
-    def request_hold(self, seconds, duty):
-        self.holds.append((seconds, duty))
-
-    def request_release(self):
-        self.releases += 1
-
-
-def test_leader_hold_button_asks_the_worker_and_stop_releases(win):
-    leader = FakeLeaderWorker()
-    win.leader_worker = leader
-    win.gripper_gauge_panel.hold_btn.click()
-    assert leader.holds == [(2.0, 0.25)]
-    win.top_bar.stop_btn.click()
-    assert leader.releases == 1
-    win.leader_worker = None
-
-
-def test_leader_hold_is_refused_while_the_relay_runs_or_without_a_leader(win):
-    leader = FakeLeaderWorker()
-    win.leader_worker = leader
+def test_contact_beeps_once_when_enabled(win, monkeypatch):
+    beeps = []
+    monkeypatch.setattr(mw.QApplication, "beep", staticmethod(lambda: beeps.append(1)))
+    arm(win)
     win.teleop_engaged, win.control_source = True, "leader"
-    win.gripper_gauge_panel.hold_btn.click()
-    assert leader.holds == [] and "relay" in win.statusBar().currentMessage()
-    win.teleop_engaged = False
-    win.leader_worker = None
-    win.gripper_gauge_panel.hold_btn.click()
-    assert "leader" in win.statusBar().currentMessage().lower()
+    win._grip_wanted = 100.0
+    t = mw.time.monotonic()
+    for k in range(10):
+        win._grip_hist.append((t + 0.05 * k, 56.0))
+        win._update_grip_contact(t + 0.05 * k, 56.0)
+    assert beeps == [1]                                   # latched once, not on every cycle
+    win.gripper_gauge_panel.beep_check.setChecked(False)
+    win._grip_contact = None
+    win._grip_still_since = None
+    for k in range(10):
+        win._grip_hist.append((t + 1 + 0.05 * k, 56.0))
+        win._update_grip_contact(t + 1 + 0.05 * k, 56.0)
+    assert win._grip_contact == 56.0 and beeps == [1]     # latched again, silently

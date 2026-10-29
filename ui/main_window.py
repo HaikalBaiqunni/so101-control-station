@@ -11,6 +11,7 @@ import numpy as np
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -474,12 +475,12 @@ class MainWindow(QMainWindow):
             self._gauge_cal.close_sign, float(saved_gauge.get("speed", 12.0)),
             float(saved_gauge.get("preload", 3.0)), int(saved_gauge.get("repeats", 3)),
             float(saved_gauge.get("max_push", 8.0)))
+        self.gripper_gauge_panel.beep_check.setChecked(bool(self._load_settings().get("gripper_contact_beep", True)))
+        self.gripper_gauge_panel.beep_check.toggled.connect(lambda on: self._save_setting("gripper_contact_beep", on))
         self.gauge_timer = QTimer(self)
         self.gauge_timer.setInterval(self.GAUGE_TICK_MS)
         self.gauge_timer.timeout.connect(self._on_gauge_tick)
         self.gripper_gauge_panel.measure_requested.connect(self._on_gauge_measure)
-        self.gripper_gauge_panel.leader_hold_requested.connect(self._on_leader_hold_requested)
-        self.gripper_gauge_panel.leader_release_requested.connect(self._leader_release)
         self.gripper_gauge_panel.cancel_requested.connect(lambda: self._gauge_abort("cancelled", release=True))
         self.gripper_gauge_panel.settings_changed.connect(self._on_gauge_settings_changed)
         self.gripper_gauge_panel.delete_reference.connect(self._on_gauge_delete_reference)
@@ -901,9 +902,6 @@ class MainWindow(QMainWindow):
         self.leader_worker.positions_updated.connect(self._on_leader_positions)
         self.leader_worker.error.connect(self._on_robot_error)
         self.leader_worker.connection_changed.connect(self._on_leader_connection_changed)
-        self.leader_worker.hold_changed.connect(self.gripper_gauge_panel.set_leader_hold)
-        self.leader_worker.hold_changed.connect(
-            lambda holding, text: self.session_logger.log_event(f"Leader gripper hold: {text}"))
         self.leader_worker.start()
 
     def _on_leader_calibrate_requested(self) -> None:
@@ -1085,8 +1083,8 @@ class MainWindow(QMainWindow):
                 "goal", {"gripper": self.robot_worker.last_goals["gripper"]}
             )
 
-    GRIP_FREE_MAX_NM = 3.0        # while the jaw moves freely the setpoint may lead it by up to this much torque
-    GRIP_LEAD_TAU_S = 0.3         # ... and a moving jaw may be led by what it covers in this long
+    GRIP_FREE_MAX_NM = 4.0        # while the jaw moves freely the setpoint may lead it by up to this much torque
+    GRIP_LEAD_TAU_S = 0.5         # ... and a moving jaw may be led by what it covers in this long
     GRIP_CONTACT_LEAD_DEG = 3.0   # the leader asks for at least this much more closing than the jaw has ...
     GRIP_CONTACT_SPEED = 4.0      # ... while the jaw moves slower than this (deg/s) ...
     GRIP_CONTACT_HOLD_S = 0.2     # ... for this long: it is holding something
@@ -1137,6 +1135,8 @@ class MainWindow(QMainWindow):
                 self._grip_still_since = now
             elif now - self._grip_still_since >= self.GRIP_CONTACT_HOLD_S:
                 self._grip_contact = angle
+                if self.gripper_gauge_panel.beep_check.isChecked():
+                    QApplication.beep()   # a tick for "it touched something" - the jaw is out of sight at the bench
         else:
             self._grip_still_since = None
 
@@ -1302,23 +1302,6 @@ class MainWindow(QMainWindow):
         palette.set_actions(self._palette_actions())
         palette.exec()
 
-    def _leader_release(self) -> None:
-        """Let go of the leader's gripper handle (the hold test) - a no-op when nothing is held."""
-        worker = self.leader_worker
-        if worker is not None and hasattr(worker, "request_hold"):
-            worker.request_release()
-
-    def _on_leader_hold_requested(self, seconds: float, duty: float) -> None:
-        worker = self.leader_worker
-        if worker is None or not hasattr(worker, "request_hold") or getattr(worker, "bus", None) is None:
-            self.statusBar().showMessage("Connect the FashionStar leader (Star Arm 102) first")
-            return
-        if self.teleop_engaged and self.control_source == "leader":
-            self.statusBar().showMessage("Stop the leader relay first: holding the handle would move the follower's gripper")
-            return
-        self.session_logger.log_event(f"Leader gripper hold test: {seconds:g} s at {duty:.0%}")
-        worker.request_hold(seconds, duty)
-
     def _on_emergency_stop(self) -> None:
         """Follower torque OFF and control back to Manual. Forcing Manual matters:
         with a leader relay still active, re-enabling torque later would make the
@@ -1330,7 +1313,6 @@ class MainWindow(QMainWindow):
         self._disengage_teleop("Stop pressed")
         self._gravity_off("Stop pressed")
         self._gauge_abort("Stop pressed", release=False)
-        self._leader_release()
         if self.recorder is not None and self.recorder.recording:
             self._recorder_abort("Stop pressed")
         self.control_source_panel.force_manual()

@@ -5,6 +5,7 @@ import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -34,8 +35,6 @@ class GripperGaugePanel(QWidget):
     settings_changed = Signal()              # direction, speed, preload or repeats edited
     delete_reference = Signal(int)
     clear_references = Signal()
-    leader_hold_requested = Signal(float, float)   # seconds, strength 0.1..1
-    leader_release_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -152,6 +151,8 @@ class GripperGaugePanel(QWidget):
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)
         self.warning_label.setStyleSheet("color: #f5b544;")
+        self.beep_check = QCheckBox("Beep when the gripper touches something")
+        self.beep_check.setChecked(True)
         self.measure_btn = QPushButton("Measure object")
         self.measure_btn.setObjectName("primaryButton")
         self.cancel_btn = QPushButton("Cancel")
@@ -167,6 +168,7 @@ class GripperGaugePanel(QWidget):
         box2 = QVBoxLayout(measure)
         box2.addWidget(QLabel("Live jaw opening"))
         box2.addWidget(self.live_label)
+        box2.addWidget(self.beep_check)
         box2.addWidget(self.result_label)
         box2.addWidget(self.detail_label)
         box2.addWidget(self.warning_label)
@@ -174,35 +176,6 @@ class GripperGaugePanel(QWidget):
         box2.addWidget(self.status_label)
         box2.addWidget(self.history_list)
         box2.addWidget(self.csv_btn)
-
-        # -- leader feedback test ----------------------------------------------------
-        feedback = QGroupBox("LEADER FEEDBACK TEST")
-        self.hold_seconds = QDoubleSpinBox()
-        self.hold_seconds.setRange(0.5, 5.0)
-        self.hold_seconds.setSingleStep(0.5)
-        self.hold_seconds.setValue(2.0)
-        self.hold_seconds.setSuffix(" s")
-        self.hold_strength = QComboBox()
-        for text, duty in (("Light (25%, pulsed)", 0.25), ("Medium (50%, pulsed)", 0.5), ("Full (100%, steady)", 1.0)):
-            self.hold_strength.addItem(text, duty)
-        self.hold_btn = QPushButton("Hold leader gripper")
-        self.hold_status = QLabel("")
-        self.hold_status.setWordWrap(True)
-        hold_note = QLabel(
-            "Experiment, leader only: locks the leader's gripper handle where it is, so you can feel whether a "
-            "'wall' is possible. Keep a finger on the handle, start with Light. It lets go by itself, if you push "
-            "it 8 deg away, on Stop or on disconnect. Not available while the leader relay is running.")
-        hold_note.setWordWrap(True)
-        hold_note.setObjectName("sectionCaption")
-        hold_form = QFormLayout()
-        hold_form.addRow("Hold for", self.hold_seconds)
-        hold_form.addRow("Strength", self.hold_strength)
-        hold_box = QVBoxLayout(feedback)
-        hold_box.addWidget(hold_note)
-        hold_box.addLayout(hold_form)
-        hold_box.addWidget(self.hold_btn)
-        hold_box.addWidget(self.hold_status)
-        self._holding = False
 
         # everything scrolls, so a short window never squeezes the controls over each other
         inner = QWidget()
@@ -218,7 +191,6 @@ class GripperGaugePanel(QWidget):
         root.addWidget(settings)
         root.addWidget(calibration)
         root.addWidget(measure)
-        root.addWidget(feedback)
         root.addStretch(1)
 
         self.zero_btn.clicked.connect(lambda: self.measure_requested.emit("zero", 0.0))
@@ -228,7 +200,6 @@ class GripperGaugePanel(QWidget):
         self.delete_btn.clicked.connect(self._on_delete)
         self.clear_btn.clicked.connect(self.clear_references)
         self.csv_btn.clicked.connect(self._save_csv)
-        self.hold_btn.clicked.connect(self._on_hold_clicked)
         for signal in (self.direction_combo.currentIndexChanged, self.speed_spin.valueChanged,
                        self.preload_spin.valueChanged, self.max_push_spin.valueChanged,
                        self.repeats_spin.valueChanged):
@@ -288,17 +259,6 @@ class GripperGaugePanel(QWidget):
         del self._history[:-MAX_HISTORY]
         self.history_list.addItem(f"{row['time'][11:]}   {width_mm:.2f} mm  +/- {spread_mm:.2f}")
         self.history_list.scrollToBottom()
-
-    def _on_hold_clicked(self) -> None:
-        if self._holding:
-            self.leader_release_requested.emit()
-        else:
-            self.leader_hold_requested.emit(self.hold_seconds.value(), float(self.hold_strength.currentData()))
-
-    def set_leader_hold(self, holding: bool, text: str = "") -> None:
-        self._holding = holding
-        self.hold_btn.setText("Release now" if holding else "Hold leader gripper")
-        self.hold_status.setText(text)
 
     def set_live(self, text: str) -> None:
         self.live_label.setText(text or "-")
