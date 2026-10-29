@@ -791,3 +791,38 @@ def test_the_top_bar_shows_the_width_only_when_calibrated(win):
     win._gauge_cal.set_point(32.0, 30.0)
     win._on_positions_updated({"finger_left": 56.0})
     assert not win.top_bar.width_pill.isHidden() and win.top_bar.width_value.text() == "15.0 mm"
+
+
+# ---------------------------------------------------------------- leader hold test (GUI side)
+class FakeLeaderWorker:
+    def __init__(self):
+        self.bus = object()
+        self.holds, self.releases = [], 0
+
+    def request_hold(self, seconds, duty):
+        self.holds.append((seconds, duty))
+
+    def request_release(self):
+        self.releases += 1
+
+
+def test_leader_hold_button_asks_the_worker_and_stop_releases(win):
+    leader = FakeLeaderWorker()
+    win.leader_worker = leader
+    win.gripper_gauge_panel.hold_btn.click()
+    assert leader.holds == [(2.0, 0.25)]
+    win.top_bar.stop_btn.click()
+    assert leader.releases == 1
+    win.leader_worker = None
+
+
+def test_leader_hold_is_refused_while_the_relay_runs_or_without_a_leader(win):
+    leader = FakeLeaderWorker()
+    win.leader_worker = leader
+    win.teleop_engaged, win.control_source = True, "leader"
+    win.gripper_gauge_panel.hold_btn.click()
+    assert leader.holds == [] and "relay" in win.statusBar().currentMessage()
+    win.teleop_engaged = False
+    win.leader_worker = None
+    win.gripper_gauge_panel.hold_btn.click()
+    assert "leader" in win.statusBar().currentMessage().lower()
