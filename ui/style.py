@@ -324,6 +324,14 @@ QListWidget#sectionList {{
 }}
 QListWidget#sectionList::item {{ padding: 9px 12px; border-radius: 10px; color: {COLORS['text_muted']}; }}
 QListWidget#sectionList::item:selected {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text']}; }}
+QLabel#widthValue {{
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 30px;
+    font-weight: 700;
+    color: {COLORS['text']};
+}}
+QLabel#widthValue[state="grip"] {{ color: {COLORS['good']}; }}
+QLabel#widthCaption {{ color: {COLORS['text_muted']}; font-size: 13px; }}
 QLabel#poseReadout {{
     font-family: "Consolas", "Menlo", monospace;
     color: {COLORS['text']};

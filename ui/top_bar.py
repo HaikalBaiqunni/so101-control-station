@@ -57,6 +57,22 @@ class TopBar(QWidget):
         layout.addWidget(self.left_pill)
         layout.addStretch(1)
 
+        self.width_pill = QFrame()      # the gripper as a caliper: big, readable from across the bench
+        self.width_pill.setObjectName("topPill")
+        width_row = QHBoxLayout(self.width_pill)
+        width_row.setContentsMargins(18, 2, 18, 2)
+        width_row.setSpacing(10)
+        self.width_caption = QLabel("Gripper")
+        self.width_caption.setObjectName("widthCaption")
+        self.width_value = QLabel("-")
+        self.width_value.setObjectName("widthValue")
+        self.width_value.setProperty("state", "free")
+        width_row.addWidget(self.width_caption)
+        width_row.addWidget(self.width_value)
+        self.width_pill.hide()
+        layout.addWidget(self.width_pill)
+        layout.addStretch(1)
+
         self.right_pill = QFrame()
         self.right_pill.setObjectName("topPill")
         right = QHBoxLayout(self.right_pill)
@@ -100,14 +116,14 @@ class TopBar(QWidget):
         self.stop_btn.clicked.connect(self.stop_requested)
         layout.addWidget(self.stop_btn)
 
-        for widget in (self.left_pill, self.right_pill, self.stop_btn):
+        for widget in (self.left_pill, self.width_pill, self.right_pill, self.stop_btn):
             widget.installEventFilter(self)   # their size changes when chip text / buttons change
 
     # -- input passthrough: only the pills and Stop take the mouse -------------
     def _update_mask(self) -> None:
         region = QRegion()
-        for widget in (self.left_pill, self.right_pill, self.stop_btn):
-            if not widget.geometry().isEmpty():
+        for widget in (self.left_pill, self.width_pill, self.right_pill, self.stop_btn):
+            if not widget.isHidden() and not widget.geometry().isEmpty():
                 region = region.united(QRegion(widget.geometry()))
         self.setMask(region)
 
@@ -140,6 +156,18 @@ class TopBar(QWidget):
         chip.setProperty("state", state if state in CHIP_STATES else "off")
         chip.style().unpolish(chip)   # dynamic property: force the QSS to re-evaluate
         chip.style().polish(chip)
+
+    def set_width(self, text: str, state: str = "free", caption: str = "Gripper") -> None:
+        """Big gripper-width readout; empty text hides it. state: free (jaw moving) | grip (touching)."""
+        self.width_pill.setVisible(bool(text))
+        if not text:
+            return
+        self.width_caption.setText(caption)
+        self.width_value.setText(text)
+        if self.width_value.property("state") != state:
+            self.width_value.setProperty("state", state)
+            self.width_value.style().unpolish(self.width_value)
+            self.width_value.style().polish(self.width_value)
 
     def set_nav_checked(self, key: str, checked: bool) -> None:
         """Programmatic check without re-emitting nav_toggled."""

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Leader relay: gripper follows freely, gentle only on contact; big width readout.** The relay's force limit now
+  adapts to the jaw's speed: a moving jaw (or an opening one) may be led by up to 3 N*m / kp, a stopped one only by
+  the Break-away push, so free motion matches the leader again and a jaw that hits something is limited within one
+  follower cycle. When the leader keeps squeezing while the jaw has stopped for 0.2 s, the width is latched as the
+  size of what it holds and shown in a large readout in the top bar (calibrated B601-DM only).
 - **Grip limit on the leader relay, and a live jaw opening.** In MIT mode the follower gripper's squeeze is
   kp x (goal - jaw), so a leader closed all the way squeezed as hard as the motor could. The relay now keeps the
   gripper's goal within the Break-away push of where the jaw really is (never above the 1.5 N*m ceiling for its

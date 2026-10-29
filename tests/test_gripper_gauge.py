@@ -677,7 +677,7 @@ def test_the_leader_cannot_squeeze_harder_than_the_push_limit(win):
     arm(win)                       # kp 8, Break-away push 8 deg -> the setpoint stays within 8 deg of the jaw
     fresh(win, 50.0)
     assert win._limit_grip("finger_left", 100.0) == pytest.approx(58.0)
-    assert win._limit_grip("finger_left", -100.0) == pytest.approx(42.0)
+    assert win._limit_grip("finger_left", -100.0) == pytest.approx(50.0 - math.degrees(3.0 / 8.0))   # opening: free
     assert win._limit_grip("finger_left", 53.0) == 53.0            # a goal inside the lead is untouched
     assert win._limit_grip("joint1", 100.0) == 100.0               # only the gripper
 
@@ -717,3 +717,77 @@ def test_live_width_follows_the_jaw_once_calibrated(win):
     win._gauge_cal.clear()
     win._on_positions_updated({"finger_left": 56.0})
     assert win.gripper_gauge_panel.live_label.text() == "-"
+
+
+def moving(win, angles, dt=0.05):
+    """Feed the jaw's positions as follower updates `dt` apart."""
+    t = mw.time.monotonic()
+    for i, angle in enumerate(angles):
+        win.current_positions["finger_left"] = angle
+        win._last_follower_update = t
+        win._grip_hist.append((t - dt * (len(angles) - 1 - i), angle))
+
+
+def test_a_moving_jaw_is_led_further_than_a_stopped_one(win):
+    arm(win)
+    moving(win, [50.0, 50.0, 50.0])
+    stopped = win._limit_grip("finger_left", 200.0) - 50.0
+    assert stopped == pytest.approx(8.0)                              # the Break-away push
+    win._grip_hist.clear()
+    moving(win, [44.0, 47.0, 50.0])                                    # 60 deg/s
+    free = win._limit_grip("finger_left", 200.0) - 50.0
+    assert free > stopped + 5.0
+    assert free <= math.degrees(3.0 / 8.0) + 1e-9                      # never past the free ceiling
+
+
+def test_a_jaw_that_just_hit_something_is_limited_at_once(win):
+    arm(win)
+    moving(win, [44.0, 47.0, 50.0, 50.0])                              # fast, then stopped in the newest interval
+    assert win._limit_grip("finger_left", 200.0) - 50.0 == pytest.approx(8.0)
+
+
+def test_contact_latches_the_width_and_releases(win):
+    arm(win)
+    win._gauge_cal.set_point(80.0, 0.0)
+    win._gauge_cal.set_point(32.0, 30.0)
+    win.teleop_engaged, win.control_source = True, "leader"
+    win._grip_wanted = 100.0                                          # the leader keeps squeezing
+    t = mw.time.monotonic()
+    win.current_positions["finger_left"] = 56.0
+    for k in range(6):                                                # the jaw sits at 56 for 0.3 s
+        win._grip_hist.append((t + 0.05 * k, 56.0))
+        win._update_grip_contact(t + 0.05 * k, 56.0)
+    assert win._grip_contact == 56.0
+    win._on_positions_updated({"finger_left": 56.4})                  # still holding: the reading stays at the latch
+    assert win.top_bar.width_value.text() == "15.0 mm" and win.top_bar.width_value.property("state") == "grip"
+    win._grip_wanted = 40.0                                           # the hand opens
+    win._on_positions_updated({"finger_left": 56.0})
+    assert win._grip_contact is None
+    assert win.top_bar.width_value.property("state") == "free"
+
+
+def test_no_contact_while_the_jaw_is_moving_or_the_leader_is_not_squeezing(win):
+    arm(win)
+    win.teleop_engaged, win.control_source = True, "leader"
+    win._grip_wanted = 100.0
+    t = mw.time.monotonic()
+    for k in range(8):                                                # moving 30 deg/s
+        angle = 40.0 + 1.5 * k
+        win._grip_hist.append((t + 0.05 * k, angle))
+        win._update_grip_contact(t + 0.05 * k, angle)
+    assert win._grip_contact is None
+    win._grip_wanted = 53.0                                           # stopped, but nobody is asking for more
+    for k in range(8):
+        win._grip_hist.append((t + 1.0 + 0.05 * k, 52.0))
+        win._update_grip_contact(t + 1.0 + 0.05 * k, 52.0)
+    assert win._grip_contact is None
+
+
+def test_the_top_bar_shows_the_width_only_when_calibrated(win):
+    arm(win)
+    win._on_positions_updated({"finger_left": 56.0})
+    assert win.top_bar.width_pill.isHidden()
+    win._gauge_cal.set_point(80.0, 0.0)
+    win._gauge_cal.set_point(32.0, 30.0)
+    win._on_positions_updated({"finger_left": 56.0})
+    assert not win.top_bar.width_pill.isHidden() and win.top_bar.width_value.text() == "15.0 mm"

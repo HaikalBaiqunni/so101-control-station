@@ -5,6 +5,7 @@ import json
 import math
 import os
 import time
+from collections import deque
 
 import numpy as np
 from PySide6.QtCore import QEvent, Qt, QTimer
@@ -462,6 +463,10 @@ class MainWindow(QMainWindow):
         self._gauge_size_mm = 0.0
         self._range_original: tuple[float, float] = (0.0, 0.0)   # the clamp to restore after a range search
         self._range_checked = False   # the jaw's first position after connecting was compared with its saved range
+        self._grip_hist: deque = deque(maxlen=4)   # (monotonic time, jaw angle): the jaw's speed for the relay limit
+        self._grip_wanted: float | None = None     # the leader's raw gripper goal, before the limit
+        self._grip_still_since: float | None = None
+        self._grip_contact: float | None = None    # jaw angle latched while it holds something
         self._last_follower_update = 0.0
         saved_gauge = self._load_settings().get("gripper_gauge", {})
         self._gauge_cal = GaugeCalibration.from_dict(saved_gauge)
@@ -968,6 +973,8 @@ class MainWindow(QMainWindow):
 
     def _on_connection_changed(self, connected: bool) -> None:
         self._range_checked = False
+        self._grip_hist.clear()
+        self._grip_wanted = self._grip_still_since = self._grip_contact = None
         self.connection_panel.set_connected(connected)
         self._follower_connected = connected
         if not connected:
@@ -1061,6 +1068,8 @@ class MainWindow(QMainWindow):
         self._last_follower_update = time.monotonic()
         if not self._range_checked:
             self._check_gripper_range(positions)
+        if self.GAUGE_JOINT in positions:
+            self._grip_hist.append((self._last_follower_update, positions[self.GAUGE_JOINT]))
         self._update_live_width()
         self.session_logger.log_positions("follower", positions)  # internally throttled to 2Hz
         # Log the gripper's commanded value next to its measured one, at the
@@ -1071,11 +1080,25 @@ class MainWindow(QMainWindow):
                 "goal", {"gripper": self.robot_worker.last_goals["gripper"]}
             )
 
+    GRIP_FREE_MAX_NM = 3.0        # while the jaw moves freely the setpoint may lead it by up to this much torque
+    GRIP_LEAD_TAU_S = 0.3         # ... and a moving jaw may be led by what it covers in this long
+    GRIP_CONTACT_LEAD_DEG = 3.0   # the leader asks for at least this much more closing than the jaw has ...
+    GRIP_CONTACT_SPEED = 4.0      # ... while the jaw moves slower than this (deg/s) ...
+    GRIP_CONTACT_HOLD_S = 0.2     # ... for this long: it is holding something
+
+    def _grip_speed(self) -> float:
+        """The jaw's speed in deg/s from the last few follower positions. Deliberately the SLOWEST of the
+        recent intervals: a jaw that just hit something must read as slow at once, not after a filter."""
+        samples = list(self._grip_hist)[-3:]
+        speeds = [abs(a1 - a0) / (t1 - t0) for (t0, a0), (t1, a1) in zip(samples, samples[1:], strict=False) if t1 - t0 > 0.005]
+        return min(speeds) if speeds else 0.0
+
     def _limit_grip(self, name: str, goal: float) -> float | None:
-        """The follower gripper's goal from the leader, with the setpoint kept within the Break-away push of
-        where the jaw really is. In MIT mode the squeeze is kp x (goal - jaw): without this a leader closed
-        all the way squeezes whatever is in the jaws as hard as the motor can, and a measurement taken that
-        way depends on how hard the hand pushed. None = no fresh position, so send nothing."""
+        """The follower gripper's goal from the leader. In MIT mode the squeeze is kp x (goal - jaw), so the
+        setpoint is kept within a lead of where the jaw really is: while the jaw moves (or opens) the lead
+        is generous, so the gripper follows the leader as freely as before; the moment the jaw stops against
+        something the allowance falls back to the Break-away push, so the grip stays gentle and the
+        measurement does not depend on how hard the hand squeezed. None = no fresh position, send nothing."""
         worker = self.robot_worker
         if (name != self.GAUGE_JOINT or self.robot_profile.key != "rebot_b601_dm" or worker is None
                 or getattr(worker, "control_mode", None) != Control_Type.MIT):
@@ -1083,23 +1106,57 @@ class MainWindow(QMainWindow):
         measured = self.current_positions.get(name)
         if measured is None or time.monotonic() - self._last_follower_update > self.GAUGE_STALE_S:
             return None
-        lead = self.gripper_gauge_panel.max_push_spin.value()
+        hold = self.gripper_gauge_panel.max_push_spin.value()
+        free = hold
         kp = self._gauge_kp()
         if kp > 0:
-            lead = min(lead, math.degrees(self.GAUGE_MAX_PUSH_NM / kp))   # the N*m ceiling wins, even over Preload
+            hold = min(hold, math.degrees(self.GAUGE_MAX_PUSH_NM / kp))   # the N*m ceiling wins, even over Preload
+            free = max(hold, math.degrees(self.GRIP_FREE_MAX_NM / kp))
+        closing = self.gripper_gauge_panel.close_sign() * (goal - measured) > 0
+        lead = min(free, hold + self._grip_speed() * self.GRIP_LEAD_TAU_S) if closing else free
         return max(measured - lead, min(measured + lead, goal))
 
+    def _update_grip_contact(self, now: float, angle: float) -> None:
+        """Latch the jaw angle while the leader asks for more closing than the jaw gives and the jaw has
+        stopped - that angle is the size of what it holds. It lets go when the leader backs off or the jaw
+        opens."""
+        sign = self.gripper_gauge_panel.close_sign()
+        relay = self.teleop_engaged and self.control_source == "leader" and self._grip_wanted is not None
+        toward = sign * (self._grip_wanted - angle) if relay else None
+        if self._grip_contact is not None:
+            if toward is None or toward < 1.0 or sign * (self._grip_contact - angle) > 2.0:
+                self._grip_contact = None
+            return
+        if toward is not None and toward > self.GRIP_CONTACT_LEAD_DEG and self._grip_speed() < self.GRIP_CONTACT_SPEED:
+            if self._grip_still_since is None:
+                self._grip_still_since = now
+            elif now - self._grip_still_since >= self.GRIP_CONTACT_HOLD_S:
+                self._grip_contact = angle
+        else:
+            self._grip_still_since = None
+
     def _update_live_width(self) -> None:
-        """Show the jaw opening as a width whenever the gauge is calibrated (the gripper as a live caliper)."""
+        """Show the jaw opening as a width whenever the gauge is calibrated (the gripper as a live caliper):
+        in the Gauge tab and, big, in the top bar. While the jaw holds something the width is latched."""
         if self.robot_profile.key != "rebot_b601_dm":
             return
         angle = self.current_positions.get(self.GAUGE_JOINT)
-        width = None if angle is None else self._gauge_cal.width_mm(angle)
-        if width is None:
+        if angle is None:
             self.gripper_gauge_panel.set_live("")
+            self.top_bar.set_width("")
             return
-        note = "" if self._gauge_cal.in_span(angle) else "  (outside your references)"
-        self.gripper_gauge_panel.set_live(f"{max(width, 0.0):.1f} mm{note}")
+        self._update_grip_contact(time.monotonic(), angle)
+        holding = self._grip_contact is not None
+        shown = self._grip_contact if holding else angle
+        width = self._gauge_cal.width_mm(shown)
+        if width is None or self.robot_worker is None:
+            self.gripper_gauge_panel.set_live("")
+            self.top_bar.set_width("")
+            return
+        inside = self._gauge_cal.in_span(shown)
+        text = f"{max(width, 0.0):.1f} mm"
+        self.gripper_gauge_panel.set_live(text + ("  (holding)" if holding else "") + ("" if inside else "  (outside your references)"))
+        self.top_bar.set_width(text, "grip" if holding else "free", "Holding" if holding else "Gripper")
 
     RANGE_MISMATCH_DEG = 10.0
 
@@ -1607,6 +1664,8 @@ class MainWindow(QMainWindow):
         self._leader_converted.update(converted)
         if self.teleop_engaged and self.control_source == "leader" and self.robot_worker and self._playback_index is None:
             for name, degrees in converted.items():
+                if name == self.GAUGE_JOINT:
+                    self._grip_wanted = degrees
                 limited = self._limit_grip(name, degrees)
                 if limited is not None:
                     self._request_goal(name, limited)
