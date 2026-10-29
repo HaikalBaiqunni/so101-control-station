@@ -103,3 +103,13 @@ def test_a_request_with_no_hold_running_only_clears(worker):
     worker.request_release()
     worker._service_hold(10.0)
     assert worker.bus.calls == [] and worker.events == []
+
+
+def test_the_end_message_reports_the_servo_current(worker):
+    from types import SimpleNamespace
+    worker.request_hold(2.0, 1.0)
+    worker._service_hold(10.0)
+    worker.bus.last_gripper_monitor = SimpleNamespace(current_ma=180.0, power_mw=2100.0)
+    worker._service_hold(10.5)
+    worker._service_hold(12.5)
+    assert "180 mA" in worker.events[-1][1] and "2100 mW" in worker.events[-1][1]

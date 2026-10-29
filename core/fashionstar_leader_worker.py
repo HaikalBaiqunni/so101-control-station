@@ -73,6 +73,8 @@ class FashionStarLeaderWorker(QThread):
 
     def _end_hold(self, message: str) -> None:
         was_holding = self._hold is not None
+        if was_holding and self._hold.get("peak_ma") is not None:
+            message += f" (servo drew up to {self._hold['peak_ma']:.0f} mA / {self._hold['peak_mw']:.0f} mW)"
         self._hold = None
         try:
             if self.bus is not None:
@@ -108,7 +110,12 @@ class FashionStarLeaderWorker(QThread):
             if now >= hold["end"]:
                 self._end_hold("done")
                 return
-            if abs(self.bus.read_gripper_angle() - hold["angle"]) > HOLD_ESCAPE_DEG:
+            angle = self.bus.read_gripper_angle()
+            sample = getattr(self.bus, "last_gripper_monitor", None)
+            if sample is not None and hold["on"]:   # the load while locked: is the servo energised at all?
+                hold["peak_ma"] = max(hold.get("peak_ma") or 0.0, float(getattr(sample, "current_ma", 0.0)))
+                hold["peak_mw"] = max(hold.get("peak_mw") or 0.0, float(getattr(sample, "power_mw", 0.0)))
+            if abs(angle - hold["angle"]) > HOLD_ESCAPE_DEG:
                 self._end_hold(f"released: the handle was pushed more than {HOLD_ESCAPE_DEG:g} deg away")
                 return
             want_on = hold["duty"] >= 1.0 or ((now - hold["start"]) % HOLD_PERIOD_S) < hold["duty"] * HOLD_PERIOD_S

@@ -902,6 +902,8 @@ class MainWindow(QMainWindow):
         self.leader_worker.error.connect(self._on_robot_error)
         self.leader_worker.connection_changed.connect(self._on_leader_connection_changed)
         self.leader_worker.hold_changed.connect(self.gripper_gauge_panel.set_leader_hold)
+        self.leader_worker.hold_changed.connect(
+            lambda holding, text: self.session_logger.log_event(f"Leader gripper hold: {text}"))
         self.leader_worker.start()
 
     def _on_leader_calibrate_requested(self) -> None:

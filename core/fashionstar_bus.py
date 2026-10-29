@@ -147,11 +147,15 @@ class FashionStarBus:
     # The leader is otherwise read-only and free-spinning. These three calls only ever touch the GRIPPER
     # servo, and every command uses the SAME angle convention the monitor reads (multi-turn), so a hold
     # at the angle just read asks for no movement.
+    last_gripper_monitor = None   # the newest reliable monitor sample (angle, current_ma, power_mw, status)
+
     def read_gripper_angle(self) -> float:
-        monitor = self._bus.sync_monitor([JOINT_IDS["gripper"]]).get(JOINT_IDS["gripper"])
-        if monitor is None or not getattr(monitor, "reliable", True):
-            raise FashionStarBusError("gripper: no fresh reading")
-        return monitor.angle_deg
+        for _ in range(3):   # one missed reply is common on a shared bus; three in a row is a real problem
+            monitor = self._bus.sync_monitor([JOINT_IDS["gripper"]]).get(JOINT_IDS["gripper"])
+            if monitor is not None and getattr(monitor, "reliable", True):
+                self.last_gripper_monitor = monitor
+                return monitor.angle_deg
+        raise FashionStarBusError("gripper: no fresh reading")
 
     def hold_gripper(self, angle_deg: float) -> None:
         self._bus.set_angle(JOINT_IDS["gripper"], angle_deg, multi_turn=True)
