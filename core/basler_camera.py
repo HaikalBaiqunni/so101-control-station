@@ -13,6 +13,8 @@ enumeration index.
 """
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -35,8 +37,41 @@ def serial_of(source: str) -> str:
     return source[len(BASLER_PREFIX):]
 
 
+# pylon's device enumeration can kill the whole process from native code (seen as a silent exit with no
+# traceback right at start-up, with nothing in the app changed). The scan runs in a child process so that
+# a crash there costs only the Basler entry in the camera list, never the GUI.
+ISOLATE_ENUMERATION = True
+SCAN_TIMEOUT_S = 20
+_SCAN_CODE = (
+    "from pypylon import pylon\n"
+    "for i in pylon.TlFactory.GetInstance().EnumerateDevices():\n"
+    "    print(i.GetSerialNumber() + '\\t' + i.GetModelName())\n"
+)
+
+
+def _scan_in_child() -> list[tuple[str, str]]:
+    try:
+        result = subprocess.run([sys.executable, "-c", _SCAN_CODE], capture_output=True, text=True,
+                                timeout=SCAN_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        if "No module named" not in result.stderr:   # a missing pypylon is normal; a crash is worth a line
+            print(f"Basler camera scan failed (exit code {result.returncode}); skipping Basler cameras. "
+                  "Check the pylon driver / close pylon Viewer / replug the camera.", file=sys.stderr)
+        return []
+    found = []
+    for line in result.stdout.splitlines():
+        serial, _, model = line.partition("\t")
+        if serial:
+            found.append((BASLER_PREFIX + serial, f"Basler {model} ({serial})"))
+    return found
+
+
 def list_basler_cameras() -> list[tuple[str, str]]:
     """[(source id, label)] for every Basler camera pylon can see; [] without pypylon."""
+    if ISOLATE_ENUMERATION and not getattr(sys, "frozen", False):   # a frozen exe cannot re-run itself as python
+        return _scan_in_child()
     try:
         pylon = _pylon()
         infos = pylon.TlFactory.GetInstance().EnumerateDevices()

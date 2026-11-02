@@ -1113,6 +1113,7 @@ def test_listing_uses_serial_and_model_and_survives_pypylon_missing(monkeypatch)
     class FakePylon:
         TlFactory = Factory
 
+    monkeypatch.setattr(basler_camera, "ISOLATE_ENUMERATION", False)   # the fake lives in this process
     monkeypatch.setattr(basler_camera, "_pylon", lambda: FakePylon)
     assert basler_camera.list_basler_cameras() == [("basler:23581801", "Basler acA1300-200um (23581801)")]
 
