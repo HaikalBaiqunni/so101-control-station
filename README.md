@@ -6,8 +6,9 @@
 
 **One desktop app to set up, calibrate, jog and teleoperate two robot arms, with a live MuJoCo digital twin.**
 It takes a Feetech **SO-101 / SO-ARM100** from *"I just opened the box"* to *"it's moving"*, and
-drives the Damiao-based **reBot B601-DM** (with Seeed's Star Arm 102 leader) from the same window.
-No PyTorch, no `lerobot` install.
+drives the Damiao-based **reBot B601-DM** (with Seeed's Star Arm 102 leader) from the same window. Both are
+real-hardware drivers, not simulations: the B601-DM follower, its gravity compensation, the Star Arm 102 leader relay
+and the gripper caliper have all been run on a physical arm. No PyTorch, no `lerobot` install.
 
 ![The stage: the MuJoCo digital twin fills the window with floating View, Jog and connection cards](docs/screenshot_control.png)
 
@@ -29,7 +30,8 @@ physical AI. This app collapses it into one stage plus a Setup hub.
 
 ## Tour
 
-Scripted tours of the layout (no hardware connected; the poses and the "online" chips are simulated).
+Scripted tours of the layout. Only these recordings and screenshots were made without hardware (the poses and the
+"online" chips in them are simulated); the app itself drives real robots.
 
 **SO-101**: the stage with the twin following joint motion, the leader arm on standby with the ghost and
 the alignment gate, the Waypoints and Telemetry drawers, cards minimising to tabs, then the Setup hub with
@@ -249,9 +251,18 @@ work the same, because the Damiao worker exposes the identical `request_goal` / 
   setting, 1.5 N*m ceiling) and a jaw that stops moving while the target runs ahead counts as the end of travel.
   It looks at most 360 deg either way, fails rather than pushes on, and saves and applies the range it found.
   Stop, torque off, Cancel or a disconnect abort it and leave the saved range untouched.
-- **Gripper as a live caliper.** Once the Gripper gauge is calibrated, the tab shows the jaw opening in mm all the
-  time, so you can measure by driving the gripper with the leader. While the leader relay drives it in MIT mode the
-  squeeze is limited (Break-away push, 1.5 N*m ceiling), so closing the leader fully cannot crush the object.
+- **Gripper as a live caliper.** Once the Gripper gauge is calibrated, the jaw opening is shown in mm in large type
+  in the top bar (and in the Gauge tab) all the time, so you can measure by driving the gripper with the leader.
+  - *Contact latch:* when the leader keeps squeezing (more than 3 deg past the jaw) but the jaw has stopped (under
+    4 deg/s for 0.2 s), the width is latched as the object size, the readout turns green ("Holding") and the app beeps
+    once (checkbox in the Gauge tab). It releases when you back off or the jaw opens.
+  - *Squeeze limit:* the relay follows the leader at full speed while the jaws move freely (target lead up to
+    4 N*m / kp). Once the jaw slows down, the lead shrinks toward the Break-away push, never above 1.5 N*m, so
+    closing the leader fully cannot crush the object.
+  - *Accuracy:* the reading is the encoder angle converted with the gauge-block fit, pad to pad. A rough engineering
+    estimate is a few tenths of a mm accuracy and about 0.1 mm repeatability with a consistent approach; this has not
+    been measured on a real gripper yet. It is a coarse caliper, not a replacement for a scale-equipped measuring
+    gripper (those reach micrometres).
 
 ### Motion control and the Tune drawer
 
