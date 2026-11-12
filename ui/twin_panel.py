@@ -382,6 +382,13 @@ class TwinPanel(QGroupBox):
         self.view.setPixmap(QPixmap())
         self.view.setText("twin not loaded")
 
+    def clear_telemetry(self) -> None:
+        """Forget the HUD's joints (a different robot has different ones; the old bars would be wrong)."""
+        self._hud_raw.clear()
+        self._hud_smoothed.clear()
+        self._hud_order = []
+        self._refresh_view()
+
     def update_telemetry(self, hud: dict[str, dict[str, float]]) -> None:
         """`hud`: {joint: {"position_deg", "load", "temperature",
         "current_mA"}} - already unit-converted, see

@@ -142,6 +142,14 @@ def test_stop_and_chips_work_the_same(win):
     assert win.robot_worker.torque_calls == [True, False] and win.control_source == "manual"
 
 
+def test_switching_robot_clears_the_hud_of_the_previous_robots_joints(win):
+    _pick(win, "so101")
+    win.twin_panel.update_telemetry({"shoulder_pan": {"position_deg": 10.0, "load": 5.0}})
+    assert win.twin_panel._hud_order == ["shoulder_pan"]
+    _pick(win, "rebot_b601_dm")
+    assert win.twin_panel._hud_order == [] and not win.twin_panel._hud_raw
+
+
 def test_the_palette_opens_tools_and_offers_the_other_layout(win):
     actions = {a.title: a for a in win._palette_actions()}
     assert "Reset card layout" not in actions                    # no cards here

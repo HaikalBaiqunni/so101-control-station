@@ -26,7 +26,7 @@ class DataLogsPage(QWidget):
         self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.open_btn = QPushButton("Open log folder")
         self.open_btn.clicked.connect(self._open_folder)
-        csv_note = QLabel("The telemetry CSV log is started from the Telemetry drawer (Start CSV Log).")
+        csv_note = QLabel("The telemetry CSV log is started from the Telemetry task (Start CSV Log).")
         csv_note.setObjectName("sectionCaption")
         csv_note.setWordWrap(True)
 

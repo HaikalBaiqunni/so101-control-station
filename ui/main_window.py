@@ -666,6 +666,7 @@ class MainWindow(QMainWindow):
         profile = get_profile(key)
         self.robot_profile = profile
         self._save_setting("robot_profile", key)
+        self.twin_panel.clear_telemetry()   # the previous robot's joints must not linger in the HUD
 
         # Any real hardware connection belonged to the PREVIOUS robot -
         # unconditional on every profile switch now, not just when moving to
