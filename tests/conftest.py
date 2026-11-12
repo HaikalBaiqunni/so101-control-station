@@ -65,6 +65,29 @@ def _classic_layout_by_default(monkeypatch, request):
     yield
 
 
+def pytest_sessionfinish(session, exitstatus):
+    session.config._so101_exit_status = int(exitstatus)
+
+
+def pytest_unconfigure(config):
+    """Leave the process right after the summary, with pytest's own exit code.
+
+    Every test has passed by now, but a CI run (Ubuntu, Python 3.10) once aborted with
+    "munmap_chunk(): invalid pointer" while the interpreter tore down Qt, MuJoCo, OpenCV and pygame
+    (their native destructors run in an unlucky order), turning a green run red. It did not reproduce
+    in four more runs on Ubuntu 22.04. Skipping the interpreter's final teardown avoids that crash;
+    the exit status still reflects the test results. Linux only: on Windows the normal teardown is clean,
+    and ExitProcess without it trips an access violation while the DLLs detach."""
+    import sys
+
+    status = getattr(config, "_so101_exit_status", None)
+    if status is None or not sys.platform.startswith("linux"):
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(status)
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "workspace_layout: build MainWindow in the Workspace layout (the app default)")
     config.addinivalue_line("markers", "real_so101_profile: keep the SO-101 profile's bundled twin path")
