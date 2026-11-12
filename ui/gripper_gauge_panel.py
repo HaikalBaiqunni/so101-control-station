@@ -151,6 +151,14 @@ class GripperGaugePanel(QWidget):
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)
         self.warning_label.setStyleSheet("color: #f5b544;")
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Measure: gentle, slows on contact", "measure")
+        self.mode_combo.addItem("Normal: follow the leader at full speed", "normal")
+        self.mode_combo.setToolTip(
+            "How the leader relay drives the gripper. Measure keeps the squeeze gentle, so the width does not\n"
+            "depend on how hard you grip. Normal follows the leader as fast as the motor can go (the squeeze is\n"
+            "only capped at a high ceiling) - use it to pick things up."
+        )
         self.beep_check = QCheckBox("Beep when the gripper touches something")
         self.beep_check.setChecked(True)
         self.measure_btn = QPushButton("Measure object")
@@ -168,6 +176,8 @@ class GripperGaugePanel(QWidget):
         box2 = QVBoxLayout(measure)
         box2.addWidget(QLabel("Live jaw opening"))
         box2.addWidget(self.live_label)
+        box2.addWidget(QLabel("Gripper speed (leader relay)"))
+        box2.addWidget(self.mode_combo)
         box2.addWidget(self.beep_check)
         box2.addWidget(self.result_label)
         box2.addWidget(self.detail_label)

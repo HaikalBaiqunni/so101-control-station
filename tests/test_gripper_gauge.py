@@ -746,6 +746,17 @@ def test_a_jaw_that_just_hit_something_is_limited_at_once(win):
     assert win._limit_grip("finger_left", 200.0) - 50.0 == pytest.approx(8.0)
 
 
+def test_normal_mode_does_not_slow_the_gripper_on_contact(win):
+    arm(win)                                                           # kp 8
+    moving(win, [50.0, 50.0, 50.0])                                    # the jaw sits against something
+    assert win._limit_grip("finger_left", 200.0) - 50.0 == pytest.approx(8.0)          # Measure: gentle
+    win.gripper_gauge_panel.mode_combo.setCurrentIndex(win.gripper_gauge_panel.mode_combo.findData("normal"))
+    lead = win._limit_grip("finger_left", 200.0) - 50.0
+    assert lead == pytest.approx(math.degrees(mw.MainWindow.GRIP_NORMAL_MAX_NM / 8.0))  # only the high ceiling
+    assert win._limit_grip("finger_left", 53.0) == 53.0                # a goal inside the lead is untouched
+    assert win._limit_grip("joint1", 100.0) == 100.0                   # still only the gripper
+
+
 def test_contact_latches_the_width_and_releases(win):
     arm(win)
     win._gauge_cal.set_point(80.0, 0.0)

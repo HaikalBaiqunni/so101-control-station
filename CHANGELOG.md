@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Several cameras at once.** The Camera card has a slot per camera (up to three, **+ Add camera**), each with its
+  own device picker and Start / Stop, so a camera on the robot and an observing camera can be shown together. The same
+  device cannot be opened in two slots. The card grows to fit unless you sized it yourself. The Recorder still films
+  one camera: the first.
+- **Gripper speed mode (Gauge tab).** *Measure* keeps the adaptive, gentle relay above; *Normal* lets the gripper
+  follow the leader at full speed, with only an 8 N*m / kp ceiling on how far the setpoint may lead the jaw (no
+  slowing on contact), for picking things up. The choice is remembered; the default stays Measure.
 - **Leader relay: gripper follows freely, gentle only on contact; big width readout.** The relay's force limit now
   adapts to the jaw's speed: a moving jaw (or an opening one) may be led by up to 4 N*m / kp, a stopped one only by
   the Break-away push, so free motion matches the leader again and a jaw that hits something is limited within one

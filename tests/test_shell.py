@@ -1131,9 +1131,83 @@ def test_the_camera_panel_lists_and_selects_a_basler_source(qapp, monkeypatch):
     panel.device_combo.setCurrentIndex(1)
     assert panel.selected_index() == "basler:123"
     seen = []
-    panel.start_requested.connect(seen.append)
+    panel.start_requested.connect(lambda source, slot: seen.append((source, slot)))
     panel.toggle_btn.click()
-    assert seen == ["basler:123"]
+    assert seen == [("basler:123", 0)]
+
+
+def test_the_camera_panel_runs_several_cameras_and_refuses_the_same_device_twice(qapp, monkeypatch):
+    import numpy as np
+
+    from ui import camera_panel as cp
+    monkeypatch.setattr(cp, "list_camera_sources", lambda: [(0, "Webcam (#0)"), (1, "Webcam (#1)")])
+    panel = cp.CameraPanel()
+    counts, starts, stops = [], [], []
+    panel.slots_changed.connect(counts.append)
+    panel.start_requested.connect(lambda source, slot: starts.append((source, slot)))
+    panel.stop_requested.connect(stops.append)
+    assert len(panel.slots) == 1 and not panel.remove_btn.isEnabled()
+    second = panel.add_slot()
+    assert counts == [2] and second.selected_index() == 1           # offers the device the first one is not using
+    panel.slot(0).toggle_btn.click()
+    second.toggle_btn.click()
+    assert starts == [(0, 0), (1, 1)]
+    assert not panel.slot(0).device_combo.isEnabled() and not second.device_combo.isEnabled()
+    third = panel.add_slot()
+    assert panel.add_slot() is None and not panel.add_btn.isEnabled()   # at most MAX_CAMERAS
+    third.device_combo.setCurrentIndex(third.device_combo.findData(0))
+    third.toggle_btn.click()                                        # device 0 is already open in camera 1
+    assert starts == [(0, 0), (1, 1)] and "Already shown in camera 1" in third.view.text()
+    panel.remove_last_slot()
+    assert len(panel.slots) == 2 and counts[-1] == 2
+    second.toggle_btn.click()
+    assert stops == [1] and not second.running
+    panel.show_frame(np.zeros((4, 4, 3), dtype=np.uint8), 0)        # delivered to the chosen slot, not a crash
+    panel.slot(1).show_error("lost")
+    assert panel.slot(1).view.text() == "lost" and panel.slot(0).running
+
+
+def test_each_camera_slot_gets_its_own_worker_and_only_the_first_feeds_the_recorder(win, monkeypatch):
+    from core import basler_camera
+
+    class Sig:
+        def __init__(self):
+            self.slots = []
+
+        def connect(self, fn):
+            self.slots.append(fn)
+
+    class StubWorker:
+        created = []
+
+        def __init__(self, serial):
+            self.serial = serial
+            self.frame_ready, self.error, self.started_ok, self.finished = Sig(), Sig(), Sig(), Sig()
+            self.stopped = False
+            StubWorker.created.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            self.stopped = True
+
+        def wait(self, _ms):   # the window's shutdown waits on retired workers
+            return True
+
+    monkeypatch.setattr(basler_camera, "BaslerCameraWorker", StubWorker)
+    win.camera_panel.add_slot()
+    win._on_camera_start("basler:1", 0)
+    win._on_camera_start("basler:2", 1)
+    first, second = StubWorker.created
+    assert sorted(win.camera_workers) == [0, 1] and win.camera_worker is first
+    assert win._on_recorder_frame in first.frame_ready.slots
+    assert win._on_recorder_frame not in second.frame_ready.slots
+    win._on_camera_stop(1)
+    assert sorted(win.camera_workers) == [0] and win.camera_worker is first   # the first keeps running
+    win._on_camera_stop(0)
+    assert win.camera_workers == {}
+    win.camera_panel.remove_last_slot()
 
 
 def test_starting_a_basler_source_builds_the_basler_worker(win, monkeypatch):

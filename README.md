@@ -256,7 +256,9 @@ work the same, because the Damiao worker exposes the identical `request_goal` / 
   - *Contact latch:* when the leader keeps squeezing (more than 3 deg past the jaw) but the jaw has stopped (under
     4 deg/s for 0.2 s), the width is latched as the object size, the readout turns green ("Holding") and the app beeps
     once (checkbox in the Gauge tab). It releases when you back off or the jaw opens.
-  - *Squeeze limit:* the relay follows the leader at full speed while the jaws move freely (target lead up to
+  - *Speed mode* (Gauge tab): **Measure** (default) is the gentle behaviour below; **Normal** follows the leader at
+    full speed with no slowing on contact (the setpoint lead is only capped at 8 N*m / kp), for ordinary pick-and-place.
+  - *Squeeze limit (Measure mode):* the relay follows the leader at full speed while the jaws move freely (target lead up to
     4 N*m / kp). Once the jaw slows down, the lead shrinks toward the Break-away push, never above 1.5 N*m, so
     closing the leader fully cannot crush the object.
   - *Accuracy:* the reading is the encoder angle converted with the gauge-block fit, pad to pad. A rough engineering
@@ -306,8 +308,10 @@ The B601-DM's matched leader is a *completely different* device from the followe
 
 ## Cameras
 
-The **Camera** card shows any camera next to the twin, handy for comparing it with the real arm. Pick the device in the
-card and press Start (one camera at a time).
+The **Camera** card shows cameras next to the twin, handy for comparing it with the real arm. Pick the device in the
+card and press Start. **+ Add camera** adds another view (up to three, two per row), each with its own device
+picker and Start / Stop, so you can watch, say, a camera on the robot and one observing it at the same time. The
+same physical camera cannot be opened twice. The Recorder films the first camera only.
 
 | Camera | How |
 |---|---|
@@ -409,8 +413,11 @@ Calibration files remain byte-compatible in both directions: use this app for se
   velocity or force profile, no generalisation to a changed scene. For imitation learning, record episodes with the
   Recorder (or `lerobot-record`).
 - **Gamepad mapping is fixed** (edit `DEFAULT_AXIS_MAP` / `DEFAULT_BUTTON_MAP` in `ui/gamepad_panel.py`).
-- **One camera at a time.** Switching between two *different* physical devices back-to-back crashes some
-  Windows / OpenCV combinations, so the device picker is locked while a camera runs: Stop, switch, Start.
+- **Switching a camera's device needs Stop first.** Releasing one physical device and opening a different one
+  back-to-back crashes some Windows / OpenCV combinations, so a camera's picker is locked while it runs: Stop,
+  switch, Start. Several cameras at once are supported, but two USB cameras on the same hub can exceed its
+  bandwidth (a frozen or black view): use separate ports, and note this has not been tried with every camera
+  type together. The Recorder films one camera (the first) per take.
 - **`Present_Velocity`'s unit is a derived estimate**, not vendor-documented. The Telemetry graph's cross-check lets you
   confirm or refute it on your hardware; it is marked with `*` everywhere.
 - **Servo id and baudrate writes are EEPROM writes.** They are bracketed and verified, but permanent until changed again.

@@ -328,7 +328,7 @@ class MainWindow(QMainWindow):
         self.calibration_worker: CalibrationWorker | None = None
         self.setup_worker: SetupWorker | None = None
         self.dm_setup_worker: DmSetupWorker | None = None
-        self.camera_worker: CameraWorker | None = None
+        self.camera_workers: dict[int, object] = {}   # camera slot -> its worker; slot 0 is the one the recorder uses
         self.gamepad_worker: GamepadWorker | None = None
         self.twin_worker: TwinWorker | None = None
         self.current_positions: dict[str, float] = dict.fromkeys(JOINT_ORDER, 0.0)
@@ -440,6 +440,7 @@ class MainWindow(QMainWindow):
         # -- wiring: camera --------------------------------------------------
         self.camera_panel.start_requested.connect(self._on_camera_start)
         self.camera_panel.stop_requested.connect(self._on_camera_stop)
+        self.camera_panel.slots_changed.connect(self.stage.set_camera_slots)
 
         # -- wiring: recorder ----------------------------------------------------
         self.recorder: EpisodeRecorder | None = None
@@ -477,6 +478,9 @@ class MainWindow(QMainWindow):
             float(saved_gauge.get("max_push", 8.0)))
         self.gripper_gauge_panel.beep_check.setChecked(bool(self._load_settings().get("gripper_contact_beep", True)))
         self.gripper_gauge_panel.beep_check.toggled.connect(lambda on: self._save_setting("gripper_contact_beep", on))
+        combo = self.gripper_gauge_panel.mode_combo
+        combo.setCurrentIndex(max(0, combo.findData(self._load_settings().get("gripper_relay_mode", "measure"))))
+        combo.currentIndexChanged.connect(lambda _i: self._save_setting("gripper_relay_mode", combo.currentData()))
         self.gauge_timer = QTimer(self)
         self.gauge_timer.setInterval(self.GAUGE_TICK_MS)
         self.gauge_timer.timeout.connect(self._on_gauge_tick)
@@ -1085,6 +1089,7 @@ class MainWindow(QMainWindow):
 
     GRIP_FREE_MAX_NM = 4.0        # while the jaw moves freely the setpoint may lead it by up to this much torque
     GRIP_LEAD_TAU_S = 0.5         # ... and a moving jaw may be led by what it covers in this long
+    GRIP_NORMAL_MAX_NM = 8.0      # "Normal" relay mode: only this torque caps the lead (the model's per-finger force range)
     GRIP_CONTACT_LEAD_DEG = 3.0   # the leader asks for at least this much more closing than the jaw has ...
     GRIP_CONTACT_SPEED = 4.0      # ... while the jaw moves slower than this (deg/s) ...
     GRIP_CONTACT_HOLD_S = 0.2     # ... for this long: it is holding something
@@ -1116,6 +1121,10 @@ class MainWindow(QMainWindow):
             hold = min(hold, math.degrees(self.GAUGE_MAX_PUSH_NM / kp))   # the N*m ceiling wins, even over Preload
             free = max(hold, math.degrees(self.GRIP_FREE_MAX_NM / kp))
         closing = self.gripper_gauge_panel.close_sign() * (goal - measured) > 0
+        if self.gripper_gauge_panel.mode_combo.currentData() == "normal":
+            # Picking things up: no slowing on contact, the jaw follows the leader as fast as the motor goes.
+            lead = max(free, math.degrees(self.GRIP_NORMAL_MAX_NM / kp)) if kp > 0 else free
+            return max(measured - lead, min(measured + lead, goal))
         lead = min(free, hold + self._grip_speed() * self.GRIP_LEAD_TAU_S) if closing else free
         return max(measured - lead, min(measured + lead, goal))
 
@@ -1888,7 +1897,19 @@ class MainWindow(QMainWindow):
     # switching" bug). QThread's own `finished` signal fires the instant the
     # thread really is done, with no arbitrary timeout to blow past, and
     # doesn't block anything while we wait for it.
-    def _on_camera_start(self, source) -> None:
+    @property
+    def camera_worker(self):
+        """The first camera's worker (what the recorder films), None when that slot is idle."""
+        return self.camera_workers.get(0)
+
+    @camera_worker.setter
+    def camera_worker(self, worker) -> None:
+        if worker is None:
+            self.camera_workers.pop(0, None)
+        else:
+            self.camera_workers[0] = worker
+
+    def _on_camera_start(self, source, slot: int = 0) -> None:
         from core.basler_camera import BaslerCameraWorker, is_basler_source, serial_of
         from core.realsense_camera import RealSenseCameraWorker, is_realsense_source, parse_source
         from core.realsense_legacy import L515CameraWorker, is_l515_source
@@ -1896,37 +1917,40 @@ class MainWindow(QMainWindow):
 
         if is_l515_source(source):
             serial, mode = parse_l515_source(source)
-            self.camera_panel.set_busy(True, f"starting RealSense L515 {serial} ({mode})...")
+            self.camera_panel.set_busy(True, f"starting RealSense L515 {serial} ({mode})...", slot)
             worker = L515CameraWorker(serial, mode)
         elif is_realsense_source(source):
             serial, mode = parse_source(source)
-            self.camera_panel.set_busy(True, f"starting RealSense {serial} ({mode})...")
+            self.camera_panel.set_busy(True, f"starting RealSense {serial} ({mode})...", slot)
             worker = RealSenseCameraWorker(serial, mode)
         elif is_basler_source(source):
-            self.camera_panel.set_busy(True, f"starting Basler camera {serial_of(source)}...")
+            self.camera_panel.set_busy(True, f"starting Basler camera {serial_of(source)}...", slot)
             worker = BaslerCameraWorker(serial_of(source))
         else:
-            self.camera_panel.set_busy(True, f"starting device #{source}...")
+            self.camera_panel.set_busy(True, f"starting device #{source}...", slot)
             worker = CameraWorker(source)
-        worker.frame_ready.connect(self.camera_panel.show_frame)
-        worker.frame_ready.connect(self._on_recorder_frame)
-        worker.error.connect(self.camera_panel.show_error)
-        worker.started_ok.connect(lambda: self.camera_panel.set_busy(False))
-        self.camera_worker = worker
+        view = self.camera_panel.slot(slot)   # bound methods of the slot widget: delivered on the GUI thread
+        worker.frame_ready.connect(view.show_frame)
+        if slot == 0:
+            worker.frame_ready.connect(self._on_recorder_frame)   # one camera per take: the first one
+        worker.error.connect(view.show_error)
+        worker.started_ok.connect(lambda: view.set_busy(False))
+        self.camera_workers[slot] = worker
         self._refresh_recorder_ui()
         worker.start()
 
-    def _on_camera_stop(self) -> None:
-        if not self.camera_worker:
+    def _on_camera_stop(self, slot: int = 0) -> None:
+        worker = self.camera_workers.pop(slot, None)
+        if worker is None:
             return
-        self.camera_panel.set_busy(True, "stopping...")
-        worker = self.camera_worker
-        self.camera_worker = None
-        self._rec_frame = None
-        if self.recorder is not None and self.recorder.recording:
-            self._recorder_abort("camera stopped")   # the take would have no picture from here on
-        self._refresh_recorder_ui()
-        worker.finished.connect(lambda: self.camera_panel.set_busy(False))
+        view = self.camera_panel.slot(slot)
+        view.set_busy(True, "stopping...")
+        if slot == 0:
+            self._rec_frame = None
+            if self.recorder is not None and self.recorder.recording:
+                self._recorder_abort("camera stopped")   # the take would have no picture from here on
+            self._refresh_recorder_ui()
+        worker.finished.connect(lambda: view.set_busy(False))
         self._retire_worker(worker)  # just flips a flag - the thread notices and exits on its own
 
     # ---------------------------------------------------------------- gripper gauge
@@ -3532,7 +3556,8 @@ class MainWindow(QMainWindow):
         self._on_calibration_disconnect()
         self._on_setup_disconnect()
         self._on_dm_setup_disconnect()
-        self._on_camera_stop()
+        for slot in list(self.camera_workers):
+            self._on_camera_stop(slot)
         if self.gamepad_worker:
             self.gamepad_worker.stop()
         if self.twin_worker:

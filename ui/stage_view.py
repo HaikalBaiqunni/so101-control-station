@@ -246,6 +246,14 @@ class StageView(QWidget):
     def is_collapsed(self, key: str) -> bool:
         return key in self._collapsed or key in self._auto
 
+    def set_camera_slots(self, count: int) -> None:
+        """More cameras need more room: grow the card (two per row) unless the user already sized it."""
+        if self._camera_custom:
+            return
+        cols, rows = min(count, 2), (count + 1) // 2
+        self._camera_size = QSize(CAMERA_DEFAULT.width() * cols, CAMERA_DEFAULT.height() * rows)
+        self._layout_cards()
+
     def set_camera_visible(self, visible: bool) -> None:
         self.camera_card.setVisible(visible)
         self._layout_cards()
