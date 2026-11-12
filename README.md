@@ -99,8 +99,20 @@ twin and the jog engine are shared.
 
 ## The layout
 
-One window, no tabs: the twin is the background, the tools sit on it as cards, and the heavier ones open as
-drawers or in the Setup hub.
+Two layouts hold the same panels; no feature exists in only one of them.
+
+**Workspace (default)**: nothing floats over the pictures.
+
+| | |
+|---|---|
+| **Top bar** | Robot picker, status chips, the gripper width readout, search (**Ctrl+K**), About and **Stop**. |
+| **Task rail** (left) | **Operate**, **Measure** (Gauge, B601-DM), **Teach** (Waypoints), **Record**, **Tune** (B601-DM), **Telemetry**, **Setup**. One task at a time. |
+| **Tiles** (middle) | The **Digital twin** and the **Cameras** side by side, with a draggable divider. **Expand** gives one tile (the twin, or a single camera) the whole middle; **Esc** or **Restore** brings the rest back. **View options** on the twin holds Ghost target, Axes, HUD overlay, the Camera tile switch, Reset View and the model file. |
+| **Right panel** | Only what the task needs. Operate shows **Connection**, **Control source** and **Jog**; every other task shows its own tool, with **Jog** as a fold-out underneath so you can still move the arm while measuring, teaching or recording. Wide tools (Telemetry) widen the panel. |
+
+**Classic**: the twin fills the window and the tools sit on it as floating cards, with drawers on the right
+(described below). Switch with **Classic layout** at the bottom of the rail, or **Ctrl+K**, *Layout: switch to ...*;
+the choice is saved and applies after a restart (the app offers to restart itself).
 
 | | |
 |---|---|

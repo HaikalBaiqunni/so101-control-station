@@ -237,6 +237,7 @@ class TwinPanel(QGroupBox):
         reset_row = QHBoxLayout()
         reset_row.addWidget(reset_view_btn, 1)
         reset_row.addWidget(reset_layout_btn)
+        self.reset_layout_btn = reset_layout_btn   # the Workspace layout hides it
         card_body.addLayout(reset_row)
         model_caption = QLabel("Twin model")
         model_caption.setObjectName("sectionCaption")

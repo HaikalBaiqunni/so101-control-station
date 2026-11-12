@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Workspace layout (new default).** Nothing floats over the twin or the cameras any more: a task rail on the left
+  (Operate, Measure, Teach, Record, Tune, Telemetry, Setup), the twin and the cameras as tiles in the middle (each can
+  be expanded; Esc restores), and a right panel that shows only the current task's tools. Jog folds out under every
+  tool. The View card became a **View options** popup on the twin tile. The previous floating-card layout is kept
+  as **Classic** (rail button or Ctrl+K; saved, applies after a restart). All panels are shared, so no feature is
+  specific to one layout.
+- **Camera tile details.** One Refresh for all cameras, a per-camera **Expand** in the Workspace, and long device
+  names no longer force the camera area wide.
 - **Several cameras at once.** The Camera card has a slot per camera (up to three, **+ Add camera**), each with its
   own device picker and Start / Stop, so a camera on the robot and an observing camera can be shown together. The same
   device cannot be opened in two slots. The card grows to fit unless you sized it yourself. The Recorder still films

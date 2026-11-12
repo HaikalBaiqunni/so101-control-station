@@ -87,6 +87,12 @@ class TopBar(QWidget):
         self.search_btn.clicked.connect(self.palette_requested)
         right.addWidget(self.search_btn)
         self.nav_buttons: dict[str, QPushButton] = {}
+        self.nav_box = QWidget()          # the Workspace layout hides this: its rail does the navigating
+        self.nav_box.setObjectName("plainBox")
+        nav_row = QHBoxLayout(self.nav_box)
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(4)
+        right.addWidget(self.nav_box)
         for key, text in self.NAV:
             button = QPushButton(text)
             button.setObjectName("segButton")
@@ -96,7 +102,7 @@ class TopBar(QWidget):
             button.setIconSize(QSize(18, 18))
             button.toggled.connect(lambda checked, k=key: self.nav_toggled.emit(k, checked))
             self.nav_buttons[key] = button
-            right.addWidget(button)
+            nav_row.addWidget(button)
         self.about_btn = QPushButton("")
         self.about_btn.setObjectName("segButton")
         self.about_btn.setFocusPolicy(Qt.NoFocus)
@@ -168,6 +174,11 @@ class TopBar(QWidget):
             self.width_value.setProperty("state", state)
             self.width_value.style().unpolish(self.width_value)
             self.width_value.style().polish(self.width_value)
+
+    def set_nav_visible(self, visible: bool) -> None:
+        """Hide the drawer / page buttons (they keep working as state: the Workspace rail drives them)."""
+        self.nav_box.setVisible(visible)
+        self._update_mask()
 
     def set_nav_checked(self, key: str, checked: bool) -> None:
         """Programmatic check without re-emitting nav_toggled."""

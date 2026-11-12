@@ -51,7 +51,22 @@ def _no_default_twin_for_so101(monkeypatch, request):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _classic_layout_by_default(monkeypatch, request):
+    """The app starts in the Workspace layout. The older suites drive the Classic shell (floating cards,
+    a drawer that hides), so they get it unless a test asks for the Workspace with
+    @pytest.mark.workspace_layout or passes layout= itself."""
+    if request.node.get_closest_marker("workspace_layout"):
+        yield
+        return
+    from ui import main_window
+
+    monkeypatch.setattr(main_window.MainWindow, "DEFAULT_LAYOUT", "classic")
+    yield
+
+
 def pytest_configure(config):
+    config.addinivalue_line("markers", "workspace_layout: build MainWindow in the Workspace layout (the app default)")
     config.addinivalue_line("markers", "real_so101_profile: keep the SO-101 profile's bundled twin path")
     config.addinivalue_line("markers", "real_pylon: let the test use pypylon (the camera emulator)")
 

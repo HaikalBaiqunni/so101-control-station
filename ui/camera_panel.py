@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -25,7 +26,7 @@ class CameraSlot(QWidget):
 
     start_requested = Signal(object)   # camera index (int) or "basler:<serial>"
     stop_requested = Signal()
-    refresh_requested = Signal()
+    maximize_toggled = Signal(bool)
 
     def __init__(self, number: int, parent=None):
         super().__init__(parent)
@@ -35,13 +36,20 @@ class CameraSlot(QWidget):
 
         self.title_label = QLabel(f"Camera {number}")
         self.device_combo = QComboBox()
-
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setToolTip("Re-scan cameras. Basler cameras need pypylon (pip install pypylon); RealSense cameras (with depth) need pyrealsense2 (pip install pyrealsense2); the L515 needs the helper env (see README).")
-        self.refresh_btn.clicked.connect(self.refresh_requested)
+        # A long device name must not set the slot's minimum width: the picker shrinks and elides instead.
+        self.device_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.device_combo.setMinimumContentsLength(10)
 
         self.toggle_btn = QPushButton("Start")
         self.toggle_btn.clicked.connect(self._on_toggle)
+
+        self.max_btn = QToolButton()
+        self.max_btn.setObjectName("tileButton")
+        self.max_btn.setText("Expand")
+        self.max_btn.setCheckable(True)
+        self.max_btn.setToolTip("Show only this camera, as large as the area allows (Esc to restore)")
+        self.max_btn.toggled.connect(self._on_max)
+        self.max_btn.hide()   # only the Workspace layout has room to maximise into
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("sectionCaption")
@@ -60,8 +68,8 @@ class CameraSlot(QWidget):
         controls = QHBoxLayout()
         controls.addWidget(self.title_label)
         controls.addWidget(self.device_combo, 1)
-        controls.addWidget(self.refresh_btn)
         controls.addWidget(self.toggle_btn)
+        controls.addWidget(self.max_btn)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -74,6 +82,10 @@ class CameraSlot(QWidget):
     @property
     def running(self) -> bool:
         return self._running
+
+    def _on_max(self, on: bool) -> None:
+        self.max_btn.setText("Restore" if on else "Expand")
+        self.maximize_toggled.emit(on)
 
     def set_devices(self, devices: list[tuple], prefer=None) -> None:
         """Fill the picker; keep the current device (or `prefer`) selected when it is still listed."""
@@ -140,7 +152,6 @@ class CameraSlot(QWidget):
         the start/stop transition moment)."""
         self.status_label.setText(message)
         self.toggle_btn.setEnabled(not busy)
-        self.refresh_btn.setEnabled(not busy)
 
     def show_frame(self, frame_rgb: np.ndarray) -> None:
         h, w, _ = frame_rgb.shape
@@ -154,7 +165,6 @@ class CameraSlot(QWidget):
         self.status_label.setText("")
         self.toggle_btn.setEnabled(True)
         self.device_combo.setEnabled(True)
-        self.refresh_btn.setEnabled(True)
         self._running = False
         self.running_source = None
         self.toggle_btn.setText("Start")
@@ -167,16 +177,22 @@ class CameraPanel(QGroupBox):
     start_requested = Signal(object, int)   # source, slot
     stop_requested = Signal(int)            # slot
     slots_changed = Signal(int)             # how many slots exist now
+    maximize_toggled = Signal(bool)         # one camera wants (or gives back) the whole area
 
     def __init__(self, parent=None):
         super().__init__("CAMERAS (optional)", parent)
         self._devices: list[tuple] = []
         self.slots: list[CameraSlot] = []
+        self._maximize_available = False
+        self._columns = 2
 
         self.add_btn = QPushButton("+ Add camera")
         self.add_btn.setToolTip(f"Show another camera next to this one (up to {MAX_CAMERAS}). Each camera is "
                                 "chosen and started on its own.")
         self.add_btn.clicked.connect(self.add_slot)
+        self.refresh_btn = QPushButton("Refresh")   # one scan fills every camera's picker
+        self.refresh_btn.setToolTip("Re-scan cameras. Basler cameras need pypylon (pip install pypylon); RealSense cameras (with depth) need pyrealsense2 (pip install pyrealsense2); the L515 needs the helper env (see README).")
+        self.refresh_btn.clicked.connect(self.refresh_devices)
         self.remove_btn = QPushButton("- Remove last")
         self.remove_btn.setToolTip("Remove the last extra camera (stop it first).")
         self.remove_btn.clicked.connect(self.remove_last_slot)
@@ -184,6 +200,7 @@ class CameraPanel(QGroupBox):
         self._grid = QGridLayout()
         self._grid.setSpacing(8)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.refresh_btn)
         buttons.addStretch(1)
         buttons.addWidget(self.remove_btn)
         buttons.addWidget(self.add_btn)
@@ -206,7 +223,9 @@ class CameraPanel(QGroupBox):
         slot.set_devices(self._devices, prefer=free)
         slot.start_requested.connect(lambda source, i=index: self._on_slot_start(i, source))
         slot.stop_requested.connect(lambda i=index: self.stop_requested.emit(i))
-        slot.refresh_requested.connect(self.refresh_devices)
+        slot.maximize_toggled.connect(lambda on, s=slot: self._on_slot_max(s, on))
+        slot.max_btn.setVisible(self._maximize_available)
+        self.restore()   # a maximised camera would hide the new one
         self.slots.append(slot)
         self._relayout()
         self.slots_changed.emit(len(self.slots))
@@ -215,6 +234,7 @@ class CameraPanel(QGroupBox):
     def remove_last_slot(self) -> None:
         if len(self.slots) <= 1 or self.slots[-1].running:
             return
+        self.restore()
         slot = self.slots.pop()
         self._grid.removeWidget(slot)
         slot.setParent(None)
@@ -222,19 +242,48 @@ class CameraPanel(QGroupBox):
         self._relayout()
         self.slots_changed.emit(len(self.slots))
 
+    def set_columns(self, columns: int) -> None:
+        """Cameras per row: 2 for the wide Classic card, 1 for the Workspace's column next to the twin."""
+        self._columns = max(1, columns)
+        self._relayout()
+
     def _relayout(self) -> None:
+        per_row = self._columns
         for i, slot in enumerate(self.slots):
-            self._grid.addWidget(slot, i // 2, i % 2)
-        columns = min(len(self.slots), 2)
-        rows = (len(self.slots) + 1) // 2
-        for c in range(2):
+            self._grid.addWidget(slot, i // per_row, i % per_row)
+        columns = min(len(self.slots), per_row)
+        rows = (len(self.slots) + per_row - 1) // per_row
+        for c in range(MAX_CAMERAS):
             self._grid.setColumnStretch(c, 1 if c < columns else 0)
-        for r in range(2):
+        for r in range(MAX_CAMERAS):
             self._grid.setRowStretch(r, 1 if r < rows else 0)
         self.add_btn.setEnabled(len(self.slots) < MAX_CAMERAS)
         self.remove_btn.setEnabled(len(self.slots) > 1)
         for slot in self.slots:
             slot.title_label.setVisible(len(self.slots) > 1)
+
+    # ---------------------------------------------------------------- maximise
+    def set_maximize_available(self, available: bool) -> None:
+        self._maximize_available = available
+        for slot in self.slots:
+            slot.max_btn.setVisible(available)
+
+    def _on_slot_max(self, chosen: CameraSlot, on: bool) -> None:
+        for slot in self.slots:
+            if slot is not chosen:
+                slot.max_btn.blockSignals(True)
+                slot.max_btn.setChecked(False)
+                slot.max_btn.setText("Expand")
+                slot.max_btn.blockSignals(False)
+                slot.setVisible(not on)
+        chosen.show()
+        self.maximize_toggled.emit(on)
+
+    def restore(self) -> None:
+        """Back to every camera side by side."""
+        for slot in self.slots:
+            if slot.max_btn.isChecked():
+                slot.max_btn.setChecked(False)   # runs _on_slot_max(slot, False)
 
     def slot(self, number: int) -> CameraSlot:
         return self.slots[number]
@@ -262,10 +311,6 @@ class CameraPanel(QGroupBox):
     @property
     def toggle_btn(self) -> QPushButton:
         return self.slots[0].toggle_btn
-
-    @property
-    def refresh_btn(self) -> QPushButton:
-        return self.slots[0].refresh_btn
 
     @property
     def view(self) -> QLabel:

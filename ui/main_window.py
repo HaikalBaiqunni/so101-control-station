@@ -4,11 +4,12 @@ import csv
 import json
 import math
 import os
+import sys
 import time
 from collections import deque
 
 import numpy as np
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QProcess, Qt, QTimer
 from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -82,6 +84,7 @@ from .teaching_panel import TeachingPanel
 from .telemetry_panel import TelemetryPanel, convert_telemetry
 from .top_bar import ShellHost, TopBar
 from .twin_panel import TwinPanel
+from .workspace_view import ModeRail, WorkspaceView
 
 GAMEPAD_TICK_MS = 33          # ~30 Hz jog integration
 GAMEPAD_DEADZONE = 0.15
@@ -177,8 +180,13 @@ def _validate_waypoints(raw) -> list[dict]:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    LAYOUTS = ("workspace", "classic")
+    DEFAULT_LAYOUT = "workspace"   # docked tiles and a task rail; "classic" = cards floating over the twin
+
+    def __init__(self, layout: str | None = None):
         super().__init__()
+        chosen = layout or self._load_settings().get("ui_layout", self.DEFAULT_LAYOUT)
+        self.ui_layout = chosen if chosen in self.LAYOUTS else self.DEFAULT_LAYOUT
         self.setWindowTitle("SO-101 Control Station")
         self.resize(1560, 880)
         self.setMinimumSize(1100, 700)
@@ -203,12 +211,16 @@ class MainWindow(QMainWindow):
         # The twin fills the stage with floating cards over it (View, Jog, the
         # connect / control-source dock, optional camera); Waypoints / Telemetry
         # open in a drawer on the right only when asked for.
-        self.stage = StageView(
-            self.twin_panel, self.camera_panel, self.jog_panel,
-            [self.connection_panel, self.control_source_panel],
-        )
-        self.stage.set_layout_state(self._load_settings().get("stage_layout", {}))
-        self.stage.layout_changed.connect(lambda state: self._save_setting("stage_layout", state))
+        self.stage: StageView | None = None
+        self.workspace: WorkspaceView | None = None
+        self.rail: ModeRail | None = None
+        if self.ui_layout == "classic":
+            self.stage = StageView(
+                self.twin_panel, self.camera_panel, self.jog_panel,
+                [self.connection_panel, self.control_source_panel],
+            )
+            self.stage.set_layout_state(self._load_settings().get("stage_layout", {}))
+            self.stage.layout_changed.connect(lambda state: self._save_setting("stage_layout", state))
 
         self.drawer = QStackedWidget()
         self.drawer.addWidget(self.teaching_panel)
@@ -220,12 +232,24 @@ class MainWindow(QMainWindow):
         self.drawer.setContentsMargins(0, TopBar.BAR_H, 0, 0)
         self.drawer.hide()
 
-        self.stage_splitter = QSplitter(Qt.Horizontal)
-        self.stage_splitter.addWidget(self.stage)
-        self.stage_splitter.addWidget(self.drawer)
-        self.stage_splitter.setStretchFactor(0, 1)
-        self.stage_splitter.setStretchFactor(1, 0)
-        self.stage_splitter.setSizes([1100, 440])
+        if self.stage is not None:
+            self.stage_splitter = QSplitter(Qt.Horizontal)
+            self.stage_splitter.addWidget(self.stage)
+            self.stage_splitter.addWidget(self.drawer)
+            self.stage_splitter.setStretchFactor(0, 1)
+            self.stage_splitter.setStretchFactor(1, 0)
+            self.stage_splitter.setSizes([1100, 440])
+            stage_page: QWidget = self.stage_splitter
+        else:
+            # Workspace: the same "drawer" stack is the right panel, always shown; with no tool open it
+            # holds the Operate page (Connection, Control source, Jog) instead of hiding.
+            self.twin_panel.camera_check.setChecked(bool(self._load_settings().get("workspace_camera_tile", True)))
+            self.twin_panel.camera_check.toggled.connect(lambda on: self._save_setting("workspace_camera_tile", on))
+            self.workspace = WorkspaceView(
+                self.twin_panel, self.camera_panel, self.jog_panel,
+                [self.connection_panel, self.control_source_panel], self.drawer,
+            )
+            stage_page = self.workspace
 
         # ================================================================ SETUP HUB
         self.setup_panel = SetupPanel()
@@ -265,7 +289,7 @@ class MainWindow(QMainWindow):
         self.setup_hub.back_requested.connect(lambda: self.top_bar.nav_buttons["setup"].setChecked(False))
 
         self.pages = QStackedWidget()
-        self.pages.addWidget(self.stage_splitter)   # PAGE_STAGE
+        self.pages.addWidget(stage_page)            # PAGE_STAGE
         self.pages.addWidget(self.setup_hub)        # PAGE_SETUP
 
         # Robot selection lives in the always-visible top bar - which robot is
@@ -286,7 +310,25 @@ class MainWindow(QMainWindow):
 
         # The bar floats over the pages (mockup B1) instead of taking a row above
         # them; every page reserves TopBar.BAR_H at its top so nothing hides under it.
-        self.setCentralWidget(ShellHost(self.pages, self.top_bar))
+        if self.workspace is None:
+            self.setCentralWidget(ShellHost(self.pages, self.top_bar))
+        else:
+            self.top_bar.set_nav_visible(False)   # the rail does the navigating; the buttons stay as state
+            self.setMinimumSize(1280, 700)        # rail + tiles + right panel need more than the Classic stage
+            self.rail = ModeRail()
+            self.rail.mode_requested.connect(self._on_rail_mode)
+            self.rail.classic_requested.connect(lambda: self._set_ui_layout("classic"))
+            rail_box = QWidget()
+            rail_layout = QVBoxLayout(rail_box)
+            rail_layout.setContentsMargins(8, TopBar.BAR_H, 0, 8)
+            rail_layout.addWidget(self.rail)
+            shell = QWidget()
+            shell_layout = QHBoxLayout(shell)
+            shell_layout.setContentsMargins(0, 0, 0, 0)
+            shell_layout.setSpacing(0)
+            shell_layout.addWidget(rail_box)
+            shell_layout.addWidget(self.pages, 1)
+            self.setCentralWidget(ShellHost(shell, self.top_bar))
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready.")
@@ -440,7 +482,8 @@ class MainWindow(QMainWindow):
         # -- wiring: camera --------------------------------------------------
         self.camera_panel.start_requested.connect(self._on_camera_start)
         self.camera_panel.stop_requested.connect(self._on_camera_stop)
-        self.camera_panel.slots_changed.connect(self.stage.set_camera_slots)
+        if self.stage is not None:
+            self.camera_panel.slots_changed.connect(self.stage.set_camera_slots)
 
         # -- wiring: recorder ----------------------------------------------------
         self.recorder: EpisodeRecorder | None = None
@@ -759,6 +802,7 @@ class MainWindow(QMainWindow):
             self.setup_panel.setToolTip(note)
 
         self.connection_panel.set_gripper_calibration_visible(self.robot_profile.key == "rebot_b601_dm")
+        self._sync_rail()
 
     # ---------------------------------------------------------------- shutdown helper
     def _retire_worker(self, worker) -> None:
@@ -1224,13 +1268,58 @@ class MainWindow(QMainWindow):
             if native else "using vendor default ranges - sweep to measure this unit"
         )
 
+    def _show_tool(self, panel: QWidget | None) -> None:
+        """Open a tool panel (None closes it): the Classic drawer, or the Workspace's right panel."""
+        if self.workspace is not None:
+            self.workspace.show_tool(panel)
+        elif panel is None:
+            self.drawer.hide()
+        else:
+            self.drawer.setCurrentWidget(panel)
+            self.drawer.show()
+
+    def _on_rail_mode(self, key: str) -> None:
+        """The Workspace rail drives the same nav state the Classic top-bar buttons do."""
+        buttons = self.top_bar.nav_buttons
+        if key == "operate":
+            for button in buttons.values():
+                button.setChecked(False)
+        else:
+            buttons[key].setChecked(True)
+        self._sync_rail()
+
+    def _sync_rail(self) -> None:
+        if self.rail is None:
+            return
+        buttons = self.top_bar.nav_buttons
+        self.rail.set_current(next((key for key, button in buttons.items() if button.isChecked()), "operate"))
+        for key in ("tune", "gauge"):   # robot-specific tools: the rail follows the nav buttons
+            self.rail.set_mode_visible(key, not buttons[key].isHidden())
+
+    def _set_ui_layout(self, name: str) -> None:
+        """Remember the layout for the next start (the panels are built into one layout at start-up)."""
+        if name not in self.LAYOUTS or name == self.ui_layout:
+            return
+        self._save_setting("ui_layout", name)
+        self.statusBar().showMessage(f"Layout set to {name}: restart the app to apply it.")
+        answer = QMessageBox.question(
+            self, "Layout",
+            f"The {name} layout is used from the next start.\n\nRestart the app now? "
+            "Robots and cameras are disconnected first.",
+        )
+        if answer == QMessageBox.Yes:
+            args = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
+            QProcess.startDetached(sys.executable, args)
+            self.close()
+
     def _on_nav_toggled(self, key: str, checked: bool) -> None:
         if key == "setup":
             self.pages.setCurrentIndex(self.PAGE_SETUP if checked else self.PAGE_STAGE)
             if checked:
                 for other in self.DRAWER_PANELS:
                     self.top_bar.set_nav_checked(other, False)
-                self.drawer.hide()
+                self._show_tool(None)
+            self._sync_rail()
             return
         # waypoints / telemetry / tune share one drawer on the stage
         if checked:
@@ -1239,10 +1328,10 @@ class MainWindow(QMainWindow):
                     self.top_bar.set_nav_checked(other, False)
             self.top_bar.set_nav_checked("setup", False)
             self.pages.setCurrentIndex(self.PAGE_STAGE)
-            self.drawer.setCurrentWidget(getattr(self, self.DRAWER_PANELS[key]))
-            self.drawer.show()
+            self._show_tool(getattr(self, self.DRAWER_PANELS[key]))
         else:
-            self.drawer.hide()
+            self._show_tool(None)
+        self._sync_rail()
 
     # ---------------------------------------------------------------- command palette
     def _palette_actions(self) -> list[PaletteAction]:
@@ -1291,7 +1380,14 @@ class MainWindow(QMainWindow):
             PaletteAction("Toggle HUD overlay", "view", self.twin_panel.hud_check.toggle),
             PaletteAction("Toggle camera card", "view", self.twin_panel.camera_check.toggle),
             PaletteAction("Reset 3D view", "camera angle", self.twin_panel.reset_view_requested.emit),
-            PaletteAction("Reset card layout", "positions and minimised cards", self.stage.reset_layout),
+        ]
+        if self.stage is not None:
+            actions.append(PaletteAction("Reset card layout", "positions and minimised cards", self.stage.reset_layout))
+        other = "classic" if self.ui_layout == "workspace" else "workspace"
+        actions += [
+            PaletteAction(f"Layout: switch to {other.capitalize()}",
+                          "floating cards over the twin" if other == "classic" else "docked tiles and a task rail",
+                          lambda: self._set_ui_layout(other), "ui design hud overlay workspace classic"),
             PaletteAction("About", "creator, version, tech stack", self._show_about, "credits license"),
         ]
         if is_dm:

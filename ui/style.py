@@ -324,6 +324,42 @@ QListWidget#sectionList {{
 }}
 QListWidget#sectionList::item {{ padding: 9px 12px; border-radius: 10px; color: {COLORS['text_muted']}; }}
 QListWidget#sectionList::item:selected {{ background-color: {COLORS['panel_alt']}; color: {COLORS['text']}; }}
+/* Workspace layout (ui/workspace_view.py): task rail, tiles, the right panel. */
+QFrame#modeRail, QFrame#tile {{
+    background-color: {COLORS['panel']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 14px;
+}}
+QFrame#tile QGroupBox {{ background: transparent; }}
+QPushButton#railButton {{
+    background-color: transparent;
+    color: {COLORS['text_muted']};
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 9px 10px;
+    text-align: left;
+    font-weight: 600;
+}}
+QPushButton#railButton:hover {{ color: {COLORS['text']}; border-color: {COLORS['border']}; }}
+QPushButton#railButton:checked {{
+    background-color: {COLORS['accent']};
+    border-color: {COLORS['accent_hover']};
+    color: #06121f;
+}}
+QToolButton#tileButton, QPushButton#foldButton {{
+    background-color: {COLORS['bg']};
+    color: {COLORS['text_muted']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 9px;
+    padding: 4px 10px;
+    font-weight: 600;
+}}
+QToolButton#tileButton:hover, QPushButton#foldButton:hover {{ color: {COLORS['text']}; }}
+QToolButton#tileButton:checked, QPushButton#foldButton:checked {{
+    color: {COLORS['accent']};
+    border-color: {COLORS['accent']};
+}}
+QToolButton#tileButton::menu-indicator {{ image: none; }}
 QLabel#widthValue {{
     font-family: "Consolas", "Menlo", monospace;
     font-size: 30px;
