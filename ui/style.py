@@ -360,6 +360,37 @@ QToolButton#tileButton:checked, QPushButton#foldButton:checked {{
     border-color: {COLORS['accent']};
 }}
 QToolButton#tileButton::menu-indicator {{ image: none; }}
+/* Gripper gauge panel (ui/gripper_gauge_panel.py): the big reading, last result, folds. */
+QFrame#readCard, QFrame#lastCard {{
+    background-color: {COLORS['panel_alt']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 14px;
+}}
+QFrame#readCard[state="grip"] {{ border-color: {COLORS['good']}; }}
+QLabel#readCaption {{ color: {COLORS['text_muted']}; font-size: 13px; font-weight: 600; }}
+QFrame#readCard[state="grip"] QLabel#readCaption {{ color: {COLORS['good']}; }}
+QLabel#readValue {{
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 48px;
+    font-weight: 700;
+    color: {COLORS['text']};
+}}
+QLabel#readValue[state="grip"] {{ color: {COLORS['good']}; }}
+QLabel#lastValue {{
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 24px;
+    font-weight: 700;
+}}
+QToolButton#foldHeader {{
+    background-color: {COLORS['panel_alt']};
+    color: {COLORS['text']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+}}
+QToolButton#foldHeader:hover {{ border-color: {COLORS['text_muted']}; }}
 QLabel#widthValue {{
     font-family: "Consolas", "Menlo", monospace;
     font-size: 30px;

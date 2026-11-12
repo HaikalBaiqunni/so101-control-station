@@ -1213,7 +1213,8 @@ class MainWindow(QMainWindow):
             return
         inside = self._gauge_cal.in_span(shown)
         text = f"{max(width, 0.0):.1f} mm"
-        self.gripper_gauge_panel.set_live(text + ("  (holding)" if holding else "") + ("" if inside else "  (outside your references)"))
+        self.gripper_gauge_panel.set_live(text, "grip" if holding else "free", "Holding" if holding else "Jaw opening",
+                                          "" if inside else "outside your references")
         self.top_bar.set_width(text, "grip" if holding else "free", "Holding" if holding else "Gripper")
 
     RANGE_MISMATCH_DEG = 10.0
