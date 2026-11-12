@@ -10,14 +10,14 @@ drives the Damiao-based **reBot B601-DM** (with Seeed's Star Arm 102 leader) fro
 real-hardware drivers, not simulations: the B601-DM follower, its gravity compensation, the Star Arm 102 leader relay
 and the gripper caliper have all been run on a physical arm. No PyTorch, no `lerobot` install.
 
-![The stage: the MuJoCo digital twin fills the window with floating View, Jog and connection cards](docs/screenshot_control.png)
+![The Workspace layout: a task rail, the MuJoCo digital twin and camera tiles, and the Operate panel with Connection, Control source and Jog](docs/screenshot_control.png)
 
-*The stage: the digital twin fills the window and cards float over it. No hardware connected in this shot.*
+*The Workspace layout on the SO-101: task rail, twin and camera tiles, and the Operate panel. No hardware connected in this shot.*
 
 **The problem it solves:** getting a new SO-101 running normally means several terminal tools, a
 calibration procedure driven by blocking `input()` prompts, and a full LeRobot + PyTorch install, all
 before the arm has moved once. That is a lot of yak-shaving between a beginner and their first taste of
-physical AI. This app collapses it into one stage plus a Setup hub.
+physical AI. This app collapses it into one workspace plus a Setup hub.
 
 ## Contents
 
@@ -33,14 +33,16 @@ physical AI. This app collapses it into one stage plus a Setup hub.
 Scripted tours of the layout. Only these recordings and screenshots were made without hardware (the poses and the
 "online" chips in them are simulated); the app itself drives real robots.
 
-**SO-101**: the stage with the twin following joint motion, the leader arm on standby with the ghost and
-the alignment gate, the Waypoints and Telemetry drawers, cards minimising to tabs, then the Setup hub with
-the bus scan, guarded id assignment and the five-step calibration wizard.
+**SO-101**: the Operate task with the twin following joint motion, the leader arm on standby with the ghost and
+the alignment gate, the Teach, Record and Telemetry tasks (with Jog folded out underneath), two cameras side by
+side and the twin expanded, then the Setup hub with the bus scan, guarded id assignment and the five-step
+calibration wizard.
 
 ![Tour of the layout on the SO-101](docs/layout_tour_so101.gif)
 
-**reBot B601-DM**: the same layout, plus the Tune drawer (MIT gains, presets, tracking chart, nudge) and its
-own Setup hub with CAN-id assignment and the gripper and leader sweeps.
+**reBot B601-DM**: the same layout, plus the Measure task (the gripper as a live caliper: the big reading, the
+green *Holding* latch, the Measure / Normal relay speed), the Tune task (MIT gains, presets, tracking chart,
+nudge) and its own Setup hub with CAN-id assignment and the gripper and leader sweeps.
 
 ![Tour of the layout on the reBot B601-DM](docs/layout_tour_b601_dm.gif)
 
@@ -90,7 +92,7 @@ Pick the robot in the top-left corner; everything else in the app follows.
 | Setup | Bus scan, guarded id assignment, baudrate repair | CAN-id probe, assign and *Verify All*, motor state and PID |
 | Calibration | Five-step LeRobot-compatible wizard | Read-only sweeps: follower gripper range, leader range |
 | Motion control | Position goals | POS_VEL (default) or MIT with live-tunable kp / kd |
-| Extras | Torque_Limit / Dead_Zone register writes | Tune drawer, gravity compensation |
+| Extras | Torque_Limit / Dead_Zone register writes | Tune task, gravity compensation |
 
 The two are genuinely **different buses, protocols and vendor toolchains** end to end; only the GUI, the
 twin and the jog engine are shared.
@@ -153,7 +155,7 @@ do next. *Set middle* first shows the twin's own zero pose as a reference. It sa
 
 Four interchangeable sources, so only one drives the arm at a time and inputs never fight:
 
-- **Manual**: the Jog card (below).
+- **Manual**: the Jog panel (below).
 - **Keyboard**: hold `Q`/`A`, `W`/`S`, `E`/`D`, `R`/`F`, `T`/`G`, `Y`/`H`; on-screen keycaps light up while held. Keys
   held when the window loses focus release automatically, so nothing runs away.
 - **Gamepad**: a standard Xbox-style controller.
@@ -166,7 +168,7 @@ on and every arm joint is within a tolerance (default 10 degrees). Stop, torque 
 disconnecting ends it. A gripper-invert switch and a per-joint **Relay trim** cover what a swept range can never say
 on its own.
 
-### The Jog card
+### Jog
 
 Pick a mode, then **hold a button** to move; let go and it stops.
 
@@ -197,20 +199,20 @@ Pick a mode, then **hold a button** to move; let go and it stops.
 
 - **Digital twin**: a MuJoCo render mirroring the live pose, on its own thread so a slow render never lags the control
   loop, and rendered at the window's own resolution. **Mouse-orbitable**: left-drag orbits, right-drag (or
-  Shift+left) pans, scroll zooms, double-click or *Reset View* returns to the default. Options in the View card:
+  Shift+left) pans, scroll zooms, double-click or *Reset View* returns to the default. Options in **View options** (twin tile):
   - **Ghost target**: a translucent copy of the arm at where it is *heading* (the playing or selected waypoint, a jog
     target, or the leader's pose on standby). Hidden when it would sit on top of the real arm.
   - **Axes**: the **World** triad at the base and the **Tool** triad on the gripper tip; the frame the jog acts in is
     drawn thick.
   - **HUD overlay**: load and temperature bars per joint painted on the render.
-- **Waypoints** (drawer): record the current pose however it got there (hand-guided with torque off, leader-driven, or
+- **Teach** (the Waypoints drawer in Classic): record the current pose however it got there (hand-guided with torque off, leader-driven, or
   jogged), reorder, and play back at a capped, quintic-eased speed. **Record Grip** records the gripper at its
   calibrated limit instead of the contact position, so a holding waypoint has real closing force behind it. Per-waypoint
   delays, loop, and `.json` save / load.
-- **Telemetry** (drawer): current, load, velocity, voltage and temperature per joint at about 10 Hz, as a table or a
+- **Telemetry** (a drawer in Classic): current, load, velocity, voltage and temperature per joint at about 10 Hz, as a table or a
   live graph, with CSV capture and a live cross-check that differentiates `Present_Position` against the reported
   `Present_Velocity`, so you can confirm the unit on *your* hardware instead of trusting a datasheet.
-- **Recorder** (drawer): records demonstration **episodes** for imitation learning while you teleoperate. Name a
+- **Record** (the Recorder drawer in Classic): records demonstration **episodes** for imitation learning while you teleoperate. Name a
   dataset, type the task, press **Record episode**; at 30 fps it samples the follower's measured joints (`state`),
   the commanded goals (`action`) and the running camera, and saves on **Stop and save** or at the chosen maximum
   length. **Discard** drops the take; so do Stop, a follower disconnect or stopping the camera mid-take. Frames the
@@ -224,7 +226,7 @@ Pick a mode, then **hold a button** to move; let go and it stops.
 
   A dataset keeps one robot, one frame rate and one camera setup, and the Recorder refuses to mix them. One camera
   per take for now.
-- **Gripper gauge** (drawer, B601-DM): uses the linear-slide gripper as a rough caliper. Calibrate once: measure the
+- **Gripper gauge** (the Measure task, B601-DM; the Gauge drawer in Classic): uses the linear-slide gripper as a rough caliper. Calibrate once: measure the
   closed jaws (0 mm) and one or more gauge blocks; the app fits `width = a + b x angle` and shows how far each block
   misses the line. Then put an object between the jaws and press **Measure object**: the jaws creep shut at 12 deg/s,
   stop on contact (the jaw stalls while the target keeps leading), read the angle, release, and repeat for the chosen
@@ -244,7 +246,7 @@ Pick a mode, then **hold a button** to move; let go and it stops.
 
 ## The reBot B601-DM
 
-Switch the Robot picker to **reBot B601-DM**: the app swaps the twin's MJCF, rebuilds the Jog card for the new joint
+Switch the Robot picker to **reBot B601-DM**: the app swaps the twin's MJCF, rebuilds Jog for the new joint
 set and reconfigures Setup for Damiao's CAN-id workflow. The jog engine, twin and everything in the previous section
 work the same, because the Damiao worker exposes the identical `request_goal` / `request_torque` interface.
 
@@ -255,7 +257,7 @@ work the same, because the Damiao worker exposes the identical `request_goal` / 
   the whole arm wired. Every Damiao motor ships with the same default id, so several on one bus can't be addressed
   until each has its own. No hot-plugging: cut power before touching the XT30 connectors.
 - **Torque on / off** seeds each motor with its own measured position before arming, so re-enabling holds still.
-- **Gripper range calibration** (*Calibrate gripper range...*, Connection card, or Setup, Calibration): sweep the real
+- **Gripper range calibration** (*Calibrate gripper range...*, Connection panel, or Setup, Calibration): sweep the real
   jaw's open / closed travel by hand with torque off. It replaces an assumed default that once let a held jog drive the
   motor past its real stop until a fuse blew, and refuses to run while torque is on.
 - **Auto-measure gripper range** (Setup, Calibration): with torque ON, MIT mode and Control source Manual, the
@@ -278,15 +280,15 @@ work the same, because the Damiao worker exposes the identical `request_goal` / 
     been measured on a real gripper yet. It is a coarse caliper, not a replacement for a scale-equipped measuring
     gripper (those reach micrometres).
 
-### Motion control and the Tune drawer
+### Motion control and the Tune task
 
-Two modes, chosen in the **Tune** drawer (the mode applies on the next Connect):
+Two modes, chosen in the **Tune** task (the mode applies on the next Connect):
 
 - **POS_VEL** (default): the motor's own position / velocity loop. The safe choice.
 - **MIT**: stiffness and damping (`kp`, `kd`) sent with every command. More responsive and compliant, but the gains
   have to be tuned on the real arm. **kp / kd retune the arm live**, with no reconnect and no torque cycling.
 
-Everything for tuning MIT lives in the drawer:
+Everything for tuning MIT lives in the Tune task:
 
 - **Gain presets**: save, load and delete named kp / kd sets. Built in: *Gentle start* (default, safe) and *Holding
   start* (stiffer, a first guess for joints that carry load; **not validated on every arm**, so load it with the arm
@@ -320,8 +322,8 @@ The B601-DM's matched leader is a *completely different* device from the followe
 
 ## Cameras
 
-The **Camera** card shows cameras next to the twin, handy for comparing it with the real arm. Pick the device in the
-card and press Start. **+ Add camera** adds another view (up to three, two per row), each with its own device
+The **Cameras** tile shows cameras next to the twin, handy for comparing it with the real arm. Pick the device in the
+tile and press Start. **+ Add camera** adds another view (up to three, two per row), each with its own device
 picker and Start / Stop, so you can watch, say, a camera on the robot and one observing it at the same time. The
 same physical camera cannot be opened twice. The Recorder films the first camera only.
 
@@ -386,8 +388,8 @@ This app is deliberately opinionated about not moving hardware it doesn't unders
 
 `requirements.txt` installs `PySide6`, `feetech-servo-sdk`, `pyserial`, `motorbridge-smart-servo`, `opencv-python`,
 `mujoco`, `numpy` and `pygame`. **No PyTorch, no `lerobot`.** Digital-twin models for both robots are bundled under
-`models/` (the SO-101 one is TheRobotStudio's MJCF, Apache-2.0, see `models/so101/NOTICE.md`); use *Browse* in the View
-card for another model.
+`models/` (the SO-101 one is TheRobotStudio's MJCF, Apache-2.0, see `models/so101/NOTICE.md`); use *Browse* in
+*View options* (twin tile) for another model.
 
 ---
 

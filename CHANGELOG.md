@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stale HUD after switching robot.** The HUD overlay kept the previous robot's joints (and their bars) until new
+  telemetry arrived; switching the Robot picker now clears it.
+
 ### Added
 
+- **Docs for the new layout.** `docs/MANUAL.html` (EN / JA) has a rewritten *The screen* chapter and new chapters for
+  measuring with the gripper (calibration, the live reading and contact latch, Measure / Normal speed, accuracy
+  caveat) and for the Recorder; the README, the screenshots and both layout-tour GIFs show the Workspace layout.
+  `tools/manual_shots.py` captures the screenshots and the new `tools/make_gifs.py` builds the tours.
 - **Workspace layout (new default).** Nothing floats over the twin or the cameras any more: a task rail on the left
   (Operate, Measure, Teach, Record, Tune, Telemetry, Setup), the twin and the cameras as tiles in the middle (each can
   be expanded; Esc restores), and a right panel that shows only the current task's tools. Jog folds out under every

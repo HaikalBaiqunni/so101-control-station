@@ -115,49 +115,75 @@ def content() -> str:
         '<tr><td class="mono">python -m venv venv &amp;&amp; venv\\Scripts\\activate</td></tr>'
         '<tr><td class="mono">pip install -r requirements.txt</td></tr>'
         '<tr><td class="mono">python main.py</td></tr></tbody></table></div>\n' +
-        p("The app opens on the <strong>stage</strong>: a 3D digital twin with the controls floating over it. Both "
+        p("The app opens on the <strong>Operate</strong> task: the 3D digital twin and the cameras in the middle, the task rail on the left, Connection, Control source and Jog on the right. Both "
           "robots ship with a twin model, so it loads by itself. Pick the robot in the top-left corner; everything "
           "below says which robot a section is for.",
-          "アプリは<strong>ステージ</strong>で起動します。3Dのデジタルツインの上に操作パネルが浮かぶ構成です。どちらのロボットにも"
+          "アプリは<strong>Operate</strong>タスクで起動します。中央に3Dのデジタルツインとカメラ、左にタスクレール、右にConnection・Control source・Jogが並びます。どちらのロボットにも"
           "ツインのモデルが同梱されているため、自動で読み込まれます。左上でロボットを選びます。以降の各節に、どちらのロボット向けかを"
           "明記しています。") +
         callout("warn", "ⓘ",
                 "None of the screenshots were taken with hardware connected. In the ones that show &quot;Follower "
-                "online&quot; or a leader ghost, the connection state and poses are simulated to show the layout.",
-                "スクリーンショットはいずれも実機を接続せずに撮影しています。「Follower online」やリーダーのゴーストが表示されている"
-                "画面は、レイアウトを示すために接続状態と姿勢を模擬したものです。"))))
+                "online&quot;, a leader ghost, gauge readings, telemetry or a camera picture, the connection state, poses and values are made up to show the layout.",
+                "スクリーンショットはいずれも実機を接続せずに撮影しています。「Follower online」やリーダーのゴースト、ゲージの値、テレメトリ、カメラ映像が表示されている"
+                "画面の接続状態・姿勢・数値は、レイアウトを示すためのダミーです。"))))
 
     # ---- 01 the screen
     parts.append(stage("screen", "01", ("The screen", "画面の見方"),
-        why("One window, no tabs. The digital twin fills the background; the tools sit on it as cards, and "
-            "the heavier ones open as drawers or in the Setup hub.",
-            "タブはありません。デジタルツインが背景全体に表示され、各ツールはカードとして重なります。大きなツールは"
-            "ドロワーやSetupハブで開きます。"),
-        fig("stage_so101", "The stage on the SO-101: top bar, View card, Jog card and the Connection and Control source dock",
-            "The stage on the SO-101 (twin at a made-up pose). Top bar, View card (left), Jog card (right), dock with Connection and Control source (bottom).",
-            "SO-101のステージ（ツインは適当な姿勢）。トップバー、Viewカード（左）、Jogカード（右）、ConnectionとControl sourceのドック（下）。") +
+        why("One window, nothing floating over the pictures. A rail on the left picks the task, the digital twin and the cameras are tiles in the middle, and the right panel shows only what that task needs.",
+            "ウィンドウは1つで、映像の上に重なるものはありません。左のレールでタスクを選び、中央にデジタルツインとカメラをタイルで並べ、右のパネルには選んだタスクに必要なものだけを表示します。"),
+        fig("stage_so101", "The Workspace layout on the SO-101: top bar, task rail, twin and camera tiles, and the Operate panel with Connection, Control source and Jog",
+            "The Operate task on the SO-101 (twin at a made-up pose). Top bar, task rail (left), twin and camera tiles (middle), Connection, Control source and Jog (right).",
+            "SO-101のOperateタスク（ツインは適当な姿勢）。トップバー、タスクレール（左）、ツインとカメラのタイル（中央）、Connection・Control source・Jog（右）。") +
         step(1, ("The top bar", "トップバー"),
-            fig("topbar", "Top bar with robot picker, status chips, search, Waypoints, Telemetry, Setup, About and Stop",
-                "Left: robot picker and four status chips. Right: search, drawers, Setup, About and the red Stop.",
-                "左：ロボット選択と4つのステータスチップ。右：検索、ドロワー、Setup、About、赤いStop。", "wide") +
+            fig("topbar", "Top bar with robot picker, status chips, search, About and Stop",
+                "Left: robot picker and four status chips. Right: search, About and the red Stop. On the B601-DM the gripper width appears in the middle once the gauge is calibrated.",
+                "左：ロボット選択と4つのステータスチップ。右：検索、About、赤いStop。B601-DMでは、ゲージのキャリブレーション後に中央にグリッパー幅が表示されます。", "wide") +
             table((("Item", "What it does"), ("項目", "内容")),
                   [(("Robot", "Switches the whole app between SO-101 and reBot B601-DM. Any connection belonging to the other robot is closed."),
                     ("Robot", "アプリ全体をSO-101とreBot B601-DMで切り替えます。もう一方のロボットへの接続は切断されます。")),
                    (("Chips", "Follower online/offline, Leader online/offline, Torque ON/off, and the control source (Manual, Gamepad, Keyboard, Leader (standby), Teleop engaged)."),
                     ("チップ", "Follower online/offline、Leader online/offline、Torque ON/off、コントロールソース（Manual / Gamepad / Keyboard / Leader (standby) / Teleop engaged）。")),
+                   (("Gripper width (B601-DM)", "The jaw opening in large type, readable from across the bench. It turns green and reads &quot;Holding&quot; while the jaw holds something. Appears once the gripper gauge is calibrated."),
+                    ("グリッパー幅（B601-DM）", "ジョーの開きを大きな文字で表示します（作業台の反対側からでも読めます）。何かを掴んでいる間は緑になり「Holding」と表示されます。グリッパーゲージのキャリブレーション後に現れます。")),
                    (("Search (Ctrl+K)", "Command palette: type to jump anywhere or toggle a view setting."),
                     ("検索（Ctrl+K）", "コマンドパレット。入力して各画面へ移動したり、表示設定を切り替えます。")),
-                   (("Waypoints, Telemetry, Tune", "Open a drawer on the right. One drawer at a time. Tune exists only for the B601-DM."),
-                    ("Waypoints / Telemetry / Tune", "右側にドロワーを開きます（同時に開けるのは1つ）。TuneはB601-DM専用です。")),
-                   (("Setup", "Opens the Setup hub: Motors and ids, Calibration, Inputs, Data and logs."),
-                    ("Setup", "Setupハブを開きます：Motors and ids / Calibration / Inputs / Data and logs。")),
                    (("i (About)", "Creator, version, licence and the tech stack."),
                     ("i（About）", "作者、バージョン、ライセンス、技術スタック。")),
                    (("Stop", "Follower torque OFF and control back to Manual, at once. Also Ctrl+Shift+Space."),
                     ("Stop", "フォロワーのトルクをOFFにし、コントロールをManualに戻します（即時）。Ctrl+Shift+Spaceでも実行できます。"))])) +
-        step(2, ("The View card", "Viewカード"),
+        step(2, ("The task rail", "タスクレール"),
             '<div class="shotgrid">' +
-            fig("card_view", "View card with Ghost target, Axes, HUD overlay and Camera switches", "The View card.", "Viewカード。", "tight") +
+            fig("rail", "Task rail with Operate, Measure, Teach, Record, Tune, Telemetry and Setup", "The rail on the B601-DM.", "B601-DMのレール。", "tight") +
+            "<div>" + ul([
+                ("<strong>Operate</strong> — Connection, Control source and Jog. The default.",
+                 "<strong>Operate</strong> — Connection、Control source、Jog。既定のタスクです。"),
+                ("<strong>Measure</strong> (B601-DM) — the gripper as a caliper; see chapter 05.",
+                 "<strong>Measure</strong>（B601-DM）— グリッパーをノギスとして使います。第05章を参照。"),
+                ("<strong>Teach</strong> — record and play back waypoint sequences.",
+                 "<strong>Teach</strong> — ウェイポイントのシーケンスを記録・再生します。"),
+                ("<strong>Record</strong> — record imitation-learning episodes; see chapter 06.",
+                 "<strong>Record</strong> — 模倣学習用のエピソードを記録します。第06章を参照。"),
+                ("<strong>Tune</strong> (B601-DM) — MIT gains, presets, gravity compensation, tracking chart.",
+                 "<strong>Tune</strong>（B601-DM）— MITゲイン、プリセット、重力補償、トラッキングチャート。"),
+                ("<strong>Telemetry</strong> — per-joint load, current, temperature and a live graph.",
+                 "<strong>Telemetry</strong> — ジョイントごとの負荷・電流・温度とライブグラフ。"),
+                ("<strong>Setup</strong> — the Setup hub: Motors and ids, Calibration, Inputs, Data and logs.",
+                 "<strong>Setup</strong> — Setupハブ：Motors and ids / Calibration / Inputs / Data and logs。")]) +
+            "</div></div>" +
+            p("Only one task is open at a time. Tune and Measure exist only for the B601-DM; the rail hides them for the SO-101.",
+              "同時に開けるタスクは1つです。TuneとMeasureはB601-DM専用で、SO-101ではレールに表示されません。") +
+            fig("jog_fold", "The Telemetry task with the Jog controls folded out underneath the panel",
+                "Jog stays one click away: in every task except Operate, the <strong>Jog</strong> button under the panel folds the Jog controls out (here under Telemetry).",
+                "Jogはいつでも使えます：Operate以外のタスクでは、パネル下の<strong>Jog</strong>ボタンでJog操作が展開されます（ここではTelemetryの下）。")) +
+        step(3, ("The tiles: twin and cameras", "タイル：ツインとカメラ"),
+            fig("cameras_two", "The twin tile next to a camera tile with two cameras, each with its own picker", "The twin and two cameras side by side (the camera picture here is a made-up test pattern). Drag the dividers to resize.",
+                "ツインと2台のカメラを並べた状態（カメラ映像はダミーのテストパターン）。境界をドラッグするとサイズを変えられます。") +
+            ul([("<strong>Expand</strong> on a tile gives it the whole middle area (the twin, or one camera); <strong>Restore</strong> or <strong>Esc</strong> brings the others back.",
+                 "タイルの<strong>Expand</strong>で、そのタイル（ツイン、または1台のカメラ）が中央全体を使います。<strong>Restore</strong>または<strong>Esc</strong>で元に戻ります。"),
+                ("<strong>Cameras</strong> — <strong>+ Add camera</strong> adds another camera (up to three), each with its own picker and Start / Stop, so you can watch, say, a camera on the robot and another observing it. The same camera cannot be opened twice, and one <strong>Refresh</strong> re-scans for all of them. The Recorder films the first camera only. Webcams work out of the box; a <strong>Basler</strong> industrial camera (USB3 Vision / GigE) is listed as &quot;Basler &lt;model&gt; (&lt;serial&gt;)&quot; once <code>pip install pypylon</code> and the pylon driver are installed (close pylon Viewer first: the camera can only be opened by one program); an <strong>Intel RealSense</strong> (D4xx) appears after <code>pip install pyrealsense2</code> as <em>color</em>, <em>depth (colormap)</em> and <em>color + depth</em>. Use separate USB 3 ports: two cameras on one hub can exceed its bandwidth. To switch a running camera to another device, press Stop first.",
+                 "<strong>Cameras</strong> — <strong>+ Add camera</strong>でカメラを追加できます（最大3台）。各カメラに専用のピッカーとStart / Stopがあるので、ロボット上のカメラと、それを観察するカメラを同時に見られます。同じカメラを2回開くことはできません。<strong>Refresh</strong>は全カメラ分を再スキャンします。Recorderが撮影するのは1台目のカメラのみです。Webカメラはそのまま使えます。<strong>Basler</strong>産業用カメラ（USB3 Vision / GigE）は、<code>pip install pypylon</code>とpylonドライバをインストールすると「Basler &lt;型番&gt; (&lt;シリアル&gt;)」として表示されます（pylon Viewerは先に閉じてください。カメラは同時に1つのプログラムしか開けません）。<strong>Intel RealSense</strong>（D4xx）は<code>pip install pyrealsense2</code>の後、<em>color</em>・<em>depth (colormap)</em>・<em>color + depth</em>として表示されます。USB 3のポートは別々にしてください（1つのハブに2台つなぐと帯域が足りなくなることがあります）。動作中のカメラを別のデバイスに切り替えるときは、先にStopしてください。")]) +
+            '<div class="shotgrid">' +
+            fig("card_view", "View options popup with Ghost target, Axes, HUD overlay and Camera switches", "<strong>View options</strong> on the twin tile.", "ツインのタイルの<strong>View options</strong>。", "tight") +
             "<div>" + ul([
                 ("<strong>Ghost target</strong> — a translucent copy of the arm at where it is heading (a jog target, the selected waypoint, or the leader's pose on standby).",
                  "<strong>Ghost target</strong> — アームが向かっている先（ジョグの目標、選択中のウェイポイント、待機中のリーダーの姿勢）を半透明で重ねます。"),
@@ -165,15 +191,21 @@ def content() -> str:
                  "<strong>Axes</strong> — ベースのWorld軸とグリッパーのTool軸を描画します。ジョグが使う座標系は太く表示されます。"),
                 ("<strong>HUD overlay</strong> — per-joint load and temperature bars painted on the render.",
                  "<strong>HUD overlay</strong> — 各ジョイントの負荷と温度のバーを描画上に表示します。"),
-                ("<strong>Camera</strong> — shows the camera as a card you can move and resize. Webcams work out of the box; a <strong>Basler</strong> industrial camera (USB3 Vision / GigE) is listed as &quot;Basler &lt;model&gt; (&lt;serial&gt;)&quot; once <code>pip install pypylon</code> and the pylon driver are installed. Close pylon Viewer first: the camera can only be opened by one program. An <strong>Intel RealSense</strong> (D4xx) appears after <code>pip install pyrealsense2</code> as <em>color</em>, <em>depth (colormap)</em> and <em>color + depth</em>; use a USB 3 port and cable.",
-                 "<strong>Camera</strong> — カメラを、移動・サイズ変更できるカードとして表示します。Webカメラはそのまま使えます。<strong>Basler</strong>産業用カメラ（USB3 Vision / GigE）は、<code>pip install pypylon</code>とpylonドライバをインストールすると「Basler &lt;型番&gt; (&lt;シリアル&gt;)」として一覧に表示されます。pylon Viewerは先に閉じてください（カメラは同時に1つのプログラムしか開けません）。<strong>Intel RealSense</strong>（D4xx）は<code>pip install pyrealsense2</code>の後、<em>color</em>・<em>depth (colormap)</em>・<em>color + depth</em>として表示されます。USB 3のポートとケーブルを使用してください。"),
-                ("<strong>Reset View</strong>, <strong>Reset layout</strong>, and the twin model file (<strong>Browse</strong> + <strong>Load</strong>) for using another MJCF.",
-                 "<strong>Reset View</strong>、<strong>Reset layout</strong>、別のMJCFを使うためのモデルファイル（<strong>Browse</strong> + <strong>Load</strong>）。")]) +
+                ("<strong>Camera</strong> — shows or hides the camera tile.",
+                 "<strong>Camera</strong> — カメラのタイルの表示・非表示。"),
+                ("<strong>Reset View</strong> and the twin model file (<strong>Browse</strong> + <strong>Load</strong>) for using another MJCF.",
+                 "<strong>Reset View</strong>と、別のMJCFを使うためのモデルファイル（<strong>Browse</strong> + <strong>Load</strong>）。")]) +
             "</div></div>" +
-            p("Twin mouse controls: left-drag orbits, right-drag (or Shift+left-drag) pans, the wheel zooms, a double-click resets the view. The twin is rendered at the size of the window, so it stays sharp when you go full screen.",
-              "ツインのマウス操作：左ドラッグで回転、右ドラッグ（またはShift+左ドラッグ）で平行移動、ホイールでズーム、ダブルクリックで視点リセット。ツインはウィンドウの大きさで描画されるため、全画面でも鮮明です。")) +
-        step(3, ("The Jog card", "Jogカード"),
-            fig("card_jog", "Jog card with Joint, World and Tool modes, speed, step and one row per joint", "The Jog card on the SO-101.", "SO-101のJogカード。", "tight") +
+            p("Twin mouse controls: left-drag orbits, right-drag (or Shift+left-drag) pans, the wheel zooms, a double-click resets the view. The twin is rendered at the size of its tile, so it stays sharp when you expand it.",
+              "ツインのマウス操作：左ドラッグで回転、右ドラッグ（またはShift+左ドラッグ）で平行移動、ホイールでズーム、ダブルクリックで視点リセット。ツインはタイルの大きさで描画されるため、拡大しても鮮明です。") +
+            fig("twin_expanded", "The twin expanded to fill the whole middle area", "The twin expanded (<strong>Expand</strong>).", "ツインを拡大した状態（<strong>Expand</strong>）。")) +
+        step(4, ("Operate: Connection, Control source and Jog", "Operate：Connection・Control source・Jog"),
+            fig("card_dock", "Connection block and four control source tiles", "Connection and Control source before anything is connected.", "何も接続していない状態のConnectionとControl source。", "wide") +
+            p("<strong>Connection</strong> is for the follower: port, calibration file, Connect, Torque ON / OFF (and the gripper range calibration buttons on the B601-DM). Once connected, the port and calibration rows fold away to keep the panel short. "
+              "<strong>Control source</strong> has four tiles — Manual, Leader arm, Gamepad, Keyboard — and only one drives the arm at a time.",
+              "<strong>Connection</strong>はフォロワー用です：ポート、キャリブレーションファイル、Connect、Torque ON / OFF（B601-DMではグリッパー範囲のキャリブレーションボタンも）。接続すると、ポートとキャリブレーションの行は畳まれてパネルが短くなります。"
+              "<strong>Control source</strong>にはManual / Leader arm / Gamepad / Keyboardの4つのタイルがあり、アームを動かせるのは常に1つだけです。") +
+            fig("card_jog", "Jog with Joint, World and Tool modes, speed, step and one row per joint", "Jog on the SO-101.", "SO-101のJog。", "tight") +
             ul([("<strong>Joint / World / Tool</strong> — joint by joint, or Cartesian in the base frame or the tool frame. World and Tool need the twin; a 5-joint arm cannot make every direction, so partly reachable axes are drawn dashed.",
                  "<strong>Joint / World / Tool</strong> — ジョイントごと、またはベース座標系・ツール座標系でのデカルト操作。World / Toolにはツインが必要です。5軸アームはすべての方向を出せないため、一部しか届かない軸は破線で表示されます。"),
                 ("Hold <strong>+</strong> or <strong>−</strong> to move; type a value and press Enter to go there. <strong>Step</strong> chooses continuous motion or fixed steps.",
@@ -182,31 +214,25 @@ def content() -> str:
                  "各ジョイントの下の細いバーは、キャリブレーション範囲のどこにいるか（青い塗り）を示し、水色の目盛りは指令された目標位置です。"),
                 ("<strong>Speed</strong> is one slider: it scales jog speed and, on the B601-DM, also caps how fast the follower chases any target, so teleop and waypoint playback slow down with it (30 % = 0.3 rad/s, never above 0.8 rad/s). In MIT mode it limits how fast the commanded setpoint moves toward a target (30 % = 90°/s), so a far target is approached instead of jumped to.",
                  "<strong>Speed</strong>は1本のスライダーです。ジョグ速度を調整し、B601-DMではフォロワーが目標を追う速度の上限にもなるため、遠隔操作やウェイポイント再生も遅くなります（30% = 0.3 rad/s、上限は0.8 rad/s）。MITモードでは、目標へ向かう指令値の移動速度を制限します（30% = 90°/s）。遠い目標へも一気に飛ばず、滑らかに近づきます。")])) +
-        step(4, ("The dock: Connection and Control source", "ドック：ConnectionとControl source"),
-            fig("card_dock", "Dock card with the Connection block and four control source tiles", "The dock before anything is connected.", "何も接続していない状態のドック。", "wide") +
-            p("<strong>Connection</strong> is for the follower: port, calibration file, Connect, Torque ON / OFF (and <strong>Calibrate gripper range…</strong> on the B601-DM). Once connected, the port and calibration rows fold away to keep the card short. "
-              "<strong>Control source</strong> has four tiles — Manual, Leader arm, Gamepad, Keyboard — and only one drives the arm at a time.",
-              "<strong>Connection</strong>はフォロワー用です：ポート、キャリブレーションファイル、Connect、Torque ON / OFF（B601-DMでは<strong>Calibrate gripper range…</strong>も）。接続すると、ポートとキャリブレーションの行は畳まれてカードが短くなります。"
-              "<strong>Control source</strong>にはManual / Leader arm / Gamepad / Keyboardの4つのタイルがあり、アームを動かせるのは常に1つだけです。")) +
-        step(5, ("Move, fold and reset the cards", "カードの移動・折りたたみ・リセット"),
-            fig("cards_tabs", "View and Jog cards folded into small tabs at the corners", "View and Jog folded into tabs.", "ViewとJogをタブに折りたたんだ状態。") +
-            ul([("<strong>Drag</strong> a card by its dotted handle (or the View title) to put it where you like. The place is saved.",
-                 "点線のハンドル（Viewはタイトル）を<strong>ドラッグ</strong>して好きな位置へ。位置は保存されます。"),
-                ("The <strong>–</strong> button folds a card into a small tab; click the tab to bring it back.",
-                 "<strong>–</strong>ボタンでカードを小さなタブに折りたたみ、タブをクリックすると元に戻ります。"),
-                ("Cards never overlap each other or sit under the top bar: a card dropped on another slides to the nearest free spot, and if a small window or an open drawer leaves no room, View and Camera fold themselves into tabs until there is room again.",
-                 "カード同士やトップバーとは重なりません。別のカードの上に置くと近くの空きへスライドし、小さなウィンドウやドロワー展開で場所が足りないときはViewとCameraが自動でタブになり、余裕ができると戻ります。"),
-                ("The camera card has a resize corner. <strong>Reset layout</strong> (View card) restores everything.",
-                 "Cameraカードには右下にサイズ変更用のつまみがあります。<strong>Reset layout</strong>（Viewカード）ですべて初期状態に戻ります。")])) +
+        step(5, ("The Classic layout", "Classic（クラシック）レイアウト"),
+            fig("stage_classic", "The Classic layout: the twin fills the window with View, Jog, Connection and Camera cards floating over it", "The Classic layout on the SO-101: the twin fills the window and the tools float over it as cards.",
+                "SO-101のClassicレイアウト：ツインがウィンドウ全体に表示され、各ツールがカードとして重なります。") +
+            ul([("The earlier layout is kept: the twin fills the window, <strong>View</strong>, <strong>Jog</strong>, <strong>Connection</strong> + <strong>Control source</strong> and <strong>Camera</strong> float over it as cards, and Waypoints, Telemetry, Tune, Record and Gauge open as drawers from the top bar. Every panel is the same one the Workspace uses, so no feature is missing in either layout.",
+                 "以前のレイアウトも残してあります。ツインがウィンドウ全体に表示され、<strong>View</strong>、<strong>Jog</strong>、<strong>Connection</strong> + <strong>Control source</strong>、<strong>Camera</strong>がカード、Waypoints / Telemetry / Tune / Record / Gaugeがトップバーから開くドロワーになります。パネルはWorkspaceと共通なので、どちらのレイアウトでも機能は同じです。"),
+                ("Switch with the <strong>Classic layout</strong> button at the bottom of the rail, or Ctrl+K and <em>Layout: switch to ...</em>. The choice is saved; it applies after a restart, and the app offers to restart itself.",
+                 "切り替えは、レール下部の<strong>Classic layout</strong>ボタン、またはCtrl+Kの<em>Layout: switch to ...</em>で行います。選択は保存され、再起動後に適用されます（アプリが自動再起動を提案します）。"),
+                ("In Classic, cards drag by their dotted handle, fold into a tab with the <strong>–</strong> button, never overlap each other, and <strong>Reset layout</strong> (View card) puts them back.",
+                 "Classicでは、カードは点線のハンドルでドラッグでき、<strong>–</strong>ボタンでタブに折りたためます。カード同士は重ならず、<strong>Reset layout</strong>（Viewカード）で元に戻せます。")])) +
         step(6, ("The command palette and shortcuts", "コマンドパレットとショートカット"),
             fig("palette", "Command palette filtering the list for the word source", "Ctrl+K, then type: here the word <em>source</em> narrows the list to the control-source choices.",
                 "Ctrl+Kのあと入力：ここでは<em>source</em>と入力してコントロールソースの選択肢に絞り込んでいます。", "tight") +
             table((("Key", "Action"), ("キー", "動作")),
                   [(("Ctrl+K", "Open the command palette"), ("Ctrl+K", "コマンドパレットを開く")),
                    (("Ctrl+Shift+Space", "Stop (torque off, back to Manual)"), ("Ctrl+Shift+Space", "Stop（トルクOFF、Manualに戻す）")),
+                   (("Esc", "Restore the tiles after Expand"), ("Esc", "Expand後にタイルを元に戻す")),
                    (("Up / Down, Enter, Esc", "Move, run, close inside the palette"), ("↑ / ↓、Enter、Esc", "パレット内での移動・実行・閉じる"))], mono_first=True) +
-            callout("good", "✓", "The palette only offers navigation, view toggles, control-source choices and the calibration dialogs. Nothing in it moves an arm, and choosing Leader arm only puts it on standby.",
-                    "パレットにあるのは、画面移動、表示の切り替え、コントロールソースの選択、キャリブレーションのダイアログだけです。アームが動くコマンドはなく、Leader armを選んでも待機になるだけです。"))))
+            callout("good", "✓", "The palette only offers navigation, view toggles, control-source choices, the layout switch and the calibration dialogs. Nothing in it moves an arm, and choosing Leader arm only puts it on standby.",
+                    "パレットにあるのは、画面移動、表示の切り替え、コントロールソースの選択、レイアウトの切り替え、キャリブレーションのダイアログだけです。アームが動くコマンドはなく、Leader armを選んでも待機になるだけです。"))))
 
     # ---- 02 SO-101 setup
     parts.append(stage("so101", "02", ("Set up the SO-101", "SO-101のセットアップ"),
@@ -248,12 +274,12 @@ def content() -> str:
                (("5", "Finish &amp; Save", "Writes the limits to the servos and asks where to save the .json (default: LeRobot's own folder)."), ("5", "Finish &amp; Save", "リミットをサーボに書き込み、.jsonの保存先を尋ねます（既定はLeRobotのフォルダ）。"))], mono_first=True) +
         callout("warn", "⚠", "<strong>The gripper needs care.</strong> The sweep assumes the joint's hard stop is its real limit. A belt- or rack-driven gripper runs into a freewheel zone past its real extremes, so the sweep records a near-360° range. Use one of the two helpers under the step buttons: <strong>manual 2-point capture</strong> (park it fully closed, click <em>Capture gripper CLOSED</em>, then fully open) or <strong>Auto-calibrate (stall-safe)</strong>, which drives to both extremes at reduced torque and stops the moment it stalls. Do not disconnect during Auto-calibrate: restoring full torque mid-search can leave the goal past the real wall.",
                 "<strong>グリッパーには注意が必要です。</strong>スイープは、ジョイントの物理ストッパーが実際の限界だと仮定します。ベルト駆動やラック駆動のグリッパーは実際の限界を超えるとフリーホイール状態になり、ほぼ360°の範囲が記録されてしまいます。ステップボタンの下にある2つの方法を使ってください：<strong>manual 2-point capture</strong>（完全に閉じた状態で<em>Capture gripper CLOSED</em>、次に完全に開いた状態で同様に）、または<strong>Auto-calibrate (stall-safe)</strong>（低トルクで両端まで動き、失速した瞬間に停止）。Auto-calibrate中に切断しないでください。探索の途中でフルトルクに戻ると、目標が実際の壁の先に残る場合があります。") +
-        p("Keep the saved file: you point the Connection card at it every session. Files are interchangeable with <code>lerobot-teleoperate</code> and <code>lerobot-record</code> in both directions.",
-          "保存したファイルは大切に保管してください。セッションごとにConnectionカードでこのファイルを指定します。ファイルは<code>lerobot-teleoperate</code>や<code>lerobot-record</code>と双方向に共有できます。") +
+        p("Keep the saved file: you point the Connection panel at it every session. Files are interchangeable with <code>lerobot-teleoperate</code> and <code>lerobot-record</code> in both directions.",
+          "保存したファイルは大切に保管してください。セッションごとにConnectionパネルでこのファイルを指定します。ファイルは<code>lerobot-teleoperate</code>や<code>lerobot-record</code>と双方向に共有できます。") +
         h3("Inputs, and Data and logs", "Inputs と Data and logs") +
         fig("setup_inputs", "Setup, Inputs: gamepad status and the keyboard jog key layout", "Setup › Inputs: gamepad mapping and the keyboard jog keys.", "Setup › Inputs：ゲームパッドの割り当てとキーボードジョグのキー。") +
-        p("<strong>Inputs</strong> shows the gamepad status and mapping, and the keyboard jog key caps, which light up while a key is held. <strong>Data and logs</strong> shows where this session's log file is and opens its folder; the telemetry CSV log is started from the Telemetry drawer.",
-          "<strong>Inputs</strong>にはゲームパッドの状態と割り当て、キーボードジョグのキーキャップ（押している間点灯）があります。<strong>Data and logs</strong>ではこのセッションのログファイルの場所を確認し、フォルダを開けます。テレメトリのCSVログはTelemetryドロワーから開始します。") +
+        p("<strong>Inputs</strong> shows the gamepad status and mapping, and the keyboard jog key caps, which light up while a key is held. <strong>Data and logs</strong> shows where this session's log file is and opens its folder; the telemetry CSV log is started from the Telemetry task.",
+          "<strong>Inputs</strong>にはゲームパッドの状態と割り当て、キーボードジョグのキーキャップ（押している間点灯）があります。<strong>Data and logs</strong>ではこのセッションのログファイルの場所を確認し、フォルダを開けます。テレメトリのCSVログはTelemetryタスクから開始します。") +
         fig("setup_logs", "Setup, Data and logs: the session log path and an Open log folder button", "Setup › Data and logs.", "Setup › Data and logs。", "tight")))
 
     # ---- 03 B601-DM setup
@@ -290,14 +316,14 @@ def content() -> str:
 
     # ---- 04 drive
     parts.append(stage("drive", "04", ("Drive it", "動かす"),
-        why("Back on the stage. Connect the follower, turn torque on, choose who drives it. The app refuses to connect the SO-101 without a calibration file: there is no “just let me move it” mode.",
-            "ステージに戻ります。フォロワーに接続し、トルクをONにして、誰が動かすかを選びます。SO-101はキャリブレーションファイルなしでは接続できません（「とりあえず動かす」モードはありません）。"),
+        why("Back on Operate. Connect the follower, turn torque on, choose who drives it. The app refuses to connect the SO-101 without a calibration file: there is no “just let me move it” mode.",
+            "Operateに戻ります。フォロワーに接続し、トルクをONにして、誰が動かすかを選びます。SO-101はキャリブレーションファイルなしでは接続できません（「とりあえず動かす」モードはありません）。"),
         step(1, ("Connect and torque on", "接続とトルクON"),
-            p("In the Connection card pick the port and (SO-101) the calibration <code>.json</code> you saved, click <strong>Connect</strong>, then <strong>Torque ON</strong>. Torque-on seeds the goal with the current measured pose, so the arm holds still instead of lurching to an old target. On the B601-DM the connection uses the ids you assigned and the mode chosen in the Tune drawer. "
+            p("In the Connection panel pick the port and (SO-101) the calibration <code>.json</code> you saved, click <strong>Connect</strong>, then <strong>Torque ON</strong>. Torque-on seeds the goal with the current measured pose, so the arm holds still instead of lurching to an old target. On the B601-DM the connection uses the ids you assigned and the mode chosen in the Tune task. "
               "The red <strong>Stop</strong> in the top bar is always there.",
-              "Connectionカードでポートと（SO-101では）保存したキャリブレーション<code>.json</code>を選び、<strong>Connect</strong>、続けて<strong>Torque ON</strong>をクリックします。Torque ONは現在の実測姿勢を目標に設定するので、古い目標へ急に動かず、その場で保持します。B601-DMでは、割り当てたIDとTuneドロワーで選んだモードで接続します。トップバーの赤い<strong>Stop</strong>は常に使えます。")) +
+              "Connectionパネルでポートと（SO-101では）保存したキャリブレーション<code>.json</code>を選び、<strong>Connect</strong>、続けて<strong>Torque ON</strong>をクリックします。Torque ONは現在の実測姿勢を目標に設定するので、古い目標へ急に動かず、その場で保持します。B601-DMでは、割り当てたIDとTuneタスクで選んだモードで接続します。トップバーの赤い<strong>Stop</strong>は常に使えます。")) +
         step(2, ("Pick a control source", "コントロールソースを選ぶ"),
-            ul([("<strong>Manual</strong> — the Jog card.", "<strong>Manual</strong> — Jogカード。"),
+            ul([("<strong>Manual</strong> — the Jog panel.", "<strong>Manual</strong> — Jogパネル。"),
                 ("<strong>Gamepad</strong> — a standard Xbox-style controller, one stick axis per joint.", "<strong>Gamepad</strong> — 標準的なXbox系コントローラー。スティックの各軸が1ジョイントに対応。"),
                 ("<strong>Keyboard</strong> — hold a key, the joint moves at a constant rate; release, it stops. Keys held when the window loses focus are released automatically. Keys (SO-101): Q/A shoulder_pan, W/S shoulder_lift, E/D elbow_flex, R/F wrist_flex, T/G wrist_roll, Y/H gripper.",
                  "<strong>Keyboard</strong> — キーを押している間、そのジョイントが一定速度で動き、離すと止まります。ウィンドウがフォーカスを失うと押下中のキーは自動で解放されます。キー（SO-101）：Q/A shoulder_pan、W/S shoulder_lift、E/D elbow_flex、R/F wrist_flex、T/G wrist_roll、Y/H gripper。"),
@@ -315,19 +341,19 @@ def content() -> str:
                  "<strong>Stop</strong>、トルクOFF、コントロールソースの変更、どちらかのアームの切断で、遠隔操作は自動的に終了します。動作中、ボタンは赤い<strong>Disengage</strong>になります。"),
                 ("<strong>Gripper moves the wrong way (invert)</strong> flips the direction the relay treats as opening; <strong>Relay trim…</strong> adds a constant per-joint correction in degrees, most often needed on wrist_roll, whose zero is wherever the arm was held during Set middle. The two arms are calibrated independently, so the relay maps by fraction of each arm's own range, not raw degrees.",
                  "<strong>Gripper moves the wrong way (invert)</strong>は、リレーが「開く」とみなす向きを反転します。<strong>Relay trim…</strong>はジョイントごとに一定の補正角度（度）を加えます。wrist_rollで最も必要になります（ゼロ点がSet middle時の位置になるため）。2台は独立にキャリブレーションされているため、リレーは生の角度ではなく各アームの可動範囲に対する割合で対応づけます。")]) +
-            fig("dock_gate", "The dock in Leader arm mode: connection, leader port, Engage teleop, tolerance and the alignment bar", "The dock in Leader arm mode.", "Leader armモードのドック。", "wide")) +
-        step(4, ("Teach a sequence (Waypoints drawer)", "シーケンスを記録する（Waypointsドロワー）"),
-            fig("drawer_waypoints", "Waypoints drawer with three waypoints, one with a delay, and the ghost of the selected waypoint on the twin", "The Waypoints drawer. The selected waypoint is drawn as the ghost.", "Waypointsドロワー。選択中のウェイポイントがゴーストとして表示されます。") +
+            fig("dock_gate", "The dock in Leader arm mode: connection, leader port, Engage teleop, tolerance and the alignment bar", "Connection and Control source in Leader arm mode.", "Leader armモードのConnectionとControl source。", "wide")) +
+        step(4, ("Teach a sequence (Teach)", "シーケンスを記録する（Teach）"),
+            fig("drawer_waypoints", "Teach task with three waypoints, one with a delay, and the ghost of the selected waypoint on the twin", "The Teach task. The selected waypoint is drawn as the ghost.", "Teachタスク。選択中のウェイポイントがゴーストとして表示されます。") +
             p("<strong>Record Waypoint</strong> snapshots the follower's current pose however it got there (hand-guided with torque off, leader-driven, or jogged). <strong>Record Grip</strong> is for a waypoint that must hold something: it snaps the gripper value to its nearest calibrated extreme so playback keeps commanding a target the object will not let it reach — that position error is the grip force. Reorder with Move Up / Down, then <strong>Play Sequence</strong> replays at a capped, eased speed (zero velocity and acceleration at each waypoint).",
               "<strong>Record Waypoint</strong>は、フォロワーの現在の姿勢を（トルクOFFで手で動かした場合も、リーダー操作もジョグも）そのまま記録します。<strong>Record Grip</strong>は何かを掴んで保持するウェイポイント用で、グリッパー値を最寄りのキャリブレーション端点にスナップします。再生中は対象物が許さない目標を出し続けるため、その位置誤差が把持力になります。Move Up / Downで順序を変え、<strong>Play Sequence</strong>で上限速度付きの滑らかな動きで再生します（各ウェイポイントで速度・加速度ゼロ）。") +
             ul([("<strong>Delay after selected waypoint</strong> + <strong>Set Delay on Selected</strong> pauses playback at that waypoint (e.g. hold a grip for 800&nbsp;ms).", "<strong>Delay after selected waypoint</strong> と <strong>Set Delay on Selected</strong> で、そのウェイポイントで再生を一時停止します（例：把持を800ms保持）。"),
                 ("<strong>Loop</strong> restarts from waypoint 1; unticking it mid-run lets the current pass finish. <strong>Speed</strong> (deg/s) can be changed live. <strong>Save…</strong> / <strong>Load…</strong> use <code>.json</code> files.", "<strong>Loop</strong>は終了後にウェイポイント1から再開します。実行中に外すと現在の周回を終えて止まります。<strong>Speed</strong>（deg/s）は実行中も変更可能。<strong>Save…</strong> / <strong>Load…</strong>は<code>.json</code>を使います。")])) +
-        step(5, ("Read the servo telemetry (Telemetry drawer)", "サーボテレメトリを読む（Telemetryドロワー）"),
-            fig("drawer_telemetry", "Telemetry drawer with the table of position, velocity, load, current, voltage and temperature per joint", "The Telemetry drawer (values here are made up).", "Telemetryドロワー（数値はダミー）。") +
+        step(5, ("Read the servo telemetry (Telemetry)", "サーボテレメトリを読む（Telemetry）"),
+            fig("drawer_telemetry", "Telemetry task with the table of position, velocity, load, current, voltage and temperature per joint", "The Telemetry task (values here are made up).", "Telemetryタスク（数値はダミー）。") +
             p("Current, load, velocity, voltage and temperature per joint at about 10&nbsp;Hz, as a table or a live Graph. <strong>Watch</strong> a joint and field for running min / max / mean, and <strong>Start CSV Log</strong> to capture a session. The caption under the table says which values are cross-checked vendor conversions and which is an estimate (<code>Vel (deg/s)*</code>, marked with a star). On the SO-101, <strong>Target / Torque_Limit / Dead_Zone</strong> at the bottom tunes a joint's servo-side output cap and deadband; a joint that stalls under payload during playback usually just needs more Torque_Limit.",
               "各ジョイントの電流・負荷・速度・電圧・温度を約10Hzで、テーブルまたはライブグラフで表示します。<strong>Watch</strong>でジョイントと項目を選ぶと最小・最大・平均が更新され、<strong>Start CSV Log</strong>でセッションを記録できます。テーブル下のキャプションに、検証済みのメーカー換算値と推定値（<code>Vel (deg/s)*</code>、星印）の区別が書かれています。SO-101では下部の<strong>Target / Torque_Limit / Dead_Zone</strong>でサーボ側の出力上限とデッドバンドを調整できます。再生中に負荷で失速するジョイントは、たいていTorque_Limitを上げるだけで解決します。")) +
-        step(6, ("Tune the B601-DM (Tune drawer)", "B601-DMを調整する（Tuneドロワー）"),
-            fig("drawer_tune", "Tune drawer with control mode, kp and kd per joint, gain presets and the tracking chart", "The Tune drawer: mode and gains, presets, and the tracking chart (synthetic data).", "Tuneドロワー：モードとゲイン、プリセット、トラッキングチャート（模擬データ）。") +
+        step(6, ("Tune the B601-DM (Tune)", "B601-DMを調整する（Tune）"),
+            fig("drawer_tune", "Tune task with control mode, kp and kd per joint, gain presets and the tracking chart", "The Tune task: mode and gains, presets, and the tracking chart (synthetic data).", "Tuneタスク：モードとゲイン、プリセット、トラッキングチャート（模擬データ）。") +
             ul([("<strong>Control mode</strong> — <strong>POS_VEL</strong> (default) uses the motor's own position / velocity loop. <strong>MIT</strong> sends fresh stiffness / damping (<code>kp</code>, <code>kd</code>) with every command: more responsive and compliant, but the gains must be tuned on the real arm, so start low (kp 5–10, kd 0.3–0.8). The mode applies on the next Connect; kp / kd apply <strong>live</strong>, with no reconnect and no torque cycling.",
                  "<strong>Control mode</strong> — <strong>POS_VEL</strong>（既定）はモーター自身の位置・速度ループを使います。<strong>MIT</strong>は毎回のコマンドで剛性・減衰（<code>kp</code>、<code>kd</code>）を送ります。応答性が高く柔らかい反面、ゲインは実機で調整が必要なので低い値（kp 5〜10、kd 0.3〜0.8）から始めてください。モードは次回のConnectで反映され、kp / kdは再接続やトルクの入れ直しなしに<strong>即時</strong>反映されます。"),
                 ("<strong>Gain presets</strong> — <em>Save as…</em> stores the current kp / kd under a name, <em>Load</em> fills the boxes (and a connected MIT follower applies them at once), <em>Delete</em> removes one. Two are built in: &quot;Gentle start&quot; (the safe default) and &quot;Holding start (stiffer, for load)&quot; (kp 40 / kd 2.5 on joint2 and joint3). The second is a first guess for arms that must hold weight: load it with the arm supported and a hand near Stop, then tune each joint.",
@@ -340,6 +366,49 @@ def content() -> str:
                  "<strong>Nudge ±5°</strong> — 選択したジョイントを現在の目標から5°動かします（キャリブレーション範囲内に制限）。フォロワー接続中、トルクON、コントロールソースがManual、遠隔操作が未Engage、シーケンス再生中でない場合のみ有効で、無効なときは理由が表示されます。")]) +
             callout("warn", "⚠", "Raising kp on a joint that carries load can make it oscillate or hit hard. Change one joint at a time, in small steps, with a hand near Stop. A motor that faults after a stall stays latched until its power supply is cycled.",
                     "負荷のかかるジョイントでkpを上げると振動したり、強く当たったりすることがあります。1ジョイントずつ、少しずつ変更し、手をStopの近くに置いてください。失速後にフォルトしたモーターは、電源を入れ直すまでラッチされたままです。"))))
+
+    # ---- 05 measure with the gripper
+    parts.append(stage("measure", "05", ("Measure with the gripper (B601-DM)", "グリッパーで計測する（B601-DM）"),
+        why("The B601-DM's linear-slide gripper can be used as a rough caliper: the width of a hard object, pad to pad. The app reads the jaw's encoder angle and converts it to millimetres with a calibration made from gauge blocks. Pick <strong>Measure</strong> on the rail.",
+            "B601-DMのリニアスライド式グリッパーを、簡易ノギスとして使えます。硬い物体の幅（パッドからパッドまで）を測ります。アプリはジョーのエンコーダ角度を読み取り、ブロックゲージから作ったキャリブレーションでmmに換算します。レールで<strong>Measure</strong>を選びます。"),
+        fig("tool_measure_holding", "The Measure task: a large green Holding reading, the Measure and Normal buttons, the last measurement and the calibration",
+            "The Measure task. The jaw holds something, so the reading is latched (green, &quot;Holding&quot;) and the top bar repeats it. All numbers here are made up.",
+            "Measureタスク。ジョーが何かを掴んでいるため、値が固定され（緑、「Holding」）、トップバーにも同じ値が出ます。数値はすべてダミーです。") +
+        step(1, ("Calibrate once with gauge blocks", "ブロックゲージで一度キャリブレーションする"),
+            p("Open the <strong>Calibration</strong> fold (it opens by itself while the gauge is not calibrated). <strong>Measure zero</strong> with the jaws open a little and nothing between them, then put a gauge block loosely between the open jaws, enter its size and press <strong>Measure this block</strong>: the gripper closes on it by itself. Use at least one block (the more, and the wider the range, the better); the app fits <code>width = a + b × angle</code> and shows how far each block misses the line. "
+              "The <strong>Settings</strong> fold holds the closing direction, creep speed, <strong>Preload</strong> (the force limit: in MIT mode the push is kp × Preload, never above 1.5&nbsp;N·m), <strong>Break-away push</strong> and the number of passes. The measurement runs only with torque ON, MIT mode and the control source on Manual, after the gripper range was calibrated (Setup › Calibration).",
+              "<strong>Calibration</strong>の折りたたみを開きます（ゲージが未キャリブレーションの間は自動で開きます）。ジョーを少し開けて何も挟まない状態で<strong>Measure zero</strong>。次にブロックゲージを開いたジョーの間にゆるく置き、サイズを入力して<strong>Measure this block</strong>を押すと、グリッパーが自動で閉じて測ります。ブロックは1つ以上（多いほど、範囲が広いほど良い）。アプリは<code>幅 = a + b × 角度</code>を当てはめ、各ブロックが直線からどれだけずれるかを表示します。"
+              "<strong>Settings</strong>の折りたたみには、閉じる向き、クリープ速度、<strong>Preload</strong>（力の上限：MITではpush = kp × Preloadで、1.5&nbsp;N·mを超えません）、<strong>Break-away push</strong>、パス数があります。計測はトルクON、MITモード、コントロールソースManualで、グリッパー範囲のキャリブレーション（Setup › Calibration）後にのみ実行できます。") +
+            fig("tool_measure_folds", "The Measure panel with the Calibration and Settings folds open", "The Calibration and Settings folds, opened.", "CalibrationとSettingsの折りたたみを開いた状態。", "tight")) +
+        step(2, ("Read the width live", "幅をリアルタイムで読む"),
+            ul([("Once calibrated, the big card shows the jaw opening all the time, from the encoder; the gripper does not move for it, so it also works while you drive the gripper with the leader. The top bar shows the same number in large type.",
+                 "キャリブレーション後は、大きなカードがエンコーダからジョーの開きを常時表示します。表示のためにグリッパーが動くことはないので、リーダーで操作している間も使えます。トップバーにも同じ値が大きな文字で出ます。"),
+                ("<strong>Contact latch</strong> — when the leader keeps squeezing but the jaw has stopped (about 0.2&nbsp;s), the app takes that angle as the size of what the jaw holds: the card and the top bar turn green (&quot;Holding&quot;), the value stays put, and the app beeps once (switch in the panel). It lets go when you back off or the jaw opens.",
+                 "<strong>接触ラッチ</strong> — リーダーが握り続けているのにジョーが止まると（約0.2秒）、その角度を掴んでいる物の大きさとして採用します。カードとトップバーが緑（「Holding」）になって値が固定され、ビープ音が1回鳴ります（パネルのスイッチで切り替え）。握りを緩めるかジョーが開くと解除されます。"),
+                ("If the jaw is outside the range your blocks cover, the reading says so under the number.",
+                 "ジョーがブロックゲージで覆った範囲の外にあるときは、数値の下にその旨が表示されます。")])) +
+        step(3, ("Leader relay speed: Measure or Normal", "リーダーリレーの速度：MeasureかNormalか"),
+            p("When the Star Arm 102 drives the gripper, the two buttons under the card choose how. <strong>Measure</strong> (default) is gentle: the gripper follows the leader freely while it moves, but once it touches something the push falls back to the <em>Break-away push</em> (never above 1.5&nbsp;N·m), so the width does not depend on how hard you squeeze. "
+              "<strong>Normal</strong> follows the leader at full speed with no slowing on contact (the setpoint may lead the jaw by at most 8&nbsp;N·m ÷ kp), for ordinary pick-and-place. The choice is remembered.",
+              "Star Arm 102でグリッパーを動かすとき、カード下の2つのボタンで動かし方を選びます。<strong>Measure</strong>（既定）は穏やかな動作です。動いている間はリーダーに自由に追従しますが、何かに触れると押し付けが<em>Break-away push</em>（1.5&nbsp;N·m以下）まで下がるため、握る強さに幅が左右されません。"
+              "<strong>Normal</strong>は接触しても減速せず、リーダーに全速で追従します（指令値がジョーに先行できるのは最大でも8&nbsp;N·m ÷ kp）。通常のピック＆プレース向けです。選択は保存されます。")) +
+        step(4, ("Measure an object automatically", "物体を自動で計測する"),
+            p("Put the object loosely between the open jaws and press <strong>Measure object</strong>: the jaws creep shut, stop on contact (the jaw stalls while the target keeps leading), read the angle, release and repeat for the chosen number of passes, always approaching from the same side. The result is a width with the spread between passes, a warning if the passes disagree or the jaw is outside your references, and a line in the <strong>History</strong> (<strong>Save CSV…</strong> exports it). Stop, torque off, a disconnect or changing the control source abort it, and a run where the jaws close all the way is reported as &quot;nothing between the jaws&quot;, not as 0&nbsp;mm.",
+              "物体を開いたジョーの間にゆるく置き、<strong>Measure object</strong>を押します。ジョーがゆっくり閉じ、接触で停止し（目標が先行したままジョーが止まる）、角度を読み取って開放し、指定したパス数だけ、常に同じ側から近づいて繰り返します。結果は幅とパス間のばらつきで、パスが食い違う場合やジョーが基準範囲外の場合は警告が出て、<strong>History</strong>に1行追加されます（<strong>Save CSV…</strong>で書き出し）。Stop、トルクOFF、切断、コントロールソースの変更で中断され、ジョーが最後まで閉じた場合は0&nbsp;mmではなく「ジョーの間に何もない」と報告されます。") +
+            callout("warn", "⚠", "<strong>Accuracy has not been measured on the real gripper yet.</strong> The width comes from the motor's angle, not from a scale on the jaws, so belt and backlash play, the contact force and the calibration line all add error. A rough engineering estimate is a few tenths of a millimetre of accuracy and about 0.1&nbsp;mm of repeatability with a consistent approach and good references. Commercial measuring grippers with a built-in scale reach micrometres. Use this for coarse checks and sorting, not for precision inspection; verify it with gauge blocks before relying on it.",
+                    "<strong>実機での精度はまだ測定していません。</strong>幅はジョーのスケールではなくモーターの角度から求めるため、ベルトやバックラッシュの遊び、接触力、キャリブレーションの直線が誤差になります。大まかな工学的見積もりでは、一定のアプローチと良い基準があれば、精度は数十分の1mm、繰り返し性は約0.1&nbsp;mmです。スケール内蔵の市販の計測グリッパーはマイクロメートルに達します。粗い確認や選別に使い、精密検査には使わないでください。使う前にブロックゲージで確認してください。"))))
+
+    # ---- 06 record
+    parts.append(stage("record", "06", ("Record episodes", "エピソードを記録する"),
+        why("The Record task captures what you do while teleoperating, for imitation learning. It only reads: it never moves a robot.",
+            "Recordタスクは、遠隔操作中の動作を模倣学習用に記録します。読み取るだけで、ロボットを動かすことはありません。"),
+        fig("tool_record", "The Record task: dataset name, task description, Record episode and the episode list", "The Record task (nothing recorded yet).", "Recordタスク（まだ何も記録していない状態）。") +
+        ul([("Connect the follower first: its pose and the commanded goals are recorded at 30&nbsp;fps together with the <strong>first camera</strong> (start it in the camera tile). Without a camera the episode holds joint data only.",
+             "先にフォロワーに接続してください。姿勢と指令値が30&nbsp;fpsで<strong>1台目のカメラ</strong>の映像とともに記録されます（カメラのタイルで開始）。カメラがない場合は関節データのみになります。"),
+            ("A dataset keeps one robot, one frame rate and one camera setup, and the Recorder refuses to mix them. Give each take a short task description, then <strong>Record episode</strong>; <strong>Discard</strong> drops a take.",
+             "データセットは1つのロボット、1つのフレームレート、1つのカメラ構成で構成され、Recorderは混在を拒否します。各テイクに短いタスク説明を付けて<strong>Record episode</strong>。<strong>Discard</strong>でテイクを破棄します。"),
+            ("Export to a real LeRobot v3 dataset in an environment that has <code>lerobot[dataset]</code>: <code>python tools/export_lerobot.py recordings/my-dataset --repo-id local/my-dataset</code>.",
+             "<code>lerobot[dataset]</code>のある環境で、本物のLeRobot v3データセットに書き出せます：<code>python tools/export_lerobot.py recordings/my-dataset --repo-id local/my-dataset</code>。")])))
 
     # ---- Safety
     parts.append(stage("safety", "", ("Safety", "安全上の注意"), "", (
@@ -359,15 +428,16 @@ def content() -> str:
     parts.append(stage("troubleshooting", "", ("Troubleshooting", "トラブルシューティング"), "", (
         table((("Symptom", "Likely cause"), ("症状", "主な原因")),
               [(("Port opens but nothing moves (SO-101)", "Missing 5&nbsp;V servo power, or Torque OFF."), ("ポートは開くが何も動かない（SO-101）", "5V電源が未接続、またはTorque OFFのまま。")),
-               (("&quot;Access denied&quot; opening the port", "Another section (Setup, Calibration, or the stage's Connect) is already holding it — only one may at a time. Disconnect there first."), ("ポートを開くと「Access denied」", "別の画面（Setup、Calibration、ステージのConnect）がすでに保持しています。同時に使えるのは1つだけなので、先に切断してください。")),
+               (("&quot;Access denied&quot; opening the port", "Another section (Setup, Calibration, or the Connect button in Operate) is already holding it — only one may at a time. Disconnect there first."), ("ポートを開くと「Access denied」", "別の画面（Setup、Calibration、OperateのConnect）がすでに保持しています。同時に使えるのは1つだけなので、先に切断してください。")),
                (("Engage teleop is greyed out", "Read the line under the button: leader or follower offline, torque OFF, or a joint is farther than the Tolerance. Move the leader until the ghost sits on the arm."), ("Engage teleopがグレーのまま", "ボタン下のメッセージを確認：リーダー／フォロワーがオフライン、トルクOFF、またはToleranceを超えるジョイントがあります。ゴーストがアームに重なるまでリーダーを動かしてください。")),
-               (("Nudge buttons are greyed out (B601-DM)", "The Tune drawer says why: follower not connected, torque OFF, control source not Manual, teleop engaged, or a sequence is playing."), ("Nudgeボタンがグレー（B601-DM）", "Tuneドロワーに理由が表示されます：フォロワー未接続、トルクOFF、コントロールソースがManualでない、遠隔操作中、シーケンス再生中。")),
-               (("A card disappeared", "It is folded into a tab (look at the corners) — click the tab. <em>Reset layout</em> in the View card puts every card back."), ("カードが消えた", "タブに折りたたまれています（四隅を確認）。タブをクリックしてください。Viewカードの<em>Reset layout</em>ですべて元に戻ります。")),
+               (("Nudge buttons are greyed out (B601-DM)", "The Tune task says why: follower not connected, torque OFF, control source not Manual, teleop engaged, or a sequence is playing."), ("Nudgeボタンがグレー（B601-DM）", "Tuneタスクに理由が表示されます：フォロワー未接続、トルクOFF、コントロールソースがManualでない、遠隔操作中、シーケンス再生中。")),
+               (("A card disappeared (Classic layout)", "It is folded into a tab (look at the corners) — click the tab. <em>Reset layout</em> in the View card puts every card back."), ("カードが消えた（Classicレイアウト）", "タブに折りたたまれています（四隅を確認）。タブをクリックしてください。Viewカードの<em>Reset layout</em>ですべて元に戻ります。")),
+               (("The gripper reads a width but never turns green or beeps (B601-DM)", "The contact latch needs the leader relay engaged (teleop), the leader squeezing past the jaw by more than about 3° and the jaw nearly still for 0.2&nbsp;s. Check the Beep box in the Measure task, and that the gauge is calibrated."), ("グリッパーの幅は出るが緑にならない・鳴らない（B601-DM）", "接触ラッチには、リーダーリレーが有効（遠隔操作中）で、リーダーがジョーより約3°以上先まで握り、ジョーが0.2秒ほどほぼ静止している必要があります。Measureタスクのビープ設定と、ゲージがキャリブレーション済みかを確認してください。")),
                (("Gripper direction flips vs. the leader", "Switch on &quot;Gripper moves the wrong way (invert)&quot; in the Leader arm block."), ("グリッパーの開閉がリーダーと逆", "Leader armのブロックで「Gripper moves the wrong way (invert)」をオンにしてください。")),
-               (("A joint stalls only under load during playback (SO-101)", "Raise that joint's Torque_Limit in the Telemetry drawer."), ("再生中、負荷時だけ失速する（SO-101）", "Telemetryドロワーで該当ジョイントのTorque_Limitを上げてください。")),
+               (("A joint stalls only under load during playback (SO-101)", "Raise that joint's Torque_Limit in the Telemetry task."), ("再生中、負荷時だけ失速する（SO-101）", "Telemetryタスクで該当ジョイントのTorque_Limitを上げてください。")),
                (("Scan finds more than one servo during id assignment", "Unplug all but the one you are assigning — Assign stays disabled until exactly one is found."), ("ID割り当て中のスキャンで複数のサーボが見つかる", "割り当てる1台を除いてすべて外してください。ちょうど1台になるまでAssignは無効です。")),
                (("B601-DM motor stopped answering after a stall", "The motor latched a fault. Cycle its power supply; the app cannot clear it."), ("B601-DMのモーターが失速後に応答しない", "モーターがフォルトをラッチしています。電源を入れ直してください（アプリからは解除できません）。")),
-               (("The twin is blank or frozen", "Check the model path in the View card (Browse + Load). Joint names in a custom MJCF must match the robot's."), ("ツインが空白または固まっている", "Viewカードのモデルパス（Browse + Load）を確認してください。独自のMJCFではジョイント名がロボットのものと一致する必要があります。"))]) +
+               (("The twin is blank or frozen", "Check the model path in View options (Browse + Load). Joint names in a custom MJCF must match the robot's."), ("ツインが空白または固まっている", "View optionsのモデルパス（Browse + Load）を確認してください。独自のMJCFではジョイント名がロボットのものと一致する必要があります。"))]) +
         p("For anything not covered here, the repository's <code>docs/TROUBLESHOOTING.md</code> is indexed by symptom and more exhaustive.", "ここにない症状は、リポジトリの<code>docs/TROUBLESHOOTING.md</code>（症状別・より詳細）を参照してください。"))))
 
     # ---- About
@@ -381,7 +451,7 @@ def content() -> str:
 
 NAV = [("start", "·", "Before you start", "はじめに"), ("screen", "01", "The screen", "画面"),
        ("so101", "02", "SO-101 setup", "SO-101セットアップ"), ("b601", "03", "B601-DM setup", "B601-DMセットアップ"),
-       ("drive", "04", "Drive it", "動かす"), ("safety", "·", "Safety", "安全"),
+       ("drive", "04", "Drive it", "動かす"), ("measure", "05", "Measure", "計測"), ("record", "06", "Record", "記録"), ("safety", "·", "Safety", "安全"),
        ("troubleshooting", "·", "Troubleshooting", "トラブル"), ("about", "·", "About", "About")]
 
 SCRIPT = """
