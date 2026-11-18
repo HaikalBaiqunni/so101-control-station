@@ -330,11 +330,10 @@ same physical camera cannot be opened twice. The Recorder films the first camera
 | Camera | How |
 |---|---|
 | **USB webcam** | Works out of the box through OpenCV, listed by *name* rather than a bare index. |
-| **Basler** (USB3 Vision / GigE, e.g. acA1300-200um) | `pip install pypylon` plus the pylon driver. Listed as `Basler <model> (<serial>)`, with auto exposure and gain on. Close pylon Viewer first: the camera can only be opened by one program. |
 | **Intel RealSense** (D4xx) | `pip install pyrealsense2`. Listed as `color`, `depth (colormap)` and `color + depth` (depth aligned to the colour image), using the best stream mode the camera can run. A D455 on a USB 2 port streams poorly: use a USB 3 port and cable. |
 | **Intel RealSense L515** (LiDAR) | Intel removed the L515 from newer `pyrealsense2`, so it runs through a small helper process with the old SDK (see below). Listed as `Intel RealSense L515 (<serial>)` with `color`, `depth (colormap)` and `color + depth`. |
 
-Both extras are optional (`pip install .[basler]`, `.[realsense]`); without them nothing else changes.
+The RealSense extra is optional (`pip install .[realsense]`); without it nothing else changes.
 
 ### RealSense L515 helper
 
@@ -384,7 +383,7 @@ This app is deliberately opinionated about not moving hardware it doesn't unders
   adapter, not the servos; this is the single most common "my arm is dead" cause).
 - **reBot B601-DM**: a USB-to-CAN adapter for the Damiao follower motors and, for teleoperation, Seeed's Star Arm 102
   leader over its own USB-serial port. Both need the WCH **CH340** driver on Windows if nothing else has installed it.
-- Optional: a webcam, a Basler or RealSense camera (see [Cameras](#cameras)), a gamepad.
+- Optional: a webcam or a RealSense camera (see [Cameras](#cameras)), a gamepad.
 
 `requirements.txt` installs `PySide6`, `feetech-servo-sdk`, `pyserial`, `motorbridge-smart-servo`, `opencv-python`,
 `mujoco`, `numpy` and `pygame`. **No PyTorch, no `lerobot`.** Digital-twin models for both robots are bundled under

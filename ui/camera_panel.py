@@ -24,7 +24,7 @@ MAX_CAMERAS = 3
 class CameraSlot(QWidget):
     """One camera: its device picker, Start / Stop and its own view."""
 
-    start_requested = Signal(object)   # camera index (int) or "basler:<serial>"
+    start_requested = Signal(object)   # camera index (int) or a RealSense source id
     stop_requested = Signal()
     maximize_toggled = Signal(bool)
 
@@ -104,7 +104,7 @@ class CameraSlot(QWidget):
         self.device_combo.blockSignals(False)
 
     def selected_index(self) -> int | str | None:
-        """The chosen camera: an OpenCV index, or "basler:<serial>" for a Basler camera."""
+        """The chosen camera: an OpenCV index, or a RealSense source id."""
         data = self.device_combo.currentData()
         if isinstance(data, str) and data:
             return data
@@ -191,7 +191,7 @@ class CameraPanel(QGroupBox):
                                 "chosen and started on its own.")
         self.add_btn.clicked.connect(self.add_slot)
         self.refresh_btn = QPushButton("Refresh")   # one scan fills every camera's picker
-        self.refresh_btn.setToolTip("Re-scan cameras. Basler cameras need pypylon (pip install pypylon); RealSense cameras (with depth) need pyrealsense2 (pip install pyrealsense2); the L515 needs the helper env (see README).")
+        self.refresh_btn.setToolTip("Re-scan cameras. RealSense cameras (with depth) need pyrealsense2 (pip install pyrealsense2); the L515 needs the helper env (see README).")
         self.refresh_btn.clicked.connect(self.refresh_devices)
         self.remove_btn = QPushButton("- Remove last")
         self.remove_btn.setToolTip("Remove the last extra camera (stop it first).")
@@ -291,7 +291,7 @@ class CameraPanel(QGroupBox):
     def _on_slot_start(self, number: int, source) -> None:
         for other_number, other in enumerate(self.slots):
             if other_number != number and other.running_source == source:
-                # One physical camera cannot be opened twice (a Basler is exclusive; USB webcams misbehave).
+                # One physical camera cannot be opened twice (a RealSense is exclusive; USB webcams misbehave).
                 self.slots[number].show_error(f"Already shown in camera {other.number}: pick a different device")
                 return
         self.slots[number].mark_running(source)

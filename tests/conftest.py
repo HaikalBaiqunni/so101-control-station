@@ -91,19 +91,18 @@ def pytest_unconfigure(config):
 def pytest_configure(config):
     config.addinivalue_line("markers", "workspace_layout: build MainWindow in the Workspace layout (the app default)")
     config.addinivalue_line("markers", "real_so101_profile: keep the SO-101 profile's bundled twin path")
-    config.addinivalue_line("markers", "real_pylon: let the test use pypylon (the camera emulator)")
+    config.addinivalue_line("markers", "real_cameras: keep the real camera listing functions (no stub)")
 
 
 @pytest.fixture(autouse=True)
-def _no_pylon_enumeration(monkeypatch, request):
-    """MainWindow's Camera panel lists Basler cameras through pypylon. Keep the suite off
-    real (and emulated) cameras unless a test opts in with @pytest.mark.real_pylon."""
-    if request.node.get_closest_marker("real_pylon"):
+def _no_camera_enumeration(monkeypatch, request):
+    """MainWindow's Camera panel lists RealSense cameras through their SDK. Keep the suite off
+    real cameras unless a test opts in with @pytest.mark.real_cameras."""
+    if request.node.get_closest_marker("real_cameras"):
         yield
         return
-    from core import basler_camera, realsense_camera, realsense_legacy
+    from core import realsense_camera, realsense_legacy
 
-    monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
     monkeypatch.setattr(realsense_camera, "list_realsense_cameras", lambda: [])   # never the real D455
     monkeypatch.setattr(realsense_legacy, "list_l515_cameras", lambda: [])   # never spawn the real helper
     yield

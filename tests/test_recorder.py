@@ -273,7 +273,7 @@ def test_l515_worker_rejects_a_corrupt_stream(qapp, tmp_path):
     assert not frames and errors and "corrupt" in errors[0]
 
 
-@pytest.mark.real_pylon   # opts out of the conftest stub of list_l515_cameras
+@pytest.mark.real_cameras   # opts out of the conftest stub of list_l515_cameras
 def test_l515_listing_keeps_only_the_l5xx(tmp_path, monkeypatch):
     from core import realsense_legacy
     monkeypatch.setattr(realsense_legacy, "find_helper", lambda: fake_command(tmp_path))
@@ -284,9 +284,8 @@ def test_l515_listing_keeps_only_the_l5xx(tmp_path, monkeypatch):
 
 
 def test_l515_entries_replace_the_webcam_style_realsense_entries(monkeypatch):
-    from core import basler_camera, camera_enum, realsense_legacy
+    from core import camera_enum, realsense_legacy
     monkeypatch.setattr(camera_enum, "list_cameras", lambda: [(0, "Integrated Webcam"), (1, "Intel(R) RealSense(TM) 515 RGB")])
-    monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
     monkeypatch.setattr(realsense_legacy, "list_l515_cameras", lambda: [("l515:f1:color", "L515 - color")])
     sources = [s for s, _ in camera_enum.list_camera_sources()]
     assert sources == [0, "l515:f1:color"]

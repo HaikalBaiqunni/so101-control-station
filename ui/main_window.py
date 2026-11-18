@@ -2008,7 +2008,6 @@ class MainWindow(QMainWindow):
             self.camera_workers[0] = worker
 
     def _on_camera_start(self, source, slot: int = 0) -> None:
-        from core.basler_camera import BaslerCameraWorker, is_basler_source, serial_of
         from core.realsense_camera import RealSenseCameraWorker, is_realsense_source, parse_source
         from core.realsense_legacy import L515CameraWorker, is_l515_source
         from core.realsense_legacy import parse_source as parse_l515_source
@@ -2021,9 +2020,6 @@ class MainWindow(QMainWindow):
             serial, mode = parse_source(source)
             self.camera_panel.set_busy(True, f"starting RealSense {serial} ({mode})...", slot)
             worker = RealSenseCameraWorker(serial, mode)
-        elif is_basler_source(source):
-            self.camera_panel.set_busy(True, f"starting Basler camera {serial_of(source)}...", slot)
-            worker = BaslerCameraWorker(serial_of(source))
         else:
             self.camera_panel.set_busy(True, f"starting device #{source}...", slot)
             worker = CameraWorker(source)

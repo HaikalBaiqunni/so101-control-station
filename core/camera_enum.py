@@ -16,9 +16,7 @@ import cv2
 
 
 def list_camera_sources() -> list[tuple[int | str, str]]:
-    """Every selectable camera: OpenCV webcams (source = index) followed by Basler cameras
-    (source = "basler:<serial>", only when pypylon is installed)."""
-    from .basler_camera import list_basler_cameras
+    """Every selectable camera: OpenCV webcams (source = index) followed by RealSense cameras."""
     from .realsense_camera import list_realsense_cameras
     from .realsense_legacy import list_l515_cameras
 
@@ -30,7 +28,6 @@ def list_camera_sources() -> list[tuple[int | str, str]]:
         # cannot be opened by OpenCV, and the RGB one would be a duplicate of "color"
         if not (realsense and "realsense" in name.lower())
     ]
-    sources.extend(list_basler_cameras())
     sources.extend(realsense)   # includes the L515 entries
     return sources
 

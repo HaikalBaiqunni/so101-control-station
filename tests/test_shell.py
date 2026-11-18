@@ -1080,60 +1080,18 @@ def test_leader_ghost_shows_whatever_the_control_source(teleop):
     assert teleop._compute_ghost() is None                     # engaged: the follower itself moves
 
 
-# ---------------------------------------------------------------- Basler cameras
-def test_basler_source_ids_round_trip():
-    from core.basler_camera import is_basler_source, serial_of
-    assert is_basler_source("basler:23581801") and serial_of("basler:23581801") == "23581801"
-    assert not is_basler_source(0) and not is_basler_source("0") and not is_basler_source(None)
-
-
-@pytest.mark.real_pylon
-def test_listing_uses_serial_and_model_and_survives_pypylon_missing(monkeypatch):
-    from core import basler_camera
-
-    class Info:
-        def __init__(self, serial, model):
-            self._s, self._m = serial, model
-
-        def GetSerialNumber(self):
-            return self._s
-
-        def GetModelName(self):
-            return self._m
-
-    class Factory:
-        @staticmethod
-        def GetInstance():
-            return Factory
-
-        @staticmethod
-        def EnumerateDevices():
-            return [Info("23581801", "acA1300-200um")]
-
-    class FakePylon:
-        TlFactory = Factory
-
-    monkeypatch.setattr(basler_camera, "ISOLATE_ENUMERATION", False)   # the fake lives in this process
-    monkeypatch.setattr(basler_camera, "_pylon", lambda: FakePylon)
-    assert basler_camera.list_basler_cameras() == [("basler:23581801", "Basler acA1300-200um (23581801)")]
-
-    def missing():
-        raise ImportError("no pypylon")
-    monkeypatch.setattr(basler_camera, "_pylon", missing)
-    assert basler_camera.list_basler_cameras() == []
-
-
-def test_the_camera_panel_lists_and_selects_a_basler_source(qapp, monkeypatch):
+# ---------------------------------------------------------------- camera panel
+def test_the_camera_panel_lists_and_selects_a_realsense_source(qapp, monkeypatch):
     from ui import camera_panel as cp
-    monkeypatch.setattr(cp, "list_camera_sources", lambda: [(0, "Integrated Webcam (#0)"), ("basler:123", "Basler acA1300-200um (123)")])
+    monkeypatch.setattr(cp, "list_camera_sources", lambda: [(0, "Integrated Webcam (#0)"), ("realsense:123:color", "RealSense D455 - color")])
     panel = cp.CameraPanel()
     assert panel.device_combo.count() == 2 and panel.selected_index() == 0
     panel.device_combo.setCurrentIndex(1)
-    assert panel.selected_index() == "basler:123"
+    assert panel.selected_index() == "realsense:123:color"
     seen = []
     panel.start_requested.connect(lambda source, slot: seen.append((source, slot)))
     panel.toggle_btn.click()
-    assert seen == [("basler:123", 0)]
+    assert seen == [("realsense:123:color", 0)]
 
 
 def test_the_camera_panel_runs_several_cameras_and_refuses_the_same_device_twice(qapp, monkeypatch):
@@ -1168,7 +1126,7 @@ def test_the_camera_panel_runs_several_cameras_and_refuses_the_same_device_twice
 
 
 def test_each_camera_slot_gets_its_own_worker_and_only_the_first_feeds_the_recorder(win, monkeypatch):
-    from core import basler_camera
+    from core import realsense_camera
 
     class Sig:
         def __init__(self):
@@ -1180,7 +1138,7 @@ def test_each_camera_slot_gets_its_own_worker_and_only_the_first_feeds_the_recor
     class StubWorker:
         created = []
 
-        def __init__(self, serial):
+        def __init__(self, serial, mode="color"):
             self.serial = serial
             self.frame_ready, self.error, self.started_ok, self.finished = Sig(), Sig(), Sig(), Sig()
             self.stopped = False
@@ -1195,10 +1153,10 @@ def test_each_camera_slot_gets_its_own_worker_and_only_the_first_feeds_the_recor
         def wait(self, _ms):   # the window's shutdown waits on retired workers
             return True
 
-    monkeypatch.setattr(basler_camera, "BaslerCameraWorker", StubWorker)
+    monkeypatch.setattr(realsense_camera, "RealSenseCameraWorker", StubWorker)
     win.camera_panel.add_slot()
-    win._on_camera_start("basler:1", 0)
-    win._on_camera_start("basler:2", 1)
+    win._on_camera_start("realsense:1:color", 0)
+    win._on_camera_start("realsense:2:color", 1)
     first, second = StubWorker.created
     assert sorted(win.camera_workers) == [0, 1] and win.camera_worker is first
     assert win._on_recorder_frame in first.frame_ready.slots
@@ -1210,91 +1168,10 @@ def test_each_camera_slot_gets_its_own_worker_and_only_the_first_feeds_the_recor
     win.camera_panel.remove_last_slot()
 
 
-def test_starting_a_basler_source_builds_the_basler_worker(win, monkeypatch):
-    from core import basler_camera
-
-    class Sig:
-        def connect(self, fn):
-            pass
-
-    class StubWorker:
-        created = []
-
-        def __init__(self, serial):
-            self.serial = serial
-            self.frame_ready = self.error = self.started_ok = self.finished = Sig()
-            StubWorker.created.append(self)
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr(basler_camera, "BaslerCameraWorker", StubWorker)
-    win._on_camera_start("basler:555")
-    assert [w.serial for w in StubWorker.created] == ["555"]
-    win.camera_worker = None
-
-
-@pytest.mark.real_pylon
-def test_the_worker_streams_rgb_frames_from_the_pylon_emulator(qapp, monkeypatch):
-    pytest.importorskip("pypylon")
-    monkeypatch.setenv("PYLON_CAMEMU", "1")          # a virtual camera: never the real hardware
-    import time
-
-    from core import basler_camera
-
-    emulated = [s for s, label in basler_camera.list_basler_cameras() if "Emulation" in label]
-    if not emulated:
-        pytest.skip("the pylon camera emulator is not available")
-    worker = basler_camera.BaslerCameraWorker(basler_camera.serial_of(emulated[0]), fps=30)
-    frames, errors = [], []
-    worker.frame_ready.connect(frames.append)
-    worker.error.connect(errors.append)
-    worker.start()
-    deadline = time.time() + 20
-    while not frames and not errors and time.time() < deadline:
-        qapp.processEvents()
-        time.sleep(0.02)
-    worker.stop()
-    worker.wait(5000)
-    assert not errors, errors
-    assert frames, "no frame arrived"
-    frame = frames[0]
-    assert frame.ndim == 3 and frame.shape[2] == 3 and frame.dtype.name == "uint8"
-
-
-@pytest.mark.real_pylon
-def test_a_missing_serial_reports_an_error(qapp, monkeypatch):
-    pytest.importorskip("pypylon")
-    monkeypatch.setenv("PYLON_CAMEMU", "1")
-    import time
-
-    from core import basler_camera
-    worker = basler_camera.BaslerCameraWorker("does-not-exist")
-    errors = []
-    worker.error.connect(errors.append)
-    worker.start()
-    deadline = time.time() + 15
-    while not errors and time.time() < deadline:
-        qapp.processEvents()
-        time.sleep(0.02)
-    worker.wait(5000)
-    assert errors and "not found" in errors[0]
-
-
-def test_pylon_errors_get_a_plain_explanation():
-    from core.basler_camera import friendly_error
-    busy = RuntimeError("Failed to open device for XML file download. Error: 'Device is exclusively opened by another client.'")
-    assert "pylon Viewer" in friendly_error(busy)
-    assert friendly_error(RuntimeError("something else")) == "Basler camera error: something else"
-
-
 # ---------------------------------------------------------------- RealSense cameras
 def test_realsense_source_ids_and_modes():
     from core.realsense_camera import is_realsense_source, parse_source
-    assert is_realsense_source("realsense:123:depth") and not is_realsense_source("basler:123") and not is_realsense_source(2)
+    assert is_realsense_source("realsense:123:depth") and not is_realsense_source("l515:123:color") and not is_realsense_source(2)
     assert parse_source("realsense:123:depth") == ("123", "depth")
     assert parse_source("realsense:123:both") == ("123", "both")
     assert parse_source("realsense:123") == ("123", "color")
@@ -1438,11 +1315,10 @@ def test_a_few_late_frames_are_tolerated_but_a_dead_stream_is_an_error(qapp, mon
 
 
 def test_a_realsense_listed_through_its_sdk_replaces_its_webcam_entries(monkeypatch):
-    from core import basler_camera, camera_enum, realsense_camera
+    from core import camera_enum, realsense_camera
     monkeypatch.setattr(camera_enum, "list_cameras", lambda: [
         (0, "Integrated Webcam"), (1, "Intel(R) RealSense(TM) Depth Camera 455  Depth"),
         (2, "Intel(R) RealSense(TM) Depth Camera 455  RGB")])
-    monkeypatch.setattr(basler_camera, "list_basler_cameras", lambda: [])
     monkeypatch.setattr(realsense_camera, "list_realsense_cameras", lambda: [("realsense:1:color", "RealSense D455 (1) - color")])
     sources = camera_enum.list_camera_sources()
     assert [s for s, _ in sources] == [0, "realsense:1:color"]       # the broken Depth entry and the duplicate RGB are gone

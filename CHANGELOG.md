@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Basler camera support** (`pypylon`, the `basler` extra, `core/basler_camera.py`): it is not used any more.
+  Webcams and RealSense cameras are unchanged.
+
 ### Fixed
 
 - **Stale HUD after switching robot.** The HUD overlay kept the previous robot's joints (and their bars) until new
