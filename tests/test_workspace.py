@@ -166,6 +166,7 @@ def test_switching_layout_is_saved_for_the_next_start(win, qapp, monkeypatch):
     win._set_ui_layout("classic")
     assert asked and win._load_settings()["ui_layout"] == "classic"
     assert win.ui_layout == "workspace"                          # this window keeps running as it was
+    assert win.top_bar.layout_btn.isHidden()                     # the Workspace has its own rail button
     win._set_ui_layout("workspace")                              # already the running layout: nothing to do
     assert len(asked) == 1
 
@@ -173,6 +174,10 @@ def test_switching_layout_is_saved_for_the_next_start(win, qapp, monkeypatch):
     try:
         assert classic.ui_layout == "classic" and classic.stage is not None and classic.workspace is None
         assert not classic.top_bar.nav_box.isHidden()
+        assert not classic.top_bar.layout_btn.isHidden()         # the way back to the Workspace
+        asked.clear()
+        classic.top_bar.layout_btn.click()
+        assert asked and classic._load_settings()["ui_layout"] == "workspace"
         assert "Layout: switch to Workspace" in {a.title for a in classic._palette_actions()}
     finally:
         classic.robot_worker = None

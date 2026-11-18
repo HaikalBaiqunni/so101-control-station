@@ -305,6 +305,8 @@ class MainWindow(QMainWindow):
         self.top_bar.stop_requested.connect(self._on_emergency_stop)
         self.top_bar.palette_requested.connect(self._open_palette)
         self.top_bar.about_requested.connect(self._show_about)
+        self.top_bar.layout_requested.connect(lambda: self._set_ui_layout("workspace"))
+        self.top_bar.layout_btn.setVisible(self.ui_layout == "classic")
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_palette)
         QShortcut(QKeySequence("Ctrl+Shift+Space"), self, activated=self._on_emergency_stop)
 

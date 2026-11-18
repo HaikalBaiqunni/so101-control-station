@@ -24,6 +24,7 @@ class TopBar(QWidget):
     stop_requested = Signal()
     palette_requested = Signal()
     about_requested = Signal()
+    layout_requested = Signal()       # the Classic layout's way back to the Workspace layout
 
     NAV = (("waypoints", "Waypoints"), ("telemetry", "Telemetry"), ("tune", "Tune"),
            ("record", "Record"), ("gauge", "Gauge"), ("setup", "Setup"))
@@ -103,6 +104,13 @@ class TopBar(QWidget):
             button.toggled.connect(lambda checked, k=key: self.nav_toggled.emit(k, checked))
             self.nav_buttons[key] = button
             nav_row.addWidget(button)
+        self.layout_btn = QPushButton("Workspace")
+        self.layout_btn.setObjectName("segButton")
+        self.layout_btn.setFocusPolicy(Qt.NoFocus)
+        self.layout_btn.setToolTip("Switch to the Workspace layout: docked tiles and a task rail (applies after a restart)")
+        self.layout_btn.clicked.connect(self.layout_requested)
+        self.layout_btn.hide()            # only the Classic layout shows it
+        right.addWidget(self.layout_btn)
         self.about_btn = QPushButton("")
         self.about_btn.setObjectName("segButton")
         self.about_btn.setFocusPolicy(Qt.NoFocus)
